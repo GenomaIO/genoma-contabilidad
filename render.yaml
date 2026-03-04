@@ -1,0 +1,29 @@
+services:
+  - type: web
+    name: genoma-contabilidad-api
+    runtime: python
+    region: oregon
+    plan: free
+    repo: https://github.com/GenomaIO/genoma-contabilidad
+    branch: main
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn services.gateway.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: JWT_SECRET
+        generateValue: true
+      - key: FACTURADOR_URL
+        value: https://genoma-contable.onrender.com
+      - key: DATABASE_URL
+        fromDatabase:
+          name: genoma-contabilidad-db
+          property: connectionString
+
+databases:
+  - name: genoma-contabilidad-db
+    databaseName: genoma_contabilidad
+    user: genoma_contabilidad_user
+    region: oregon
+    plan: free
