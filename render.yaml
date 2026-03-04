@@ -1,13 +1,11 @@
 services:
   - type: web
     name: genoma-contabilidad-api
-    runtime: python
+    runtime: docker
     region: oregon
     plan: free
     repo: https://github.com/GenomaIO/genoma-contabilidad
     branch: main
-    buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn services.gateway.main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
     envVars:
       - key: ENVIRONMENT
