@@ -11,41 +11,30 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
-from sqlalchemy import create_engine, text
-from sqlalchemy.exc import OperationalError
+from sqlalchemy import text
+
+from services.auth.database import init_db, get_session
+from services.auth.router import router as auth_router
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 DATABASE_URL = os.getenv("DATABASE_URL", "")
-
-
-def get_engine():
-    if not DATABASE_URL:
-        return None
-    # Render usa postgres:// pero SQLAlchemy necesita postgresql://
-    url = DATABASE_URL.replace("postgres://", "postgresql://", 1)
-    return create_engine(url)
-
-
-def run_startup_migrations():
-    """Crea tablas base si no existen. Alembic se agrega después."""
-    engine = get_engine()
-    if not engine:
-        logger.warning("⚠️  DATABASE_URL no configurado — running sin DB")
-        return
-    try:
-        with engine.connect() as conn:
-            conn.execute(text("SELECT 1"))
-        logger.info("✅ Conexión a PostgreSQL establecida")
-    except OperationalError as e:
-        logger.error(f"❌ No se pudo conectar a PostgreSQL: {e}")
+_engine = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global _engine
     logger.info("🚀 Genoma Contabilidad arrancando...")
-    run_startup_migrations()
+    if DATABASE_URL:
+        try:
+            _engine = init_db()
+            logger.info("✅ DB inicializada y tablas creadas")
+        except Exception as e:
+            logger.error(f"❌ Error inicializando DB: {e}")
+    else:
+        logger.warning("⚠️  DATABASE_URL no configurado")
     yield
     logger.info("🛑 Genoma Contabilidad cerrando...")
 
@@ -65,6 +54,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Incluir routers
+app.include_router(auth_router)
 
 # ── Endpoints API ──────────────────────────────────────────────
 
@@ -97,7 +88,7 @@ def api_root():
         "environment": os.getenv("ENVIRONMENT", "development"),
         "services": {
             "gateway": "🟢 active",
-            "auth": "🔴 pending",
+            "auth": "🟢 active",
             "catalog": "🔴 pending",
             "ledger": "🔴 pending",
             "tax": "🔴 pending",
