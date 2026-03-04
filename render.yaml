@@ -13,7 +13,7 @@ services:
       - key: ENVIRONMENT
         value: production
       - key: JWT_SECRET
-        generateValue: true
+        value: 351f1779bd31383f37e9bf5df85f2d622f0d3a77673d99a04fc8235475e26f86
       - key: FACTURADOR_URL
         value: https://genoma-contable.onrender.com
       - key: DATABASE_URL
