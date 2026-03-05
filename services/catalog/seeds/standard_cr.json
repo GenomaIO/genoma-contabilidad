@@ -1,0 +1,602 @@
+[
+    {
+        "code": "1000",
+        "name": "ACTIVOS",
+        "type": "ACTIVO",
+        "sub_type": "OTRO",
+        "parent_code": null,
+        "allow_entries": false
+    },
+    {
+        "code": "1100",
+        "name": "Activo Corriente",
+        "type": "ACTIVO",
+        "sub_type": "CIRCULANTE",
+        "parent_code": "1000",
+        "allow_entries": false
+    },
+    {
+        "code": "1101",
+        "name": "Efectivo y Equivalentes",
+        "type": "ACTIVO",
+        "sub_type": "CIRCULANTE",
+        "parent_code": "1100",
+        "allow_entries": true
+    },
+    {
+        "code": "1102",
+        "name": "Cuentas por Cobrar Comerciales",
+        "type": "ACTIVO",
+        "sub_type": "CIRCULANTE",
+        "parent_code": "1100",
+        "allow_entries": true
+    },
+    {
+        "code": "1103",
+        "name": "Inventarios",
+        "type": "ACTIVO",
+        "sub_type": "CIRCULANTE",
+        "parent_code": "1100",
+        "allow_entries": true
+    },
+    {
+        "code": "1104",
+        "name": "IVA Acreditable (Crédito Fiscal)",
+        "type": "ACTIVO",
+        "sub_type": "CIRCULANTE",
+        "parent_code": "1100",
+        "allow_entries": true
+    },
+    {
+        "code": "1105",
+        "name": "Gastos Pagados por Anticipado",
+        "type": "ACTIVO",
+        "sub_type": "CIRCULANTE",
+        "parent_code": "1100",
+        "allow_entries": true
+    },
+    {
+        "code": "1106",
+        "name": "Otras Cuentas por Cobrar",
+        "type": "ACTIVO",
+        "sub_type": "CIRCULANTE",
+        "parent_code": "1100",
+        "allow_entries": true
+    },
+    {
+        "code": "1107",
+        "name": "Documentos por Cobrar (Corto Plazo)",
+        "type": "ACTIVO",
+        "sub_type": "CIRCULANTE",
+        "parent_code": "1100",
+        "allow_entries": true
+    },
+    {
+        "code": "1200",
+        "name": "Activo No Corriente",
+        "type": "ACTIVO",
+        "sub_type": "NO_CIRCULANTE",
+        "parent_code": "1000",
+        "allow_entries": false
+    },
+    {
+        "code": "1201",
+        "name": "Propiedad, Planta y Equipo (PPE)",
+        "type": "ACTIVO",
+        "sub_type": "NO_CIRCULANTE",
+        "parent_code": "1200",
+        "allow_entries": true
+    },
+    {
+        "code": "1202",
+        "name": "Depreciación Acumulada",
+        "type": "ACTIVO",
+        "sub_type": "NO_CIRCULANTE",
+        "parent_code": "1200",
+        "allow_entries": true
+    },
+    {
+        "code": "1203",
+        "name": "Intangibles y Software",
+        "type": "ACTIVO",
+        "sub_type": "NO_CIRCULANTE",
+        "parent_code": "1200",
+        "allow_entries": true
+    },
+    {
+        "code": "1204",
+        "name": "Inversiones a Largo Plazo",
+        "type": "ACTIVO",
+        "sub_type": "NO_CIRCULANTE",
+        "parent_code": "1200",
+        "allow_entries": true
+    },
+    {
+        "code": "1205",
+        "name": "Documentos por Cobrar (Largo Plazo)",
+        "type": "ACTIVO",
+        "sub_type": "NO_CIRCULANTE",
+        "parent_code": "1200",
+        "allow_entries": true
+    },
+    {
+        "code": "2000",
+        "name": "PASIVOS",
+        "type": "PASIVO",
+        "sub_type": "OTRO",
+        "parent_code": null,
+        "allow_entries": false
+    },
+    {
+        "code": "2100",
+        "name": "Pasivo Corriente",
+        "type": "PASIVO",
+        "sub_type": "CIRCULANTE",
+        "parent_code": "2000",
+        "allow_entries": false
+    },
+    {
+        "code": "2101",
+        "name": "Cuentas por Pagar Comerciales",
+        "type": "PASIVO",
+        "sub_type": "CIRCULANTE",
+        "parent_code": "2100",
+        "allow_entries": true
+    },
+    {
+        "code": "2102",
+        "name": "IVA por Pagar (Débito Fiscal 13%)",
+        "type": "PASIVO",
+        "sub_type": "CIRCULANTE",
+        "parent_code": "2100",
+        "allow_entries": true
+    },
+    {
+        "code": "2103",
+        "name": "Retenciones por Pagar (Renta)",
+        "type": "PASIVO",
+        "sub_type": "CIRCULANTE",
+        "parent_code": "2100",
+        "allow_entries": true
+    },
+    {
+        "code": "2104",
+        "name": "Cargas Sociales por Pagar (CCSS)",
+        "type": "PASIVO",
+        "sub_type": "CIRCULANTE",
+        "parent_code": "2100",
+        "allow_entries": true
+    },
+    {
+        "code": "2105",
+        "name": "Préstamos Bancarios Corto Plazo",
+        "type": "PASIVO",
+        "sub_type": "CIRCULANTE",
+        "parent_code": "2100",
+        "allow_entries": true
+    },
+    {
+        "code": "2106",
+        "name": "Gastos Acumulados por Pagar",
+        "type": "PASIVO",
+        "sub_type": "CIRCULANTE",
+        "parent_code": "2100",
+        "allow_entries": true
+    },
+    {
+        "code": "2107",
+        "name": "Dividendos por Pagar",
+        "type": "PASIVO",
+        "sub_type": "CIRCULANTE",
+        "parent_code": "2100",
+        "allow_entries": true
+    },
+    {
+        "code": "2108",
+        "name": "IVA Diferido (FE CondVenta 11)",
+        "type": "PASIVO",
+        "sub_type": "CIRCULANTE",
+        "parent_code": "2100",
+        "allow_entries": true
+    },
+    {
+        "code": "2200",
+        "name": "Pasivo No Corriente",
+        "type": "PASIVO",
+        "sub_type": "NO_CIRCULANTE",
+        "parent_code": "2000",
+        "allow_entries": false
+    },
+    {
+        "code": "2201",
+        "name": "Préstamos Bancarios Largo Plazo",
+        "type": "PASIVO",
+        "sub_type": "NO_CIRCULANTE",
+        "parent_code": "2200",
+        "allow_entries": true
+    },
+    {
+        "code": "2202",
+        "name": "Provisión Aguinaldo y Cesantía",
+        "type": "PASIVO",
+        "sub_type": "NO_CIRCULANTE",
+        "parent_code": "2200",
+        "allow_entries": true
+    },
+    {
+        "code": "3000",
+        "name": "PATRIMONIO",
+        "type": "PATRIMONIO",
+        "sub_type": "CAPITAL",
+        "parent_code": null,
+        "allow_entries": false
+    },
+    {
+        "code": "3100",
+        "name": "Capital Social",
+        "type": "PATRIMONIO",
+        "sub_type": "CAPITAL",
+        "parent_code": "3000",
+        "allow_entries": false
+    },
+    {
+        "code": "3101",
+        "name": "Capital Suscrito y Pagado",
+        "type": "PATRIMONIO",
+        "sub_type": "CAPITAL",
+        "parent_code": "3100",
+        "allow_entries": true
+    },
+    {
+        "code": "3102",
+        "name": "Capital Adicional",
+        "type": "PATRIMONIO",
+        "sub_type": "CAPITAL",
+        "parent_code": "3100",
+        "allow_entries": true
+    },
+    {
+        "code": "3200",
+        "name": "Reservas",
+        "type": "PATRIMONIO",
+        "sub_type": "RESERVAS",
+        "parent_code": "3000",
+        "allow_entries": false
+    },
+    {
+        "code": "3201",
+        "name": "Reserva Legal",
+        "type": "PATRIMONIO",
+        "sub_type": "RESERVAS",
+        "parent_code": "3200",
+        "allow_entries": true
+    },
+    {
+        "code": "3202",
+        "name": "Reservas Voluntarias",
+        "type": "PATRIMONIO",
+        "sub_type": "RESERVAS",
+        "parent_code": "3200",
+        "allow_entries": true
+    },
+    {
+        "code": "3300",
+        "name": "Resultados",
+        "type": "PATRIMONIO",
+        "sub_type": "RESULTADOS",
+        "parent_code": "3000",
+        "allow_entries": false
+    },
+    {
+        "code": "3301",
+        "name": "Utilidades Acumuladas",
+        "type": "PATRIMONIO",
+        "sub_type": "RESULTADOS",
+        "parent_code": "3300",
+        "allow_entries": true
+    },
+    {
+        "code": "3302",
+        "name": "Pérdidas Acumuladas",
+        "type": "PATRIMONIO",
+        "sub_type": "RESULTADOS",
+        "parent_code": "3300",
+        "allow_entries": true
+    },
+    {
+        "code": "3303",
+        "name": "Utilidad del Ejercicio",
+        "type": "PATRIMONIO",
+        "sub_type": "RESULTADOS",
+        "parent_code": "3300",
+        "allow_entries": true
+    },
+    {
+        "code": "4000",
+        "name": "INGRESOS",
+        "type": "INGRESO",
+        "sub_type": "OPERATIVO",
+        "parent_code": null,
+        "allow_entries": false
+    },
+    {
+        "code": "4100",
+        "name": "Ingresos Operativos",
+        "type": "INGRESO",
+        "sub_type": "OPERATIVO",
+        "parent_code": "4000",
+        "allow_entries": false
+    },
+    {
+        "code": "4101",
+        "name": "Ventas de Mercancías",
+        "type": "INGRESO",
+        "sub_type": "OPERATIVO",
+        "parent_code": "4100",
+        "allow_entries": true
+    },
+    {
+        "code": "4102",
+        "name": "Ventas de Servicios",
+        "type": "INGRESO",
+        "sub_type": "OPERATIVO",
+        "parent_code": "4100",
+        "allow_entries": true
+    },
+    {
+        "code": "4103",
+        "name": "Ventas Exentas de IVA",
+        "type": "INGRESO",
+        "sub_type": "OPERATIVO",
+        "parent_code": "4100",
+        "allow_entries": true
+    },
+    {
+        "code": "4104",
+        "name": "Descuentos sobre Ventas (CR)",
+        "type": "INGRESO",
+        "sub_type": "OPERATIVO",
+        "parent_code": "4100",
+        "allow_entries": true
+    },
+    {
+        "code": "4200",
+        "name": "Otros Ingresos",
+        "type": "INGRESO",
+        "sub_type": "NO_OPERATIVO",
+        "parent_code": "4000",
+        "allow_entries": false
+    },
+    {
+        "code": "4201",
+        "name": "Ingresos Financieros (Intereses)",
+        "type": "INGRESO",
+        "sub_type": "FINANCIERO",
+        "parent_code": "4200",
+        "allow_entries": true
+    },
+    {
+        "code": "4202",
+        "name": "Diferencial Cambiario Favorable",
+        "type": "INGRESO",
+        "sub_type": "FINANCIERO",
+        "parent_code": "4200",
+        "allow_entries": true
+    },
+    {
+        "code": "4203",
+        "name": "Otros Ingresos No Operativos",
+        "type": "INGRESO",
+        "sub_type": "NO_OPERATIVO",
+        "parent_code": "4200",
+        "allow_entries": true
+    },
+    {
+        "code": "5000",
+        "name": "GASTOS Y COSTOS",
+        "type": "GASTO",
+        "sub_type": "COSTO",
+        "parent_code": null,
+        "allow_entries": false
+    },
+    {
+        "code": "5100",
+        "name": "Costos de Ventas",
+        "type": "GASTO",
+        "sub_type": "COSTO",
+        "parent_code": "5000",
+        "allow_entries": false
+    },
+    {
+        "code": "5101",
+        "name": "Costo de Mercancías Vendidas",
+        "type": "GASTO",
+        "sub_type": "COSTO",
+        "parent_code": "5100",
+        "allow_entries": true
+    },
+    {
+        "code": "5102",
+        "name": "Costo de Servicios Prestados",
+        "type": "GASTO",
+        "sub_type": "COSTO",
+        "parent_code": "5100",
+        "allow_entries": true
+    },
+    {
+        "code": "5200",
+        "name": "Gastos Operativos",
+        "type": "GASTO",
+        "sub_type": "OPERATIVO",
+        "parent_code": "5000",
+        "allow_entries": false
+    },
+    {
+        "code": "5201",
+        "name": "Sueldos y Salarios",
+        "type": "GASTO",
+        "sub_type": "OPERATIVO",
+        "parent_code": "5200",
+        "allow_entries": true
+    },
+    {
+        "code": "5202",
+        "name": "Cargas Sociales (CCSS / INS)",
+        "type": "GASTO",
+        "sub_type": "OPERATIVO",
+        "parent_code": "5200",
+        "allow_entries": true
+    },
+    {
+        "code": "5203",
+        "name": "Alquiler de Instalaciones",
+        "type": "GASTO",
+        "sub_type": "OPERATIVO",
+        "parent_code": "5200",
+        "allow_entries": true
+    },
+    {
+        "code": "5204",
+        "name": "Electricidad, Agua y Teléfono",
+        "type": "GASTO",
+        "sub_type": "OPERATIVO",
+        "parent_code": "5200",
+        "allow_entries": true
+    },
+    {
+        "code": "5205",
+        "name": "Combustibles y Lubricantes",
+        "type": "GASTO",
+        "sub_type": "OPERATIVO",
+        "parent_code": "5200",
+        "allow_entries": true
+    },
+    {
+        "code": "5206",
+        "name": "Publicidad y Mercadeo",
+        "type": "GASTO",
+        "sub_type": "OPERATIVO",
+        "parent_code": "5200",
+        "allow_entries": true
+    },
+    {
+        "code": "5207",
+        "name": "Mantenimiento y Reparaciones",
+        "type": "GASTO",
+        "sub_type": "OPERATIVO",
+        "parent_code": "5200",
+        "allow_entries": true
+    },
+    {
+        "code": "5208",
+        "name": "Seguros",
+        "type": "GASTO",
+        "sub_type": "OPERATIVO",
+        "parent_code": "5200",
+        "allow_entries": true
+    },
+    {
+        "code": "5209",
+        "name": "Honorarios y Servicios Profesionales",
+        "type": "GASTO",
+        "sub_type": "OPERATIVO",
+        "parent_code": "5200",
+        "allow_entries": true
+    },
+    {
+        "code": "5210",
+        "name": "Depreciación del Período",
+        "type": "GASTO",
+        "sub_type": "OPERATIVO",
+        "parent_code": "5200",
+        "allow_entries": true
+    },
+    {
+        "code": "5211",
+        "name": "Amortización de Intangibles",
+        "type": "GASTO",
+        "sub_type": "OPERATIVO",
+        "parent_code": "5200",
+        "allow_entries": true
+    },
+    {
+        "code": "5212",
+        "name": "Gastos de Viaje y Representación",
+        "type": "GASTO",
+        "sub_type": "OPERATIVO",
+        "parent_code": "5200",
+        "allow_entries": true
+    },
+    {
+        "code": "5213",
+        "name": "Materiales y Suministros",
+        "type": "GASTO",
+        "sub_type": "OPERATIVO",
+        "parent_code": "5200",
+        "allow_entries": true
+    },
+    {
+        "code": "5214",
+        "name": "Servicios de Tecnología (Cloud/SaaS)",
+        "type": "GASTO",
+        "sub_type": "OPERATIVO",
+        "parent_code": "5200",
+        "allow_entries": true
+    },
+    {
+        "code": "5300",
+        "name": "Gastos Financieros",
+        "type": "GASTO",
+        "sub_type": "FINANCIERO",
+        "parent_code": "5000",
+        "allow_entries": false
+    },
+    {
+        "code": "5301",
+        "name": "Intereses Bancarios",
+        "type": "GASTO",
+        "sub_type": "FINANCIERO",
+        "parent_code": "5300",
+        "allow_entries": true
+    },
+    {
+        "code": "5302",
+        "name": "Comisiones Bancarias",
+        "type": "GASTO",
+        "sub_type": "FINANCIERO",
+        "parent_code": "5300",
+        "allow_entries": true
+    },
+    {
+        "code": "5303",
+        "name": "Diferencial Cambiario Desfavorable",
+        "type": "GASTO",
+        "sub_type": "FINANCIERO",
+        "parent_code": "5300",
+        "allow_entries": true
+    },
+    {
+        "code": "5400",
+        "name": "Impuesto de Renta",
+        "type": "GASTO",
+        "sub_type": "IMPUESTO",
+        "parent_code": "5000",
+        "allow_entries": false
+    },
+    {
+        "code": "5401",
+        "name": "Impuesto sobre la Renta del Período",
+        "type": "GASTO",
+        "sub_type": "IMPUESTO",
+        "parent_code": "5400",
+        "allow_entries": true
+    },
+    {
+        "code": "5402",
+        "name": "Impuesto Diferido (Diferencias Temporales)",
+        "type": "GASTO",
+        "sub_type": "IMPUESTO",
+        "parent_code": "5400",
+        "allow_entries": true
+    }
+]
