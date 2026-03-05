@@ -9,7 +9,9 @@ Reglas de Oro aplicadas:
 """
 from datetime import datetime, timezone
 from typing import Optional
+import os
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, EmailStr, field_validator
 from sqlalchemy.orm import Session
@@ -226,12 +228,10 @@ def get_clients(
     user_id     = current_user.get("sub")
 
     if tenant_type == TenantType.partner_linked and partner_id:
-        # Retorna todos los tenants vinculados a este partner
         tenants = db.query(Tenant).filter(
             Tenant.partner_id == partner_id
         ).all()
     else:
-        # Contador standalone: ve los tenants donde es admin
         user = db.query(User).filter(User.id == user_id).first()
         if not user:
             return {"clients": []}
@@ -251,3 +251,59 @@ def get_clients(
             for t in tenants
         ]
     }
+
+
+# ─────────────────────────────────────────────────────────────────
+# Bridge: intercambio partner_token → gc_token (Opción A mejorada)
+# ─────────────────────────────────────────────────────────────────
+
+class PartnerHandoffRequest(BaseModel):
+    partner_token: str
+
+
+@router.post("/partner-handoff")
+def partner_handoff(req: PartnerHandoffRequest):
+    """
+    Intercambia un partner_token opaco del Facturador por un gc_token JWT
+    válido para el sistema contable.
+
+    Flujo:
+      1. Valida partner_token llamando a app.genomaio.com/api/partners/portal/me
+      2. Si válido, emite gc_token JWT con identidad del partner
+      3. El frontend redirige a /select?token=gc_token
+    """
+    facturador_base = os.getenv(
+        "FACTURADOR_BASE_URL",
+        "https://app.genomaio.com"
+    )
+
+    try:
+        resp = httpx.get(
+            f"{facturador_base}/api/partners/portal/me",
+            headers={"X-Partner-Token": req.partner_token},
+            timeout=15.0
+        )
+    except httpx.RequestError as e:
+        raise HTTPException(
+            status_code=502,
+            detail="No se pudo contactar al Facturador para validar el token"
+        )
+
+    if resp.status_code == 401:
+        raise HTTPException(status_code=401, detail="Token de partner inválido o expirado")
+    if resp.status_code != 200:
+        raise HTTPException(status_code=502, detail="Error al validar token con el Facturador")
+
+    partner_data = resp.json()
+
+    # Emitir gc_token JWT con identidad del partner
+    gc_token = create_access_token(
+        user_id=str(partner_data.get("id", "") or partner_data.get("email", "")),
+        tenant_id=partner_data.get("codigo_referido", ""),
+        tenant_type=TenantType.partner_linked.value,
+        role=UserRole.admin.value,
+        nombre=partner_data.get("nombre_despacho") or partner_data.get("email", ""),
+        partner_id=partner_data.get("codigo_referido"),
+    )
+
+    return {"gc_token": gc_token}
