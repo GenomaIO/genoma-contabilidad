@@ -136,6 +136,24 @@ def register(req: RegisterRequest, db: Session = Depends(get_session)):
         partner_id=tenant.partner_id,
     )
 
+    # Notificar al Facturador para que aparezca en Mission Control → Partners
+    # Solo para cuentas standalone (Contadores Independientes)
+    if req.tenant_type == TenantType.standalone:
+        facturador_base = os.getenv("FACTURADOR_BASE_URL", "https://app.genomaio.com")
+        try:
+            httpx.post(
+                f"{facturador_base}/api/partners/portal/auto-register-independiente",
+                json={
+                    "email":                 req.email,
+                    "nombre_despacho":       req.nombre_empresa,
+                    "contabilidad_tenant_id": tenant.id,
+                },
+                timeout=5.0
+            )
+        except Exception:
+            # Fire-and-forget: si falla no bloquea el registro
+            pass
+
     return AuthResponse(
         access_token=token,
         tenant_type=tenant.tenant_type.value,
