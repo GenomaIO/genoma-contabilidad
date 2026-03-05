@@ -1,6 +1,10 @@
 /**
  * AppContext — Multi-tenant state global
  * NO hardcoded tenant IDs · Todo desde JWT o env
+ *
+ * authLoading: true hasta que el useEffect de hidratación termina.
+ * Esto evita la race condition donde ProtectedRoute redirige antes
+ * de que el token del URL sea procesado.
  */
 import { createContext, useContext, useReducer, useEffect } from 'react'
 
@@ -11,8 +15,9 @@ const initialState = {
     sidebarOpen: false,
     user: null,
     tenant: null,
-    period: null,        // { year, month } periodo contable activo
-    apiStatus: 'checking', // 'ok' | 'error' | 'checking'
+    period: null,
+    authLoading: true,   // ← guard contra race condition en ProtectedRoute
+    apiStatus: 'checking',
 }
 
 function reducer(state, action) {
@@ -39,19 +44,19 @@ function reducer(state, action) {
         case 'SET_API_STATUS':
             return { ...state, apiStatus: action.payload }
 
+        case 'AUTH_READY':
+            // Se despacha cuando la hidratación de token termina (con o sin usuario)
+            return { ...state, authLoading: false }
+
         case 'LOGOUT':
             localStorage.removeItem('gc_token')
-            return { ...initialState, theme: state.theme, apiStatus: state.apiStatus }
+            return { ...initialState, authLoading: false, theme: state.theme, apiStatus: state.apiStatus }
 
         default:
             return state
     }
 }
 
-/**
- * Parsea el payload de un JWT sin verificar firma (solo para leer claims en el frontend).
- * La verificación real ocurre siempre en el backend.
- */
 function parseJwtPayload(token) {
     try {
         const base64 = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')
@@ -64,25 +69,22 @@ function parseJwtPayload(token) {
 export function AppProvider({ children }) {
     const [state, dispatch] = useReducer(reducer, initialState)
 
-    // Aplicar tema al html element
     useEffect(() => {
         document.documentElement.setAttribute('data-theme', state.theme)
     }, [state.theme])
 
     // ── Hidratación: URL ?token= → localStorage → Estado ──────────
+    // Al terminar siempre despacha AUTH_READY para liberar el guard.
     useEffect(() => {
         const params = new URLSearchParams(window.location.search)
         const urlToken = params.get('token')
         let activeToken = null
 
         if (urlToken) {
-            // Llegamos desde partner_dashboard con ?token=JWT
             localStorage.setItem('gc_token', urlToken)
             activeToken = urlToken
-            // Limpiar token de la URL sin recargar la página
             window.history.replaceState({}, document.title, window.location.pathname)
         } else {
-            // Sesión persistida en localStorage
             activeToken = localStorage.getItem('gc_token')
         }
 
@@ -101,13 +103,14 @@ export function AppProvider({ children }) {
                     }
                 })
             } else {
-                // Token expirado — limpiar
                 localStorage.removeItem('gc_token')
             }
         }
+
+        // Siempre liberar el guard — con o sin usuario
+        dispatch({ type: 'AUTH_READY' })
     }, [])
 
-    // Verificar health del backend al iniciar
     useEffect(() => {
         const apiUrl = import.meta.env.VITE_API_URL || ''
         fetch(`${apiUrl}/health`)

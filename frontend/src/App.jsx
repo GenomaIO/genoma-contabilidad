@@ -6,9 +6,23 @@ import Dashboard from './pages/Dashboard'
 import ClientSelector from './pages/ClientSelector'
 import { useApp } from './context/AppContext'
 
-// Guard de ruta — redirige al portal si no hay sesión
+// Guard de ruta — espera hidratación antes de decidir
 function ProtectedRoute({ children }) {
     const { state } = useApp()
+
+    // Mientras el token se está leyendo, no hacer nada (evita redirect prematuro)
+    if (state.authLoading) {
+        return (
+            <div style={{
+                minHeight: '100vh', display: 'flex', alignItems: 'center',
+                justifyContent: 'center', background: 'var(--bg-primary)',
+                color: 'var(--text-secondary)', fontSize: '0.95rem'
+            }}>
+                ⏳ Cargando sesión...
+            </div>
+        )
+    }
+
     if (!state.user) {
         window.location.href = 'https://app.genomaio.com/partner_login.html'
         return null
