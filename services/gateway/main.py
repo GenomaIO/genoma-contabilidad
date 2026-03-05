@@ -33,6 +33,19 @@ async def lifespan(app: FastAPI):
             logger.info("✅ DB inicializada y tablas creadas")
         except Exception as e:
             logger.error(f"❌ Error inicializando DB: {e}")
+
+        # ── Migración A0: catalog_mode en tenants ─────────────────
+        # IF NOT EXISTS → idempotente, seguro en cada arranque.
+        # catalog_mode NULL = tenant nuevo (trigger de onboarding en el frontend).
+        try:
+            with _engine.begin() as conn:
+                conn.execute(text(
+                    "ALTER TABLE tenants ADD COLUMN IF NOT EXISTS "
+                    "catalog_mode VARCHAR(20) DEFAULT NULL"
+                ))
+            logger.info("✅ Migración A0: catalog_mode agregado a tenants")
+        except Exception as e:
+            logger.warning(f"⚠️  Migración A0 omitida: {e}")
     else:
         logger.warning("⚠️  DATABASE_URL no configurado")
     yield

@@ -16,7 +16,8 @@ const initialState = {
     user: null,
     tenant: null,
     period: null,
-    authLoading: true,   // ← guard contra race condition en ProtectedRoute
+    catalogMode: null,   // NULL = no elegido → trigger onboarding
+    authLoading: true,
     apiStatus: 'checking',
 }
 
@@ -43,6 +44,9 @@ function reducer(state, action) {
 
         case 'SET_API_STATUS':
             return { ...state, apiStatus: action.payload }
+
+        case 'SET_CATALOG_MODE':
+            return { ...state, catalogMode: action.payload }
 
         case 'AUTH_READY':
             // Se despacha cuando la hidratación de token termina (con o sin usuario)
@@ -102,6 +106,10 @@ export function AppProvider({ children }) {
                         partner_id: payload.partner_id || null,
                     }
                 })
+                // Hidratar catalog_mode desde el JWT si viene embebido
+                if (payload.catalog_mode) {
+                    dispatch({ type: 'SET_CATALOG_MODE', payload: payload.catalog_mode })
+                }
             } else {
                 localStorage.removeItem('gc_token')
             }

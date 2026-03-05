@@ -17,7 +17,7 @@ from pydantic import BaseModel, EmailStr, field_validator
 from sqlalchemy.orm import Session
 
 from .database import get_session
-from .models import Tenant, User, TenantType, UserRole, TenantStatus
+from .models import Tenant, User, TenantType, UserRole, TenantStatus, CatalogMode
 from .security import hash_password, verify_password, create_access_token, get_current_user
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -362,3 +362,46 @@ def partner_handoff(req: PartnerHandoffRequest):
     )
 
     return {"gc_token": gc_token}
+
+
+# ─────────────────────────────────────────────────────────────────
+# Onboarding: elegir modo de catálogo de cuentas
+# ─────────────────────────────────────────────────────────────────
+
+class CatalogModeRequest(BaseModel):
+    mode: CatalogMode   # NONE | STANDARD | CUSTOM
+
+
+@router.patch("/catalog-mode")
+def set_catalog_mode(
+    req: CatalogModeRequest,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_session),
+):
+    """
+    Guarda la elección del modo de catálogo para el tenant del usuario.
+    Regla de Oro: tenant_id SIEMPRE del JWT, nunca del body.
+    Solo lo puede cambiar admin o contador — lectura queda bloqueado.
+    """
+    role = current_user.get("role")
+    if role not in ("admin", "contador"):
+        raise HTTPException(
+            status_code=403,
+            detail="Solo admin o contador puede configurar el modo de catálogo"
+        )
+
+    tenant_id = current_user.get("tenant_id")
+    tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant no encontrado")
+
+    old_mode = tenant.catalog_mode.value if tenant.catalog_mode else None
+    tenant.catalog_mode = req.mode
+    db.commit()
+
+    return {
+        "ok": True,
+        "tenant_id": tenant_id,
+        "catalog_mode": req.mode.value,
+        "previous_mode": old_mode,
+    }

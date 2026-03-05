@@ -53,6 +53,19 @@ class TenantStatus(str, enum.Enum):
     trial     = "trial"
 
 
+class CatalogMode(str, enum.Enum):
+    """
+    Modo de catálogo de cuentas del tenant.
+    NONE     : Sin catálogo — usa cuentas genéricas (INGRESO, GASTO, IVA…)
+    STANDARD : Seeder de ~70 cuentas NIIF CR precargadas.
+    CUSTOM   : El contador construye su propio catálogo.
+    NULL     : Tenant nuevo — todavía no ha elegido (muestra pantalla onboarding).
+    """
+    NONE     = "NONE"
+    STANDARD = "STANDARD"
+    CUSTOM   = "CUSTOM"
+
+
 # ───────────────────────────────────────────────────────────────
 # Tenant (empresa / despacho contable)
 # ───────────────────────────────────────────────────────────────
@@ -81,6 +94,10 @@ class Tenant(Base):
     facturador_api_key = Column(Text, nullable=True)
 
     status         = Column(Enum(TenantStatus), nullable=False, default=TenantStatus.trial)
+
+    # Modo de catálogo contable — NULL = no elegido aún (trigger onboarding)
+    catalog_mode   = Column(Enum(CatalogMode), nullable=True, default=None)
+
     created_at     = Column(DateTime(timezone=True), default=now_utc, nullable=False)
     updated_at     = Column(DateTime(timezone=True), default=now_utc, onupdate=now_utc)
 

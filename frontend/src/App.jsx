@@ -4,6 +4,7 @@ import Sidebar from './components/Sidebar'
 import Header from './components/Header'
 import Dashboard from './pages/Dashboard'
 import ClientSelector from './pages/ClientSelector'
+import Onboarding from './pages/Onboarding'
 import { useApp } from './context/AppContext'
 
 // Guard de ruta — espera hidratación antes de decidir
@@ -44,9 +45,15 @@ function ComingSoon({ name }) {
 function AppLayout() {
     const { state } = useApp()
 
-    // Si el usuario no ha seleccionado aún un tenant activo, ir al selector
+    // Prioridad 1: si no hay tenant elegido, ir al selector
     if (!state.tenant) {
         return <Navigate to="/select" replace />
+    }
+
+    // Prioridad 2: si el tenant nunca eligió modo de catálogo, ir al onboarding
+    // Solo aplica a usuarios standalone (los partner_linked no tienen catálogo propio)
+    if (state.catalogMode === null && state.user?.tenant_type === 'standalone') {
+        return <Onboarding />
     }
 
     return (
