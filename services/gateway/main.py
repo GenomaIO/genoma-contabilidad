@@ -15,6 +15,7 @@ from sqlalchemy import text
 
 from services.auth.database import init_db, get_session
 from services.auth.router import router as auth_router
+import services.catalog.models  # noqa: F401 — registra Account en Base para create_all
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -46,6 +47,41 @@ async def lifespan(app: FastAPI):
             logger.info("✅ Migración A0: catalog_mode agregado a tenants")
         except Exception as e:
             logger.warning(f"⚠️  Migración A0 omitida: {e}")
+
+        # ── Migración A1: tabla accounts (catálogo de cuentas) ────
+        # CREATE TABLE IF NOT EXISTS → idempotente.
+        # La tabla se crea con create_all, pero los índices adicionales
+        # se garantizan aquí para Render donde create_all puede omitir cambios.
+        try:
+            from sqlalchemy import text as _text
+            with _engine.begin() as conn:
+                conn.execute(_text("""
+                    CREATE TABLE IF NOT EXISTS accounts (
+                        id              VARCHAR(36) PRIMARY KEY,
+                        tenant_id       VARCHAR(36) NOT NULL,
+                        code            VARCHAR(20) NOT NULL,
+                        name            VARCHAR(200) NOT NULL,
+                        description     TEXT,
+                        account_type    VARCHAR(20) NOT NULL,
+                        account_sub_type VARCHAR(30),
+                        parent_code     VARCHAR(20),
+                        allow_entries   BOOLEAN NOT NULL DEFAULT TRUE,
+                        is_active       BOOLEAN NOT NULL DEFAULT TRUE,
+                        is_generic      BOOLEAN NOT NULL DEFAULT FALSE,
+                        created_at      TIMESTAMPTZ DEFAULT NOW(),
+                        updated_at      TIMESTAMPTZ,
+                        UNIQUE (tenant_id, code)
+                    )
+                """))
+                conn.execute(_text(
+                    "CREATE INDEX IF NOT EXISTS idx_accounts_tenant ON accounts(tenant_id)"
+                ))
+                conn.execute(_text(
+                    "CREATE INDEX IF NOT EXISTS idx_accounts_type ON accounts(tenant_id, account_type)"
+                ))
+            logger.info("✅ Migración A1: tabla accounts creada/verificada")
+        except Exception as e:
+            logger.warning(f"⚠️  Migración A1 omitida: {e}")
     else:
         logger.warning("⚠️  DATABASE_URL no configurado")
     yield
