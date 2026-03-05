@@ -16,6 +16,7 @@ from sqlalchemy import text
 from services.auth.database import init_db, get_session
 from services.auth.router import router as auth_router
 from services.catalog.router import router as catalog_router
+from services.ledger.router import router as ledger_router
 import services.catalog.models  # noqa: F401 — registra Account en Base para create_all
 import services.ledger.models   # noqa: F401 — registra JournalEntry/JournalLine en Base
 import services.ledger.audit_log  # noqa: F401 — registra AuditLog en Base
@@ -188,6 +189,7 @@ app.add_middleware(
 # Incluir routers
 app.include_router(auth_router)
 app.include_router(catalog_router)
+app.include_router(ledger_router)
 
 # ── Endpoints API ──────────────────────────────────────────────
 
