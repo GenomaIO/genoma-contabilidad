@@ -5,6 +5,7 @@ import Header from './components/Header'
 import Dashboard from './pages/Dashboard'
 import ClientSelector from './pages/ClientSelector'
 import Onboarding from './pages/Onboarding'
+import Catalogo from './pages/Catalogo'
 import { useApp } from './context/AppContext'
 
 // Guard de ruta — espera hidratación antes de decidir
@@ -73,6 +74,7 @@ function AppLayout() {
                     <Route path="/prorrata" element={<ComingSoon name="Prorrata IVA" />} />
                     <Route path="/reportes" element={<ComingSoon name="Estados Financieros" />} />
                     <Route path="/cierre" element={<ComingSoon name="Cierre de Período" />} />
+                    <Route path="/catalogo" element={<Catalogo />} />
                     <Route path="/config" element={<ComingSoon name="Configuración" />} />
                     <Route path="*" element={<ComingSoon name="Página no encontrada" />} />
                 </Routes>
