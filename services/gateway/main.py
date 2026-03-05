@@ -17,6 +17,7 @@ from services.auth.database import init_db, get_session
 from services.auth.router import router as auth_router
 from services.catalog.router import router as catalog_router
 from services.ledger.router import router as ledger_router
+from services.integration.webhook_receiver import router as integration_router
 import services.catalog.models  # noqa: F401 — registra Account en Base para create_all
 import services.ledger.models   # noqa: F401 — registra JournalEntry/JournalLine en Base
 import services.ledger.audit_log  # noqa: F401 — registra AuditLog en Base
@@ -190,6 +191,7 @@ app.add_middleware(
 app.include_router(auth_router)
 app.include_router(catalog_router)
 app.include_router(ledger_router)
+app.include_router(integration_router)
 
 # ── Endpoints API ──────────────────────────────────────────────
 
