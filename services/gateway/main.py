@@ -61,11 +61,11 @@ app.include_router(auth_router)
 
 @app.get("/health")
 def health():
-    engine = get_engine()
+    global _engine
     db_ok = False
-    if engine:
+    if _engine:
         try:
-            with engine.connect() as conn:
+            with _engine.connect() as conn:
                 conn.execute(text("SELECT 1"))
             db_ok = True
         except Exception:
