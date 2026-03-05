@@ -6,6 +6,7 @@ import Dashboard from './pages/Dashboard'
 import ClientSelector from './pages/ClientSelector'
 import Onboarding from './pages/Onboarding'
 import Catalogo from './pages/Catalogo'
+import AsientosPendientes from './pages/AsientosPendientes'
 import { useApp } from './context/AppContext'
 
 // Guard de ruta — espera hidratación antes de decidir
@@ -64,17 +65,16 @@ function AppLayout() {
             <main className="main-content">
                 <Routes>
                     <Route path="/" element={<Dashboard />} />
-                    <Route path="/diario" element={<ComingSoon name="Libro Diario" />} />
+                    <Route path="/diario" element={<AsientosPendientes />} />
                     <Route path="/mayor" element={<ComingSoon name="Mayor General" />} />
                     <Route path="/balance" element={<ComingSoon name="Balance de Comprobación" />} />
                     <Route path="/integracion" element={<ComingSoon name="Integración Facturador" />} />
-                    <Route path="/asientos" element={<ComingSoon name="Asientos Internos" />} />
-                    <Route path="/catalogo" element={<ComingSoon name="Catálogo Contable" />} />
+                    <Route path="/asientos" element={<AsientosPendientes />} />
+                    <Route path="/catalogo" element={<Catalogo />} />
                     <Route path="/declaraciones" element={<ComingSoon name="Declaraciones Tribu-CR" />} />
                     <Route path="/prorrata" element={<ComingSoon name="Prorrata IVA" />} />
                     <Route path="/reportes" element={<ComingSoon name="Estados Financieros" />} />
                     <Route path="/cierre" element={<ComingSoon name="Cierre de Período" />} />
-                    <Route path="/catalogo" element={<Catalogo />} />
                     <Route path="/config" element={<ComingSoon name="Configuración" />} />
                     <Route path="*" element={<ComingSoon name="Página no encontrada" />} />
                 </Routes>
