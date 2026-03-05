@@ -17,6 +17,7 @@ from services.auth.database import init_db, get_session
 from services.auth.router import router as auth_router
 from services.catalog.router import router as catalog_router
 import services.catalog.models  # noqa: F401 — registra Account en Base para create_all
+import services.ledger.models   # noqa: F401 — registra JournalEntry/JournalLine en Base
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -85,6 +86,57 @@ async def lifespan(app: FastAPI):
             logger.warning(f"⚠️  Migración A1 omitida: {e}")
     else:
         logger.warning("⚠️  DATABASE_URL no configurado")
+
+        # ── Migración B1: tablas ledger ───────────────────────────
+        try:
+            from sqlalchemy import text as _text
+            with _engine.begin() as conn:
+                conn.execute(_text("""
+                    CREATE TABLE IF NOT EXISTS journal_entries (
+                        id           VARCHAR(36) PRIMARY KEY,
+                        tenant_id    VARCHAR(36) NOT NULL,
+                        period       VARCHAR(7)  NOT NULL,
+                        date         VARCHAR(10) NOT NULL,
+                        description  TEXT        NOT NULL,
+                        status       VARCHAR(10) NOT NULL DEFAULT 'DRAFT',
+                        source       VARCHAR(20) NOT NULL DEFAULT 'MANUAL',
+                        source_ref   VARCHAR(100),
+                        created_by   VARCHAR(36) NOT NULL,
+                        approved_by  VARCHAR(36),
+                        approved_at  TIMESTAMPTZ,
+                        voided_by    VARCHAR(36),
+                        voided_at    TIMESTAMPTZ,
+                        reversal_id  VARCHAR(36),
+                        created_at   TIMESTAMPTZ DEFAULT NOW()
+                    )
+                """))
+                conn.execute(_text("""
+                    CREATE TABLE IF NOT EXISTS journal_lines (
+                        id                VARCHAR(36) PRIMARY KEY,
+                        entry_id          VARCHAR(36) NOT NULL REFERENCES journal_entries(id) ON DELETE CASCADE,
+                        tenant_id         VARCHAR(36) NOT NULL,
+                        account_code      VARCHAR(20) NOT NULL,
+                        description       TEXT,
+                        debit             NUMERIC(18,5) NOT NULL DEFAULT 0,
+                        credit            NUMERIC(18,5) NOT NULL DEFAULT 0,
+                        deductible_status VARCHAR(20) DEFAULT 'PENDING',
+                        legal_basis       VARCHAR(100),
+                        dim_segment       VARCHAR(50),
+                        dim_branch        VARCHAR(50),
+                        dim_project       VARCHAR(50),
+                        created_at        TIMESTAMPTZ DEFAULT NOW(),
+                        CONSTRAINT chk_debit_or_credit CHECK (debit = 0 OR credit = 0)
+                    )
+                """))
+                conn.execute(_text("CREATE INDEX IF NOT EXISTS idx_je_tenant_period ON journal_entries(tenant_id, period)"))
+                conn.execute(_text("CREATE INDEX IF NOT EXISTS idx_je_tenant_status ON journal_entries(tenant_id, status)"))
+                conn.execute(_text("CREATE INDEX IF NOT EXISTS idx_je_source_ref    ON journal_entries(source_ref)"))
+                conn.execute(_text("CREATE INDEX IF NOT EXISTS idx_jl_entry_id      ON journal_lines(entry_id)"))
+                conn.execute(_text("CREATE INDEX IF NOT EXISTS idx_jl_tenant_code   ON journal_lines(tenant_id, account_code)"))
+            logger.info("✅ Migración B1: tablas journal_entries + journal_lines creadas/verificadas")
+        except Exception as e:
+            logger.warning(f"⚠️  Migración B1 omitida: {e}")
+
     yield
     logger.info("🛑 Genoma Contabilidad cerrando...")
 
