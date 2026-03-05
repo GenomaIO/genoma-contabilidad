@@ -18,6 +18,7 @@ from services.auth.router import router as auth_router
 from services.catalog.router import router as catalog_router
 import services.catalog.models  # noqa: F401 — registra Account en Base para create_all
 import services.ledger.models   # noqa: F401 — registra JournalEntry/JournalLine en Base
+import services.ledger.audit_log  # noqa: F401 — registra AuditLog en Base
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -136,6 +137,34 @@ async def lifespan(app: FastAPI):
             logger.info("✅ Migración B1: tablas journal_entries + journal_lines creadas/verificadas")
         except Exception as e:
             logger.warning(f"⚠️  Migración B1 omitida: {e}")
+
+        # ── Migración B2: tabla audit_log ─────────────────────────
+        try:
+            with _engine.begin() as conn:
+                conn.execute(text("""
+                    CREATE TABLE IF NOT EXISTS audit_log (
+                        id          VARCHAR(36)  PRIMARY KEY,
+                        tenant_id   VARCHAR(36)  NOT NULL,
+                        user_id     VARCHAR(36)  NOT NULL,
+                        user_role   VARCHAR(20)  NOT NULL,
+                        user_email  VARCHAR(200),
+                        action      VARCHAR(40)  NOT NULL,
+                        entity_type VARCHAR(50),
+                        entity_id   VARCHAR(36),
+                        before_json TEXT,
+                        after_json  TEXT,
+                        note        TEXT,
+                        ip          VARCHAR(45),
+                        created_at  TIMESTAMPTZ DEFAULT NOW()
+                    )
+                """))
+                conn.execute(text("CREATE INDEX IF NOT EXISTS idx_audit_tenant_date ON audit_log(tenant_id, created_at)"))
+                conn.execute(text("CREATE INDEX IF NOT EXISTS idx_audit_entity      ON audit_log(entity_type, entity_id)"))
+                conn.execute(text("CREATE INDEX IF NOT EXISTS idx_audit_user        ON audit_log(user_id)"))
+                conn.execute(text("CREATE INDEX IF NOT EXISTS idx_audit_action      ON audit_log(action)"))
+            logger.info("✅ Migración B2: tabla audit_log creada/verificada")
+        except Exception as e:
+            logger.warning(f"⚠️  Migración B2 omitida: {e}")
 
     yield
     logger.info("🛑 Genoma Contabilidad cerrando...")
