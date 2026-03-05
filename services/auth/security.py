@@ -46,11 +46,13 @@ def create_access_token(
     role: str,
     nombre: str,
     partner_id: Optional[str] = None,
+    extra_claims: Optional[dict] = None,
 ) -> str:
     """
     Genera un JWT con la identidad completa del usuario.
     tenant_id y tenant_type quedan embebidos — el backend
     los extrae sin necesitar otro lookup a la DB por request.
+    extra_claims: claims adicionales opcionales (ej: facturador_token, partner_uuid)
     """
     expire = datetime.now(timezone.utc) + timedelta(hours=JWT_EXPIRE_HOURS)
     payload = {
@@ -63,6 +65,8 @@ def create_access_token(
     }
     if partner_id:
         payload["partner_id"] = partner_id
+    if extra_claims:
+        payload.update(extra_claims)
 
     return jwt.encode(payload, _require_secret(), algorithm=JWT_ALGORITHM)
 

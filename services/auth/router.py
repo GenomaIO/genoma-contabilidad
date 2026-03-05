@@ -220,24 +220,53 @@ def get_clients(
 ):
     """
     Lista las empresas disponibles para el usuario autenticado.
-    - partner_linked : empresas cuyos tenants tengan el mismo partner_id
-    - standalone     : tenants registrados bajo el user_id
+    - partner_linked : consulta federada al Facturador (fuente de verdad)
+    - standalone     : tenants en la DB local de contabilidad
     """
-    tenant_type = current_user.get("tenant_type")
-    partner_id  = current_user.get("partner_id")
-    user_id     = current_user.get("sub")
+    tenant_type       = current_user.get("tenant_type")
+    facturador_token  = current_user.get("facturador_token")  # solo en gc_token de partner
+    user_id           = current_user.get("sub")
 
-    if tenant_type == TenantType.partner_linked and partner_id:
-        tenants = db.query(Tenant).filter(
-            Tenant.partner_id == partner_id
-        ).all()
-    else:
-        user = db.query(User).filter(User.id == user_id).first()
-        if not user:
-            return {"clients": []}
-        tenants = db.query(Tenant).filter(
-            Tenant.id == user.tenant_id
-        ).all()
+    # ── PARTNER: fuente de verdad = Facturador ───────────────────────
+    if tenant_type == TenantType.partner_linked.value and facturador_token:
+        facturador_base = os.getenv("FACTURADOR_BASE_URL", "https://app.genomaio.com")
+        try:
+            resp = httpx.get(
+                f"{facturador_base}/api/partners/portal/me/clientes",
+                headers={"X-Partner-Token": facturador_token},
+                timeout=15.0
+            )
+        except httpx.RequestError:
+            raise HTTPException(status_code=502, detail="No se pudo contactar al Facturador")
+
+        if resp.status_code == 401:
+            raise HTTPException(status_code=401, detail="Token del Facturador expirado")
+        if resp.status_code != 200:
+            raise HTTPException(status_code=502, detail="Error obteniendo clientes del Facturador")
+
+        data = resp.json()
+        clientes_raw = data.get("clientes", [])
+
+        return {
+            "clients": [
+                {
+                    "tenant_id":   c.get("tenant_id"),
+                    "emisor_id":   c.get("emisor_id"),    # puerta a documentos fiscales
+                    "nombre":      c.get("nombre") or "Sin nombre",
+                    "estado":      c.get("estado", "ACTIVO"),
+                    "numero":      c.get("numero_cliente"),
+                    "genera_comision": c.get("genera_comision", False),
+                    "origen":      "facturador",
+                }
+                for c in clientes_raw
+            ]
+        }
+
+    # ── STANDALONE: fuente de verdad = BD local contabilidad ──────────
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        return {"clients": []}
+    tenants = db.query(Tenant).filter(Tenant.id == user.tenant_id).all()
 
     return {
         "clients": [
@@ -247,6 +276,7 @@ def get_clients(
                 "cedula":      t.cedula,
                 "tenant_type": t.tenant_type.value,
                 "status":      t.status.value,
+                "origen":      "contabilidad",
             }
             for t in tenants
         ]
@@ -267,10 +297,10 @@ def partner_handoff(req: PartnerHandoffRequest):
     Intercambia un partner_token opaco del Facturador por un gc_token JWT
     válido para el sistema contable.
 
-    Flujo:
-      1. Valida partner_token llamando a app.genomaio.com/api/partners/portal/me
-      2. Si válido, emite gc_token JWT con identidad del partner
-      3. El frontend redirige a /select?token=gc_token
+    El gc_token incluye:
+      - partner_uuid     : UUID del partner en la BD del Facturador
+      - facturador_token : token opaco original (para llamadas server-to-server)
+      - partner_id       : codigo_referido (GC-XXXX)
     """
     facturador_base = os.getenv(
         "FACTURADOR_BASE_URL",
@@ -283,7 +313,7 @@ def partner_handoff(req: PartnerHandoffRequest):
             headers={"X-Partner-Token": req.partner_token},
             timeout=15.0
         )
-    except httpx.RequestError as e:
+    except httpx.RequestError:
         raise HTTPException(
             status_code=502,
             detail="No se pudo contactar al Facturador para validar el token"
@@ -296,14 +326,21 @@ def partner_handoff(req: PartnerHandoffRequest):
 
     partner_data = resp.json()
 
-    # Emitir gc_token JWT con identidad del partner
+    partner_uuid     = str(partner_data.get("id") or "")
+    codigo_referido  = partner_data.get("codigo_referido") or ""
+    nombre_despacho  = partner_data.get("nombre_despacho") or partner_data.get("email", "")
+
     gc_token = create_access_token(
-        user_id=str(partner_data.get("id", "") or partner_data.get("email", "")),
-        tenant_id=partner_data.get("codigo_referido", ""),
-        tenant_type=TenantType.partner_linked.value,
-        role=UserRole.admin.value,
-        nombre=partner_data.get("nombre_despacho") or partner_data.get("email", ""),
-        partner_id=partner_data.get("codigo_referido"),
+        user_id      = partner_uuid or partner_data.get("email", ""),
+        tenant_id    = codigo_referido,
+        tenant_type  = TenantType.partner_linked.value,
+        role         = UserRole.admin.value,
+        nombre       = nombre_despacho,
+        partner_id   = codigo_referido,
+        extra_claims = {
+            "partner_uuid":     partner_uuid,
+            "facturador_token": req.partner_token,  # token opaco para llamadas futuras
+        }
     )
 
     return {"gc_token": gc_token}

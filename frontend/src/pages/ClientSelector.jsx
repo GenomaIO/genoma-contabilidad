@@ -41,9 +41,19 @@ export default function ClientSelector() {
             })
     }, [])
 
-    // Al seleccionar una empresa
+    // Al seleccionar una empresa — guarda contexto completo para documentos fiscales
     function selectClient(client) {
-        dispatch({ type: 'SET_TENANT', payload: client })
+        dispatch({
+            type: 'SET_TENANT',
+            payload: {
+                tenant_id: client.tenant_id,
+                emisor_id: client.emisor_id || null,  // puerta a FE/TE/recibidos
+                nombre: client.nombre,
+                estado: client.estado || client.status || 'ACTIVO',
+                origen: client.origen || 'contabilidad',
+                numero: client.numero || null,
+            }
+        })
         navigate('/')
     }
 
@@ -179,18 +189,23 @@ export default function ClientSelector() {
                                         🏢 {c.nombre}
                                     </div>
                                     <div style={{ color: 'var(--text-secondary)', fontSize: '0.82rem' }}>
-                                        Cédula: {c.cedula} · {c.tenant_type === 'partner_linked' ? 'Partner' : 'Independiente'}
+                                        {c.origen === 'facturador'
+                                            ? `Cliente #${c.numero || '?'} · Facturador`
+                                            : `Cédula: ${c.cedula || '—'} · Independiente`
+                                        }
                                     </div>
                                 </div>
                                 <span style={{
                                     fontSize: '0.78rem',
                                     padding: '4px 10px',
                                     borderRadius: 20,
-                                    background: c.status === 'active' ? 'rgba(16,185,129,0.15)' : 'rgba(245,158,11,0.15)',
-                                    color: c.status === 'active' ? '#10b981' : '#f59e0b',
+                                    background: (c.estado || c.status) === 'ACTIVO' || (c.estado || c.status) === 'active'
+                                        ? 'rgba(16,185,129,0.15)' : 'rgba(245,158,11,0.15)',
+                                    color: (c.estado || c.status) === 'ACTIVO' || (c.estado || c.status) === 'active'
+                                        ? '#10b981' : '#f59e0b',
                                     fontWeight: 500
                                 }}>
-                                    {c.status === 'active' ? 'Activo' : 'Trial'}
+                                    {(c.estado || c.status) === 'ACTIVO' || (c.estado || c.status) === 'active' ? 'Activo' : 'Trial'}
                                 </span>
                             </button>
                         ))}
