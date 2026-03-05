@@ -15,6 +15,7 @@ from sqlalchemy import text
 
 from services.auth.database import init_db, get_session
 from services.auth.router import router as auth_router
+from services.catalog.router import router as catalog_router
 import services.catalog.models  # noqa: F401 — registra Account en Base para create_all
 
 logging.basicConfig(level=logging.INFO)
@@ -105,6 +106,7 @@ app.add_middleware(
 
 # Incluir routers
 app.include_router(auth_router)
+app.include_router(catalog_router)
 
 # ── Endpoints API ──────────────────────────────────────────────
 
