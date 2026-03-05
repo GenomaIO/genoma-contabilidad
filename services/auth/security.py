@@ -11,6 +11,8 @@ import bcrypt
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
+from fastapi import Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 
 # ── Configuración desde env ──────────────────────────────────────
@@ -77,3 +79,28 @@ def extract_tenant_id(token: str) -> str:
     """Shortcut para obtener tenant_id del JWT."""
     payload = decode_token(token)
     return payload["tenant_id"]
+
+
+# ── FastAPI Dependency ────────────────────────────────────────────
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
+
+
+def get_current_user(token: str = Depends(oauth2_scheme)) -> dict:
+    """
+    FastAPI dependency — decodifica el JWT del header Authorization.
+    Inyectar con Depends(get_current_user) en cualquier endpoint protegido.
+    Retorna el payload completo: sub, tenant_id, tenant_type, role, nombre.
+    """
+    credentials_exc = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Token inválido o expirado",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = decode_token(token)
+        if not payload.get("sub"):
+            raise credentials_exc
+        return payload
+    except JWTError:
+        raise credentials_exc

@@ -48,6 +48,19 @@ function reducer(state, action) {
     }
 }
 
+/**
+ * Parsea el payload de un JWT sin verificar firma (solo para leer claims en el frontend).
+ * La verificación real ocurre siempre en el backend.
+ */
+function parseJwtPayload(token) {
+    try {
+        const base64 = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')
+        return JSON.parse(atob(base64))
+    } catch {
+        return null
+    }
+}
+
 export function AppProvider({ children }) {
     const [state, dispatch] = useReducer(reducer, initialState)
 
@@ -55,6 +68,44 @@ export function AppProvider({ children }) {
     useEffect(() => {
         document.documentElement.setAttribute('data-theme', state.theme)
     }, [state.theme])
+
+    // ── Hidratación: URL ?token= → localStorage → Estado ──────────
+    useEffect(() => {
+        const params = new URLSearchParams(window.location.search)
+        const urlToken = params.get('token')
+        let activeToken = null
+
+        if (urlToken) {
+            // Llegamos desde partner_dashboard con ?token=JWT
+            localStorage.setItem('gc_token', urlToken)
+            activeToken = urlToken
+            // Limpiar token de la URL sin recargar la página
+            window.history.replaceState({}, document.title, window.location.pathname)
+        } else {
+            // Sesión persistida en localStorage
+            activeToken = localStorage.getItem('gc_token')
+        }
+
+        if (activeToken) {
+            const payload = parseJwtPayload(activeToken)
+            if (payload && payload.exp * 1000 > Date.now()) {
+                dispatch({
+                    type: 'SET_USER',
+                    payload: {
+                        user_id: payload.sub,
+                        nombre: payload.nombre,
+                        tenant_id: payload.tenant_id,
+                        tenant_type: payload.tenant_type,
+                        role: payload.role,
+                        partner_id: payload.partner_id || null,
+                    }
+                })
+            } else {
+                // Token expirado — limpiar
+                localStorage.removeItem('gc_token')
+            }
+        }
+    }, [])
 
     // Verificar health del backend al iniciar
     useEffect(() => {

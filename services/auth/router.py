@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from .database import get_session
 from .models import Tenant, User, TenantType, UserRole, TenantStatus
-from .security import hash_password, verify_password, create_access_token
+from .security import hash_password, verify_password, create_access_token, get_current_user
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -196,9 +196,58 @@ def login(req: LoginRequest, db: Session = Depends(get_session)):
 
 
 @router.get("/me")
-def me(db: Session = Depends(get_session)):
+def me(current_user: dict = Depends(get_current_user)):
     """
-    Endpoint protegido — se implementa con middleware en gateway.
-    Aquí devolvemos la estructura esperada.
+    Retorna la identidad del usuario autenticado desde el JWT.
+    No requiere DB — todo viene del token.
     """
-    return {"message": "usar con JWT en Authorization header"}
+    return {
+        "user_id":     current_user.get("sub"),
+        "nombre":      current_user.get("nombre"),
+        "tenant_id":   current_user.get("tenant_id"),
+        "tenant_type": current_user.get("tenant_type"),
+        "role":        current_user.get("role"),
+        "partner_id":  current_user.get("partner_id"),
+    }
+
+
+@router.get("/clients")
+def get_clients(
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_session)
+):
+    """
+    Lista las empresas disponibles para el usuario autenticado.
+    - partner_linked : empresas cuyos tenants tengan el mismo partner_id
+    - standalone     : tenants registrados bajo el user_id
+    """
+    tenant_type = current_user.get("tenant_type")
+    partner_id  = current_user.get("partner_id")
+    user_id     = current_user.get("sub")
+
+    if tenant_type == TenantType.partner_linked and partner_id:
+        # Retorna todos los tenants vinculados a este partner
+        tenants = db.query(Tenant).filter(
+            Tenant.partner_id == partner_id
+        ).all()
+    else:
+        # Contador standalone: ve los tenants donde es admin
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            return {"clients": []}
+        tenants = db.query(Tenant).filter(
+            Tenant.id == user.tenant_id
+        ).all()
+
+    return {
+        "clients": [
+            {
+                "tenant_id":   t.id,
+                "nombre":      t.nombre,
+                "cedula":      t.cedula,
+                "tenant_type": t.tenant_type.value,
+                "status":      t.status.value,
+            }
+            for t in tenants
+        ]
+    }

@@ -1,9 +1,20 @@
-import { BrowserRouter, Routes, Route } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { AppProvider } from './context/AppContext'
 import Sidebar from './components/Sidebar'
 import Header from './components/Header'
 import Dashboard from './pages/Dashboard'
+import ClientSelector from './pages/ClientSelector'
 import { useApp } from './context/AppContext'
+
+// Guard de ruta — redirige al portal si no hay sesión
+function ProtectedRoute({ children }) {
+    const { state } = useApp()
+    if (!state.user) {
+        window.location.href = 'https://app.genomaio.com/partner_login.html'
+        return null
+    }
+    return children
+}
 
 // Placeholder para rutas pendientes
 function ComingSoon({ name }) {
@@ -18,6 +29,11 @@ function ComingSoon({ name }) {
 
 function AppLayout() {
     const { state } = useApp()
+
+    // Si el usuario no ha seleccionado aún un tenant activo, ir al selector
+    if (!state.tenant) {
+        return <Navigate to="/select" replace />
+    }
 
     return (
         <div className={`app-shell${state.sidebarOpen ? ' sidebar-open' : ''}`}>
@@ -48,7 +64,26 @@ export default function App() {
     return (
         <BrowserRouter>
             <AppProvider>
-                <AppLayout />
+                <Routes>
+                    {/* Selector de empresas — puerta de entrada al sistema contable */}
+                    <Route
+                        path="/select"
+                        element={
+                            <ProtectedRoute>
+                                <ClientSelector />
+                            </ProtectedRoute>
+                        }
+                    />
+                    {/* Todas las demás rutas pasan por ProtectedRoute + AppLayout */}
+                    <Route
+                        path="/*"
+                        element={
+                            <ProtectedRoute>
+                                <AppLayout />
+                            </ProtectedRoute>
+                        }
+                    />
+                </Routes>
             </AppProvider>
         </BrowserRouter>
     )
