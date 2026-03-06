@@ -352,15 +352,15 @@ export default function Mayor() {
                     <div style={{ borderRadius: 10, overflow: 'hidden', border: '1px solid var(--border-color)' }}>
                         {/* Columnas */}
                         <div style={{
-                            display: 'grid', gridTemplateColumns: '110px 1fr 140px 140px 160px',
+                            display: 'grid', gridTemplateColumns: '110px 75px 1fr 130px 130px 150px',
                             background: 'var(--bg-header)', padding: '8px 16px',
                             borderBottom: '1px solid var(--border-color)',
                         }}>
-                            {['FECHA', 'DESCRIPCIÓN', 'DEBE (DR)', 'HABER (CR)', 'SALDO'].map((h, i) => (
+                            {['FECHA', 'REF', 'DESCRIPCIÓN', 'DEBE (DR)', 'HABER (CR)', 'SALDO'].map((h, i) => (
                                 <div key={i} style={{
                                     fontSize: '0.7rem', fontWeight: 700, letterSpacing: '0.05em',
                                     color: 'var(--text-muted)',
-                                    textAlign: i >= 2 ? 'right' : 'left',
+                                    textAlign: i >= 3 ? 'right' : 'left',
                                 }}>
                                     {h}
                                 </div>
@@ -369,12 +369,13 @@ export default function Mayor() {
 
                         {/* Fila de saldo inicial */}
                         <div style={{
-                            display: 'grid', gridTemplateColumns: '110px 1fr 140px 140px 160px',
+                            display: 'grid', gridTemplateColumns: '110px 75px 1fr 130px 130px 150px',
                             padding: '10px 16px',
                             background: `${color}10`,
                             borderBottom: '1px solid var(--border-color)',
                         }}>
                             <div style={{ fontSize: '0.77rem', color: 'var(--text-muted)' }}>{mayorData.from_date}</div>
+                            <div style={{ fontSize: '0.68rem', fontFamily: 'monospace', color: '#8b5cf6', fontWeight: 700 }}>APER</div>
                             <div style={{ fontSize: '0.82rem', color, fontWeight: 600, fontStyle: 'italic' }}>
                                 ← Saldo de Apertura
                             </div>
@@ -391,50 +392,64 @@ export default function Mayor() {
                                 Sin movimientos en el período seleccionado
                             </div>
                         )}
-                        {mayorData.movements.map((m, i) => (
-                            <div
-                                key={i}
-                                style={{
-                                    display: 'grid', gridTemplateColumns: '110px 1fr 140px 140px 160px',
-                                    padding: '9px 16px',
-                                    borderBottom: '1px solid var(--border-color)',
-                                    background: i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.015)',
-                                    transition: 'background 0.1s',
-                                }}
-                                onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-hover)'}
-                                onMouseLeave={e => e.currentTarget.style.background = i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.015)'}
-                            >
-                                <div style={{ fontSize: '0.77rem', color: 'var(--text-muted)', fontFamily: 'monospace' }}>
-                                    {fmtDate(m.date)}
+                        {mayorData.movements.map((m, i) => {
+                            const ref = m.source_ref || `#${String(m.entry_id).slice(-6)}`
+                            return (
+                                <div
+                                    key={i}
+                                    style={{
+                                        display: 'grid', gridTemplateColumns: '110px 75px 1fr 130px 130px 150px',
+                                        padding: '9px 16px',
+                                        borderBottom: '1px solid var(--border-color)',
+                                        background: i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.015)',
+                                        transition: 'background 0.1s',
+                                    }}
+                                    onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-hover)'}
+                                    onMouseLeave={e => e.currentTarget.style.background = i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.015)'}
+                                >
+                                    <div style={{ fontSize: '0.77rem', color: 'var(--text-muted)', fontFamily: 'monospace' }}>
+                                        {fmtDate(m.date)}
+                                    </div>
+                                    <div
+                                        title={`Asiento ${m.entry_id}`}
+                                        style={{
+                                            fontSize: '0.68rem', fontFamily: 'monospace', color: '#7c3aed', fontWeight: 600,
+                                            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                                            cursor: 'pointer'
+                                        }}
+                                        onClick={() => window.location.href = `/diario?entry=${m.entry_id}`}
+                                    >
+                                        {ref}
+                                    </div>
+                                    <div style={{ fontSize: '0.82rem', color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: 8 }}>
+                                        {m.description}
+                                        {m.source !== 'MANUAL' && (
+                                            <span style={{ marginLeft: 6, fontSize: '0.68rem', color: 'var(--text-muted)', background: 'rgba(99,102,241,0.15)', padding: '1px 5px', borderRadius: 4 }}>
+                                                {m.source}
+                                            </span>
+                                        )}
+                                    </div>
+                                    <div style={{ textAlign: 'right', fontSize: '0.82rem', color: m.debit > 0 ? '#10b981' : 'var(--text-muted)', fontWeight: m.debit > 0 ? 600 : 400, fontFamily: 'monospace' }}>
+                                        {m.debit > 0 ? fmt(m.debit) : ''}
+                                    </div>
+                                    <div style={{ textAlign: 'right', fontSize: '0.82rem', color: m.credit > 0 ? '#ef4444' : 'var(--text-muted)', fontWeight: m.credit > 0 ? 600 : 400, fontFamily: 'monospace' }}>
+                                        {m.credit > 0 ? fmt(m.credit) : ''}
+                                    </div>
+                                    <div style={{ textAlign: 'right', fontSize: '0.83rem', fontWeight: 700, fontFamily: 'monospace', color: getSaldoColor(m.balance, mayorData.account_type) }}>
+                                        {fmt(m.balance)}
+                                    </div>
                                 </div>
-                                <div style={{ fontSize: '0.82rem', color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: 8 }}>
-                                    {m.description}
-                                    {m.source !== 'MANUAL' && (
-                                        <span style={{ marginLeft: 6, fontSize: '0.68rem', color: 'var(--text-muted)', background: 'rgba(99,102,241,0.15)', padding: '1px 5px', borderRadius: 4 }}>
-                                            {m.source}
-                                        </span>
-                                    )}
-                                </div>
-                                <div style={{ textAlign: 'right', fontSize: '0.82rem', color: m.debit > 0 ? '#10b981' : 'var(--text-muted)', fontWeight: m.debit > 0 ? 600 : 400, fontFamily: 'monospace' }}>
-                                    {m.debit > 0 ? fmt(m.debit) : ''}
-                                </div>
-                                <div style={{ textAlign: 'right', fontSize: '0.82rem', color: m.credit > 0 ? '#ef4444' : 'var(--text-muted)', fontWeight: m.credit > 0 ? 600 : 400, fontFamily: 'monospace' }}>
-                                    {m.credit > 0 ? fmt(m.credit) : ''}
-                                </div>
-                                <div style={{ textAlign: 'right', fontSize: '0.83rem', fontWeight: 700, fontFamily: 'monospace', color: getSaldoColor(m.balance, mayorData.account_type) }}>
-                                    {fmt(m.balance)}
-                                </div>
-                            </div>
-                        ))}
+                            )
+                        })}
 
                         {/* Fila totales */}
                         <div style={{
-                            display: 'grid', gridTemplateColumns: '110px 1fr 140px 140px 160px',
+                            display: 'grid', gridTemplateColumns: '110px 75px 1fr 130px 130px 150px',
                             padding: '10px 16px',
                             background: `${color}10`,
                             borderTop: `2px solid ${color}40`,
                         }}>
-                            <div />
+                            <div /><div />
                             <div style={{ fontSize: '0.78rem', fontWeight: 700, color }}>TOTALES DEL PERÍODO</div>
                             <div style={{ textAlign: 'right', fontWeight: 700, fontSize: '0.85rem', color: '#10b981', fontFamily: 'monospace' }}>
                                 {fmt(mayorData.total_debit)}
