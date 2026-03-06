@@ -34,7 +34,7 @@ def log_action(
     entry = AuditLog(
         id          = str(uuid.uuid4()),
         tenant_id   = tenant_id,
-        user_id     = user.get("user_id", ""),
+        user_id     = user.get("sub") or user.get("user_id") or user.get("id") or "",
         user_role   = user.get("role", ""),
         user_email  = user.get("email"),
         action      = action,

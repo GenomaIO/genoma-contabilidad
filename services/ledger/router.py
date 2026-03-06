@@ -97,6 +97,22 @@ def _require_role(role: str, allowed: list) -> None:
         raise HTTPException(403, f"Solo {'/'.join(allowed)} puede realizar esta acción")
 
 
+def _uid(current_user: dict) -> str:
+    """
+    Extrae el user_id del payload JWT de forma segura.
+
+    El JWT de este sistema usa 'sub' como clave estándar (RFC 7519).
+    Fallback a 'user_id' e 'id' por compatibilidad con tokens legacy.
+    NUNCA lanza KeyError — devuelve 'unknown' como último recurso.
+    """
+    return (
+        current_user.get("sub") or
+        current_user.get("user_id") or
+        current_user.get("id") or
+        "unknown"
+    )
+
+
 def _validate_balance(lines: List[JournalLineIn]) -> None:
     """
     Valida que el asiento esté balanceado (suma débitos = suma créditos).
@@ -188,7 +204,7 @@ def create_entry(
         status      = EntryStatus.DRAFT,
         source      = req.source,
         source_ref  = req.source_ref,
-        created_by  = current_user["user_id"],
+        created_by  = _uid(current_user),
         created_at  = now,
     )
     db.add(entry)
@@ -271,14 +287,14 @@ def approve_entry(
 
     now = datetime.now(timezone.utc)
     entry.status      = EntryStatus.POSTED
-    entry.approved_by = current_user["user_id"]
+    entry.approved_by = _uid(current_user)
     entry.approved_at = now
 
     log_action(
         db, tenant_id, current_user, AuditAction.ENTRY_POSTED,
         entity_type="journal_entry", entity_id=entry_id,
         before={"status": "DRAFT"},
-        after={"status": "POSTED", "approved_by": current_user["user_id"]}
+        after={"status": "POSTED", "approved_by": _uid(current_user)}
     )
     db.commit()
 
@@ -328,8 +344,8 @@ def void_entry(
         status      = EntryStatus.POSTED,   # La reversión ya se aprueba automáticamente
         source      = entry.source,
         source_ref  = entry.source_ref,
-        created_by  = current_user["user_id"],
-        approved_by = current_user["user_id"],
+        created_by  = _uid(current_user),
+        approved_by = _uid(current_user),
         approved_at = now,
         created_at  = now,
     )
@@ -356,7 +372,7 @@ def void_entry(
 
     # Marcar original como VOIDED
     entry.status     = EntryStatus.VOIDED
-    entry.voided_by  = current_user["user_id"]
+    entry.voided_by  = _uid(current_user)
     entry.voided_at  = now
     entry.reversal_id = reversal_id
 
@@ -683,7 +699,7 @@ def close_period(
         description = f"Cierre de periodo {period}",
         status      = EntryStatus.DRAFT,
         source      = EntrySource.CIERRE,
-        created_by  = current_user["user_id"],
+        created_by  = _uid(current_user),
         created_at  = now,
     )
     db.add(close_entry)
@@ -898,8 +914,8 @@ def create_opening_entry(
         description = req.description,
         status      = EntryStatus.POSTED,   # POSTED directo — apertura es definitiva
         source      = EntrySource.APERTURA,
-        created_by  = current_user["user_id"],
-        approved_by = current_user["user_id"],
+        created_by  = _uid(current_user),
+        approved_by = _uid(current_user),
         approved_at = now,
     )
     db.add(entry)
