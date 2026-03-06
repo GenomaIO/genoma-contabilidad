@@ -73,7 +73,7 @@ export default function Mayor() {
 
     // ── Índice automático: al cargar, buscar cuentas con actividad ──
     const loadIndex = useCallback(async () => {
-        if (indexData || indexLoading) return
+        if (!token || indexData || indexLoading) return  // guard: esperar token
         setIndexLoading(true)
         try {
             const r = await fetch(
@@ -85,8 +85,8 @@ export default function Mayor() {
         finally { setIndexLoading(false) }
     }, [apiUrl, token, fromDate, toDate, indexData, indexLoading])
 
-    // Cargar índice al montar
-    useEffect(() => { loadIndex() }, [])  // eslint-disable-line react-hooks/exhaustive-deps
+    // Cargar índice cuando el token esté disponible (puede hidratarse después de montar)
+    useEffect(() => { if (token && !indexData) loadIndex() }, [token]) // eslint-disable-line
 
     // ── Filtrar cuentas por búsqueda ──────────────────────────────
     const filtered = allAccounts.filter(a =>
@@ -460,8 +460,7 @@ export default function Mayor() {
             {/* Estado vacío: índice automático de cuentas con actividad */}
             {!hasData && !loading && !error && (
                 <div>
-                    {/* Disparar carga del índice al mostrar */}
-                    {!indexData && !indexLoading && loadIndex()}
+                    {/* NOTA: carga del índice solo en useEffect, no aquí */}
 
                     {indexLoading && (
                         <div style={{ textAlign: 'center', padding: '40px 0', color: 'var(--text-muted)', fontSize: '0.85rem' }}>

@@ -185,7 +185,7 @@ export default function BalanceComprobacion() {
                     {/* Cabecera */}
                     <div style={{
                         display: 'grid',
-                        gridTemplateColumns: acumulado ? '90px 1fr 75px 110px 110px 110px 110px' : '90px 1fr 80px 120px 120px 110px',
+                        gridTemplateColumns: acumulado ? '90px 1fr 75px 110px 110px 110px' : '90px 1fr 80px 120px 120px',
                         gap: 8, padding: '10px 16px',
                         background: 'rgba(124,58,237,0.1)', fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-muted)',
                     }}>
@@ -195,7 +195,6 @@ export default function BalanceComprobacion() {
                         {acumulado && <span style={{ textAlign: 'right' }}>SALDO INICIAL</span>}
                         <span style={{ textAlign: 'right' }}>DÉBITOS</span>
                         <span style={{ textAlign: 'right' }}>CRÉDITOS</span>
-                        <span style={{ textAlign: 'right' }}>SALDO {acumulado ? 'FINAL' : ''}</span>
                     </div>
 
                     {accounts.map((acc, i) => {
@@ -209,7 +208,7 @@ export default function BalanceComprobacion() {
                                 id={`balance-row-${acc.account_code}`}
                                 style={{
                                     display: 'grid',
-                                    gridTemplateColumns: acumulado ? '90px 1fr 75px 110px 110px 110px 110px' : '90px 1fr 80px 120px 120px 110px',
+                                    gridTemplateColumns: acumulado ? '90px 1fr 75px 110px 110px 110px' : '90px 1fr 80px 120px 120px',
                                     gap: 8, padding: '9px 16px', borderTop: '1px solid var(--border-color)',
                                     fontSize: '0.82rem', background: i % 2 === 0 ? 'transparent' : 'rgba(0,0,0,0.03)',
                                     cursor: 'pointer', transition: 'background 0.1s',
@@ -233,16 +232,14 @@ export default function BalanceComprobacion() {
                                 <span style={{ textAlign: 'right', color: '#10b981', fontFamily: 'monospace' }}>
                                     {acc.total_credit > 0 ? fmt(acc.total_credit) : '—'}
                                 </span>
-                                <span style={{ textAlign: 'right', color: saldo >= 0 ? '#10b981' : '#ef4444', fontWeight: 600, fontFamily: 'monospace' }}>
-                                    {fmt(saldo)}{saldo < 0 && <span style={{ fontSize: '0.7rem', marginLeft: 2 }}>CR</span>}
-                                </span>
                             </div>
                         )
                     })}
 
+
                     <div style={{
                         display: 'grid',
-                        gridTemplateColumns: acumulado ? '90px 1fr 75px 110px 110px 110px 110px' : '90px 1fr 80px 120px 120px 110px',
+                        gridTemplateColumns: acumulado ? '90px 1fr 75px 110px 110px 110px' : '90px 1fr 80px 120px 120px',
                         gap: 8, padding: '12px 16px', borderTop: '2px solid var(--border-color)',
                         fontWeight: 700, fontSize: '0.85rem', background: 'rgba(0,0,0,0.05)',
                     }}>
@@ -250,9 +247,6 @@ export default function BalanceComprobacion() {
                         {acumulado && <span />}
                         <span style={{ textAlign: 'right', color: '#3b82f6' }}>¢{totalDebit.toLocaleString('es-CR', { minimumFractionDigits: 2 })}</span>
                         <span style={{ textAlign: 'right', color: '#10b981' }}>¢{totalCredit.toLocaleString('es-CR', { minimumFractionDigits: 2 })}</span>
-                        <span style={{ textAlign: 'right', color: balanced ? '#10b981' : '#ef4444' }}>
-                            {balanced ? '⚖️ OK' : `Δ ¢${Math.abs(totalDebit - totalCredit).toLocaleString('es-CR', { minimumFractionDigits: 2 })}`}
-                        </span>
                     </div>
                 </div>
             )}
