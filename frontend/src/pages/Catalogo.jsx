@@ -102,13 +102,19 @@ export default function Catalogo() {
     }
 
     // G2: Carga el catálogo según el modo (idempotente, no duplica)
-    async function handleSeed() {
+    // mode: opcional — si viene, se pasa al backend para tenants sin onboarding
+    async function handleSeed(mode) {
         setSeeding(true)
         setError(null)
         try {
+            const body = mode ? JSON.stringify({ mode }) : '{}'
             const res = await fetch(`${apiUrl}/catalog/seed`, {
                 method: 'POST',
-                headers: { Authorization: `Bearer ${token}` }
+                headers: {
+                    Authorization: `Bearer ${token}`,
+                    'Content-Type': 'application/json',
+                },
+                body,
             })
             if (!res.ok) {
                 const err = await res.json()
@@ -369,11 +375,11 @@ export default function Catalogo() {
                     {canWrite && !q && !catalogMode && (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 10, alignItems: 'center', maxWidth: 400, margin: '0 auto' }}>
                             <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: 4 }}>Eligé cómo iniciar tu catálogo:</p>
-                            <button id="btn-cargar-catalogo-standard" onClick={handleSeed} disabled={seeding}
+                            <button id="btn-cargar-catalogo-standard" onClick={() => handleSeed('STANDARD')} disabled={seeding}
                                 style={{ width: '100%', padding: '12px 22px', background: '#7c3aed', border: 'none', borderRadius: 8, color: 'white', fontWeight: 700, cursor: seeding ? 'not-allowed' : 'pointer', fontSize: '0.9rem' }}>
                                 {seeding ? '⏳ Cargando...' : '📋 Cargar catálogo NIIF CR (~70 cuentas recomendadas)'}
                             </button>
-                            <button id="btn-cargar-catalogo-generico" onClick={handleSeed} disabled={seeding}
+                            <button id="btn-cargar-catalogo-generico" onClick={() => handleSeed('NONE')} disabled={seeding}
                                 style={{ width: '100%', padding: '10px 22px', background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: 8, color: 'var(--text-primary)', fontWeight: 600, cursor: seeding ? 'not-allowed' : 'pointer', fontSize: '0.88rem' }}>
                                 {seeding ? '⏳ Cargando...' : '⚙️ Cargar cuentas genéricas básicas'}
                             </button>

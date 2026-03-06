@@ -263,36 +263,61 @@ def toggle_account(
 
 # ──────────────────────────────────────────────────────────────────
 # POST /catalog/seed
-# Dispara el seeder para el modo elegido (llamado desde el onboarding)
+# Dispara el seeder para el modo elegido (llamado desde el onboarding
+# o desde el Catálogo en estado vacío).
 # ──────────────────────────────────────────────────────────────────
+
+class SeedRequest(BaseModel):
+    """
+    mode es opcional.
+    - Si el tenant ya tiene catalog_mode en BD: se usa ese (se ignora mode del body).
+    - Si catalog_mode = NULL (tenant creado antes del onboarding) y viene mode:
+        → se guarda mode en BD y luego se seedea.
+    - Si ambos son null: default STANDARD (el más común bajo NIIF PYMES CR).
+    """
+    mode: Optional[str] = None
+
 
 @router.post("/seed")
 def trigger_seed(
+    req:          SeedRequest = SeedRequest(),
     current_user: dict = Depends(get_current_user),
     db:           Session = Depends(get_session),
 ):
     """
     Dispara el seeder del catálogo según el catalog_mode del tenant.
-    Se llama automáticamente después de PATCH /auth/catalog-mode.
+    - Si el tenant tiene catalog_mode en BD: usa ese.
+    - Si no tiene (tenant pre-onboarding): usa el mode del body y lo guarda.
     Idempotente — ON CONFLICT DO NOTHING.
     """
-    from services.auth.models import Tenant
+    from services.auth.models import Tenant, CatalogMode
 
     _require_write_role(current_user["role"])
     tenant_id = current_user["tenant_id"]
 
     tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
-    if not tenant or not tenant.catalog_mode:
-        raise HTTPException(
-            status_code=400,
-            detail="El tenant no tiene un catalog_mode definido"
-        )
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant no encontrado")
 
-    mode = tenant.catalog_mode.value if hasattr(tenant.catalog_mode, "value") else tenant.catalog_mode
+    # Obtener el modo efectivo
+    db_mode = None
+    if tenant.catalog_mode:
+        db_mode = tenant.catalog_mode.value if hasattr(tenant.catalog_mode, "value") else str(tenant.catalog_mode)
 
-    if mode == "STANDARD":
+    effective_mode = db_mode or req.mode or "STANDARD"
+
+    # Si el tenant no tenía mode y se proveyó uno → guardarlo en BD (tenant pre-onboarding)
+    if not db_mode and req.mode:
+        try:
+            tenant.catalog_mode = CatalogMode(req.mode)
+            db.commit()
+        except (ValueError, KeyError):
+            pass  # modo desconocido → continuar con effective_mode de todas formas
+
+    # Ejecutar el seeder
+    if effective_mode == "STANDARD":
         count = seed_standard_catalog(tenant_id, db)
-    elif mode == "NONE":
+    elif effective_mode == "NONE":
         count = seed_generic_catalog(tenant_id, db)
     else:
         # CUSTOM — el seeder no aplica, el contador construye su catálogo
@@ -300,7 +325,7 @@ def trigger_seed(
 
     return {
         "ok": True,
-        "catalog_mode": mode,
+        "catalog_mode": effective_mode,
         "accounts_seeded": count,
-        "message": f"Catálogo '{mode}' listo con {count} cuentas" if count else "Modo CUSTOM — construí tu catálogo en /catalog/accounts"
+        "message": f"Catálogo '{effective_mode}' listo con {count} cuentas" if count else "Modo CUSTOM — construí tu catálogo en /catalog/accounts"
     }
