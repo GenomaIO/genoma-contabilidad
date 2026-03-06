@@ -330,3 +330,74 @@ def trigger_seed(
         "accounts_seeded": count,
         "message": f"Catálogo '{effective_mode}' listo con {count} cuentas" if count else "Modo CUSTOM — construí tu catálogo en /catalog/accounts"
     }
+
+# ──────────────────────────────────────────────────────────────────
+# POST /catalog/reseed-missing
+# Inserta SOLO las cuentas del seed estándar ausentes en el tenant.
+# Nunca modifica ni elimina cuentas existentes.
+# ──────────────────────────────────────────────────────────────────
+
+@router.post("/reseed-missing")
+def reseed_missing(
+    current_user: dict = Depends(get_current_user),
+    db:           Session = Depends(get_session),
+):
+    """
+    Detecta y agrega cuentas del catálogo estándar que faltan en el tenant.
+    Caso de uso: tenants existentes que no tienen sub-cuentas nuevas (PPE lvl4).
+    Idempotente — si se ejecuta 2 veces, la 2da inserta 0.
+    """
+    import json, uuid
+    from pathlib import Path
+
+    _require_write_role(current_user["role"])
+    tenant_id = current_user["tenant_id"]
+
+    seed_path = Path(__file__).parent / "seeds" / "standard_cr.json"
+    if not seed_path.exists():
+        raise HTTPException(status_code=500, detail="Seed estándar no encontrado")
+
+    with open(seed_path, "r", encoding="utf-8") as f:
+        seed_accounts = json.load(f)
+
+    existing = db.query(Account.code).filter(Account.tenant_id == tenant_id).all()
+    existing_codes = {row[0] for row in existing}
+
+    inserted = 0
+    for acc_data in seed_accounts:
+        code = acc_data["code"].strip().upper()
+        if code in existing_codes:
+            continue
+        try:
+            new_acc = Account(
+                id=str(uuid.uuid4()),
+                tenant_id=tenant_id,
+                code=code,
+                name=acc_data["name"].strip(),
+                description=acc_data.get("description"),
+                account_type=acc_data["type"],
+                account_sub_type=acc_data.get("sub_type"),
+                parent_code=acc_data.get("parent_code") or None,
+                allow_entries=acc_data.get("allow_entries", True),
+                is_generic=False,
+            )
+            db.add(new_acc)
+            db.flush()
+            inserted += 1
+            existing_codes.add(code)
+        except Exception:
+            db.rollback()
+            continue
+
+    db.commit()
+
+    return {
+        "ok": True,
+        "inserted": inserted,
+        "skipped": len(seed_accounts) - inserted,
+        "message": (
+            f"{inserted} cuentas nuevas agregadas al catálogo"
+            if inserted > 0
+            else "El catálogo ya estaba completo — no se insertó nada"
+        )
+    }
