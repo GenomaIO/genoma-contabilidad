@@ -296,25 +296,26 @@ def trigger_seed(
     tenant_id = current_user["tenant_id"]
 
     tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
-    if not tenant:
-        raise HTTPException(status_code=404, detail="Tenant no encontrado")
+    # Si el tenant no tiene registro en BD (partner_linked sin onboarding en contabilidad),
+    # usamos el mode del body. El tenant_id del JWT es suficiente para insertar cuentas.
+    # RO#6 (Safe Fallback): no bloquear la operacion por ausencia de registro ORM.
 
     # Obtener el modo efectivo
     db_mode = None
-    if tenant.catalog_mode:
+    if tenant and tenant.catalog_mode:
         db_mode = tenant.catalog_mode.value if hasattr(tenant.catalog_mode, "value") else str(tenant.catalog_mode)
 
     effective_mode = db_mode or req.mode or "STANDARD"
 
-    # Si el tenant no tenía mode y se proveyó uno → guardarlo en BD (tenant pre-onboarding)
-    if not db_mode and req.mode:
+    # Si el tenant tiene registro en BD pero no tenía mode → guardarlo
+    if tenant and not db_mode and req.mode:
         try:
             tenant.catalog_mode = CatalogMode(req.mode)
             db.commit()
         except (ValueError, KeyError):
             pass  # modo desconocido → continuar con effective_mode de todas formas
 
-    # Ejecutar el seeder
+    # Ejecutar el seeder usando tenant_id del JWT (funciona con o sin registro ORM)
     if effective_mode == "STANDARD":
         count = seed_standard_catalog(tenant_id, db)
     elif effective_mode == "NONE":
