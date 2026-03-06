@@ -10,6 +10,7 @@ import AsientosPendientes from './pages/AsientosPendientes'
 import BalanceComprobacion from './pages/BalanceComprobacion'
 import CierrePeriodo from './pages/CierrePeriodo'
 import Apertura from './pages/Apertura'
+import Mayor from './pages/Mayor'
 import { useApp } from './context/AppContext'
 
 // Guard de ruta — espera hidratación antes de decidir
@@ -69,7 +70,7 @@ function AppLayout() {
                 <Routes>
                     <Route path="/" element={<Dashboard />} />
                     <Route path="/diario" element={<AsientosPendientes />} />
-                    <Route path="/mayor" element={<ComingSoon name="Mayor General" />} />
+                    <Route path="/mayor" element={<Mayor />} />
                     <Route path="/balance" element={<BalanceComprobacion />} />
                     <Route path="/integracion" element={<ComingSoon name="Integración Facturador" />} />
                     <Route path="/asientos" element={<AsientosPendientes />} />
