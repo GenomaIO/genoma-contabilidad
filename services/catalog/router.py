@@ -188,6 +188,78 @@ def list_posteable_accounts(
 
 
 # ──────────────────────────────────────────────────────────────────
+# GET /catalog/health
+# Diagnostica si el catálogo tiene ramas con mezcla de profundidad.
+# Si un hijo de un rubro fue expandido a N5 pero sus hermanas siguen
+# en N4, la rama queda "mixta" y los EEFF podrían tener doble conteo.
+# Principio SAP FI / Oracle GL: toda la rama debe estar al mismo nivel.
+# ──────────────────────────────────────────────────────────────────
+
+@router.get("/health")
+def catalog_health(
+    current_user: dict = Depends(get_current_user),
+    db:           Session = Depends(get_session),
+):
+    """
+    Devuelve el estado de salud del catálogo del tenant.
+    - status: 'OK' | 'WARNING'
+    - mix_level_branches: ramas donde hay hijos en niveles distintos
+    - total_posteable: qty de cuentas que actualmente aceptan asientos
+    """
+    tenant_id = current_user["tenant_id"]
+
+    rows = db.execute(
+        text("""
+            SELECT code, name, parent_code, allow_entries, is_active
+            FROM accounts
+            WHERE tenant_id = :tid AND is_active = true
+            ORDER BY code
+        """),
+        {"tid": tenant_id},
+    ).fetchall()
+
+    # Construir índices
+    code_map      = {r[0]: {"name": r[1], "allow_entries": r[3]} for r in rows}
+    parent_set    = {r[2] for r in rows if r[2] is not None}  # códigos que son padres
+
+    # Agrupar hijos por padre
+    from collections import defaultdict
+    siblings: dict = defaultdict(list)
+    for r in rows:
+        if r[2]:  # tiene parent_code
+            siblings[r[2]].append(r[0])
+
+    mix_level_branches = []
+    for parent_code, children in siblings.items():
+        leaves   = [c for c in children if c not in parent_set]   # hojas reales
+        promoted = [c for c in children if c in parent_set]        # ya tienen hijos propios
+        if leaves and promoted:  # mezcla: algunos hijos son hojas, otros son padres
+            mix_level_branches.append({
+                "parent":      parent_code,
+                "parent_name": code_map.get(parent_code, {}).get("name", "?"),
+                "leaves_at_current_level": leaves,     # hermanas sin expandir
+                "promoted_to_parent":      promoted,   # hermanas ya expandidas a N+1
+                "recommendation": (
+                    f"Las cuentas {promoted} tienen sub-cuentas (nivel superior). "
+                    f"Se recomienda también expandir {leaves} al mismo nivel "
+                    f"para evitar inconsistencias en estados financieros."
+                ),
+            })
+
+    total_posteable = sum(
+        1 for r in rows
+        if r[0] not in parent_set and r[3]  # not in parent_set AND allow_entries
+    )
+
+    return {
+        "status":              "WARNING" if mix_level_branches else "OK",
+        "total_posteable":     total_posteable,
+        "mix_level_count":     len(mix_level_branches),
+        "mix_level_branches":  mix_level_branches,
+    }
+
+
+# ──────────────────────────────────────────────────────────────────
 # POST /catalog/accounts
 # ──────────────────────────────────────────────────────────────────
 
