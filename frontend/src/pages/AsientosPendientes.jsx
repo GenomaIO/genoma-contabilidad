@@ -207,6 +207,17 @@ export default function AsientosPendientes() {
         setForm(f => ({ ...f, lines: [...f.lines, EMPTY_LINE()] }))
     }
 
+    function addLineAndFocus() {
+        // Crea línea nueva + pone foco en su campo de cuenta (abre picker automáticamente)
+        setForm(f => ({ ...f, lines: [...f.lines, EMPTY_LINE()] }))
+        // El timeout asegura que React renderice la nueva fila antes de intentar el foco
+        setTimeout(() => {
+            const newIdx = form.lines.length  // índice de la línea que se está creando
+            const el = document.getElementById(`line-account-${newIdx}`)
+            el?.focus()
+        }, 50)
+    }
+
     function removeLine(i) {
         if (form.lines.length <= 2) return
         setForm(f => ({ ...f, lines: f.lines.filter((_, idx) => idx !== i) }))
@@ -520,6 +531,13 @@ export default function AsientosPendientes() {
                                         value={line.debit}
                                         placeholder="0.00"
                                         onChange={e => updateLine(i, 'debit', e.target.value)}
+                                        onKeyDown={e => {
+                                            // Tab desde Débito → Crédito de la misma línea
+                                            if (e.key === 'Tab' && !e.shiftKey) {
+                                                e.preventDefault()
+                                                document.getElementById(`line-credit-${i}`)?.focus()
+                                            }
+                                        }}
                                         style={{ ...inputStyle, textAlign: 'right', color: '#3b82f6', fontSize: '0.85rem' }}
                                     />
                                     {/* Crédito */}
@@ -529,10 +547,23 @@ export default function AsientosPendientes() {
                                         value={line.credit}
                                         placeholder="0.00"
                                         onChange={e => updateLine(i, 'credit', e.target.value)}
+                                        onKeyDown={e => {
+                                            if (e.key === 'Tab' && !e.shiftKey) {
+                                                e.preventDefault()
+                                                if (i === form.lines.length - 1) {
+                                                    // Última línea → crear nueva y hacer foco en su cuenta
+                                                    addLineAndFocus()
+                                                } else {
+                                                    // Línea intermedia → ir a la cuenta de la siguiente
+                                                    document.getElementById(`line-account-${i + 1}`)?.focus()
+                                                }
+                                            }
+                                        }}
                                         style={{ ...inputStyle, textAlign: 'right', color: '#10b981', fontSize: '0.85rem' }}
                                     />
-                                    {/* Eliminar línea */}
+                                    {/* Eliminar línea — tabIndex=-1 para no interrumpir el flujo Tab */}
                                     <button onClick={() => removeLine(i)} title="Eliminar línea"
+                                        tabIndex={-1}
                                         disabled={form.lines.length <= 2}
                                         style={{ padding: '4px', background: 'transparent', border: 'none', color: form.lines.length <= 2 ? 'var(--text-muted)' : '#ef4444', cursor: form.lines.length <= 2 ? 'not-allowed' : 'pointer', fontSize: '1rem' }}>
                                         ✕
