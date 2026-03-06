@@ -78,35 +78,66 @@ export default function AsientosPendientes() {
             .catch(() => { })
     }, [canWrite])
 
-    // Colores por tipo de cuenta
+    // Colores + abreviaciones por tipo de cuenta
     const TYPE_COLOR = {
         ACTIVO: '#3b82f6', PASIVO: '#ef4444',
         INGRESO: '#10b981', GASTO: '#f59e0b', PATRIMONIO: '#8b5cf6'
     }
+    const TYPE_ABBREV = { ACTIVO: 'ACT', PASIVO: 'PAS', INGRESO: 'ING', GASTO: 'GAS', PATRIMONIO: 'PAT' }
 
-    // Búsqueda fuzzy: por display_code, code o name
-    function fuzzyAccounts(q) {
-        if (!q || !q.trim()) return accounts.slice(0, 8)
-        const ql = q.toLowerCase().trim()
-        return accounts
-            .filter(a =>
-                a.code.toLowerCase().includes(ql) ||
-                (a.display_code || '').toLowerCase().includes(ql) ||
-                a.name.toLowerCase().includes(ql)
-            )
-            .slice(0, 10)
+    // Refs de los inputs de cuenta (uno por línea) para getBoundingClientRect
+    const inputRefs = []
+    const getInputRef = (i) => {
+        if (!inputRefs[i]) inputRefs[i] = { current: null }
+        return inputRefs[i]
     }
 
-    function openPicker(i) { setPickers(p => ({ ...p, [i]: { open: true, query: form.lines[i]?.display_code || '', hi: 0 } })) }
+    // Fuzzy v2: multi-campo (code, display_code, name, tipo, abrev)
+    function fuzzyResults(q) {
+        if (!q || !q.trim()) return { items: accounts.slice(0, 12), total: accounts.length }
+        const ql = q.toLowerCase().trim()
+        const all = accounts.filter(a => {
+            const abbrev = TYPE_ABBREV[a.account_type] || ''
+            return (
+                a.code.toLowerCase().includes(ql) ||
+                (a.display_code || '').toLowerCase().includes(ql) ||
+                a.name.toLowerCase().includes(ql) ||
+                a.account_type?.toLowerCase().includes(ql) ||
+                abbrev.toLowerCase().includes(ql)
+            )
+        })
+        return { items: all.slice(0, 12), total: all.length }
+    }
+
+    // openPicker v2: calcula posición fixed con flip-up si no hay espacio abajo
+    function openPicker(i) {
+        const ref = inputRefs[i]
+        let top = 0, left = 0, width = 380, dropUp = false
+        if (ref?.current) {
+            const r = ref.current.getBoundingClientRect()
+            const vH = window.innerHeight
+            const vW = window.innerWidth
+            const dH = 320  // altura del dropdown
+            const dW = Math.max(r.width, 380)
+            const spaceBelow = vH - r.bottom
+            const spaceAbove = r.top
+            dropUp = spaceBelow < dH && spaceAbove > spaceBelow
+            top = dropUp ? r.top - dH - 4 : r.bottom + 4
+            left = Math.min(r.left, vW - dW - 8)
+            left = Math.max(left, 8)
+            width = dW
+        }
+        setPickers(p => ({ ...p, [i]: { open: true, query: form.lines[i]?.display_code || '', hi: 0, top, left, width, dropUp } }))
+    }
     function closePicker(i) { setPickers(p => ({ ...p, [i]: { ...p[i], open: false } })) }
     function selectAccount(i, acc) {
         setForm(f => {
             const lines = [...f.lines]
             lines[i] = {
                 ...lines[i],
-                account_code: acc.code,           // código interno → va al backend
-                display_code: acc.display_code,   // display → ve el usuario
-                description: lines[i].description || acc.name,  // auto-rellena nombre
+                account_code: acc.code,
+                display_code: acc.display_code,
+                description: lines[i].description || acc.name,
                 _accName: acc.name,
                 _accType: acc.account_type,
             }
@@ -430,18 +461,17 @@ export default function AsientosPendientes() {
                         {/* Tabla de líneas */}
                         <div style={{ border: '1px solid var(--border-color)', borderRadius: 10, overflow: 'hidden', marginBottom: 12 }}>
                             {/* Encabezado */}
-                            <div style={{ display: 'grid', gridTemplateColumns: '130px 1fr 130px 130px 36px', gap: 8, padding: '8px 12px', background: 'rgba(0,0,0,0.1)', fontSize: '0.72rem', color: 'var(--text-muted)', fontWeight: 700 }}>
-                                <span>CÓDIGO *</span><span>DESCRIPCIÓN</span>
+                            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(240px,280px) 1fr 110px 110px 36px', gap: 8, padding: '8px 12px', background: 'rgba(0,0,0,0.1)', fontSize: '0.72rem', color: 'var(--text-muted)', fontWeight: 700 }}>
+                                <span>CUENTA *</span><span>DESCRIPCIÓN</span>
                                 <span style={{ textAlign: 'right' }}>DÉBITO</span>
                                 <span style={{ textAlign: 'right' }}>CRÉDITO</span>
                                 <span></span>
                             </div>
 
                             {form.lines.map((line, i) => (
-                                <div key={i} id={`line-row-${i}`} style={{ display: 'grid', gridTemplateColumns: '210px 1fr 120px 120px 36px', gap: 6, padding: '6px 12px', borderTop: '1px solid var(--border-color)', alignItems: 'center', background: i % 2 === 0 ? 'transparent' : 'rgba(0,0,0,0.03)' }}>
-                                    {/* ── AccountPicker ── */}
+                                <div key={i} id={`line-row-${i}`} style={{ display: 'grid', gridTemplateColumns: 'minmax(240px,280px) 1fr 110px 110px 36px', gap: 6, padding: '6px 12px', borderTop: '1px solid var(--border-color)', alignItems: 'center', background: i % 2 === 0 ? 'transparent' : 'rgba(0,0,0,0.03)' }}>
+                                    {/* ── AccountPicker v2: input + ref, sin dropdown inline ── */}
                                     <div style={{ position: 'relative' }}>
-                                        {/* Campo de búsqueda — muestra display_code */}
                                         <div style={{
                                             display: 'flex', alignItems: 'center', gap: 4,
                                             border: `1px solid ${line.account_code ? (TYPE_COLOR[line._accType] || 'var(--border-color)') + '80' : 'var(--border-color)'}`,
@@ -452,74 +482,28 @@ export default function AsientosPendientes() {
                                                     fontSize: '0.62rem', fontWeight: 700, padding: '0 5px',
                                                     background: TYPE_COLOR[line._accType] + '20',
                                                     color: TYPE_COLOR[line._accType], whiteSpace: 'nowrap', lineHeight: '28px'
-                                                }}>
-                                                    {line._accType?.slice(0, 3)}
-                                                </span>
+                                                }}>{line._accType?.slice(0, 3)}</span>
                                             )}
                                             <input
                                                 id={`line-account-${i}`}
+                                                ref={el => { if (!inputRefs[i]) inputRefs[i] = {}; inputRefs[i].current = el }}
                                                 value={pickers[i]?.open ? (pickers[i]?.query || '') : (line.display_code || line.account_code || '')}
                                                 placeholder="Buscar cuenta..."
                                                 onFocus={() => openPicker(i)}
                                                 onChange={e => setPickers(p => ({ ...p, [i]: { ...p[i], open: true, query: e.target.value, hi: 0 } }))}
                                                 onKeyDown={e => {
-                                                    const opts = fuzzyAccounts(pickers[i]?.query || '')
+                                                    const { items } = fuzzyResults(pickers[i]?.query || '')
                                                     const hi = pickers[i]?.hi || 0
-                                                    if (e.key === 'ArrowDown') { e.preventDefault(); setPickers(p => ({ ...p, [i]: { ...p[i], hi: Math.min(hi + 1, opts.length - 1) } })) }
+                                                    if (e.key === 'ArrowDown') { e.preventDefault(); setPickers(p => ({ ...p, [i]: { ...p[i], hi: Math.min(hi + 1, items.length - 1) } })) }
                                                     if (e.key === 'ArrowUp') { e.preventDefault(); setPickers(p => ({ ...p, [i]: { ...p[i], hi: Math.max(hi - 1, 0) } })) }
-                                                    if ((e.key === 'Enter' || e.key === 'Tab') && opts[hi]) { e.preventDefault(); selectAccount(i, opts[hi]); if (e.key === 'Tab') document.getElementById(`line-debit-${i}`)?.focus() }
+                                                    if ((e.key === 'Enter' || e.key === 'Tab') && items[hi]) { e.preventDefault(); selectAccount(i, items[hi]); if (e.key === 'Tab') document.getElementById(`line-debit-${i}`)?.focus() }
                                                     if (e.key === 'Escape') closePicker(i)
                                                 }}
                                                 onBlur={() => setTimeout(() => closePicker(i), 180)}
-                                                style={{
-                                                    flex: 1, border: 'none', background: 'transparent', padding: '5px 6px',
-                                                    fontSize: '0.78rem', fontFamily: 'monospace', color: 'var(--text-primary)',
-                                                    outline: 'none', minWidth: 0
-                                                }}
+                                                style={{ flex: 1, border: 'none', background: 'transparent', padding: '5px 6px', fontSize: '0.78rem', fontFamily: 'monospace', color: 'var(--text-primary)', outline: 'none', minWidth: 0 }}
                                             />
                                         </div>
-                                        {/* Dropdown de resultados */}
-                                        {pickers[i]?.open && (
-                                            <div style={{
-                                                position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 200,
-                                                background: 'var(--bg-elevated)', border: '1px solid var(--border-color)',
-                                                borderRadius: 8, boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
-                                                maxHeight: 240, overflowY: 'auto', marginTop: 2
-                                            }}>
-                                                {fuzzyAccounts(pickers[i]?.query || '').length === 0 ? (
-                                                    <div style={{ padding: '10px 12px', fontSize: '0.78rem', color: 'var(--text-muted)' }}>Sin resultados</div>
-                                                ) : fuzzyAccounts(pickers[i]?.query || '').map((a, idx) => (
-                                                    <div key={a.code}
-                                                        onMouseDown={() => selectAccount(i, a)}
-                                                        style={{
-                                                            display: 'flex', alignItems: 'center', gap: 8,
-                                                            padding: '7px 12px', cursor: 'pointer',
-                                                            background: idx === (pickers[i]?.hi || 0) ? TYPE_COLOR[a.account_type] + '18' : 'transparent',
-                                                            borderBottom: '1px solid var(--border-color)'
-                                                        }}>
-                                                        <span style={{
-                                                            fontSize: '0.6rem', fontWeight: 700, padding: '2px 5px',
-                                                            borderRadius: 4, background: TYPE_COLOR[a.account_type] + '25',
-                                                            color: TYPE_COLOR[a.account_type], flexShrink: 0
-                                                        }}>
-                                                            {a.account_type?.slice(0, 3)}
-                                                        </span>
-                                                        <span style={{
-                                                            fontFamily: 'monospace', fontSize: '0.75rem',
-                                                            color: TYPE_COLOR[a.account_type], flexShrink: 0, minWidth: 72
-                                                        }}>
-                                                            {a.display_code}
-                                                        </span>
-                                                        <span style={{
-                                                            fontSize: '0.78rem', color: 'var(--text-primary)',
-                                                            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'
-                                                        }}>
-                                                            {a.name}
-                                                        </span>
-                                                    </div>
-                                                ))}
-                                            </div>
-                                        )}
+                                        {/* NO HAY DROPDOWN AQUI — se renderiza abajo con position:fixed */}
                                     </div>
                                     {/* Descripción línea */}
                                     <input
@@ -562,6 +546,90 @@ export default function AsientosPendientes() {
                             style={{ padding: '6px 14px', background: 'transparent', border: '1px dashed var(--border-color)', borderRadius: 7, color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '0.82rem', marginBottom: 16 }}>
                             + Agregar línea
                         </button>
+
+                        {/* ── Dropdowns position:fixed — flotan sobre todo, independiente del grid ── */}
+                        {form.lines.map((_, i) => {
+                            const pk = pickers[i]
+                            if (!pk?.open) return null
+                            const { items, total } = fuzzyResults(pk.query || '')
+                            return (
+                                <div key={`picker-${i}`} style={{
+                                    position: 'fixed',
+                                    top: pk.top || 0,
+                                    left: pk.left || 0,
+                                    width: pk.width || 380,
+                                    zIndex: 9999,
+                                    background: 'var(--bg-elevated)',
+                                    border: '1px solid var(--border-color)',
+                                    borderRadius: 12,
+                                    boxShadow: '0 16px 56px rgba(0,0,0,0.6)',
+                                    maxHeight: 320,
+                                    display: 'flex',
+                                    flexDirection: 'column',
+                                    overflow: 'hidden',
+                                }}>
+                                    {/* Lista de resultados con scroll */}
+                                    <div style={{ overflowY: 'auto', flex: 1 }}>
+                                        {items.length === 0 ? (
+                                            <div style={{ padding: '14px 16px', fontSize: '0.82rem', color: 'var(--text-muted)', textAlign: 'center' }}>
+                                                Sin resultados para &ldquo;{pk.query}&rdquo;
+                                            </div>
+                                        ) : items.map((a, idx) => (
+                                            <div key={a.code}
+                                                onMouseDown={() => selectAccount(i, a)}
+                                                style={{
+                                                    display: 'flex', alignItems: 'center', gap: 10,
+                                                    padding: '9px 14px', cursor: 'pointer',
+                                                    background: idx === (pk.hi || 0)
+                                                        ? (TYPE_COLOR[a.account_type] || '#7c3aed') + '1a'
+                                                        : 'transparent',
+                                                    borderBottom: '1px solid var(--border-color)',
+                                                    transition: 'background 0.1s',
+                                                }}>
+                                                {/* Badge tipo */}
+                                                <span style={{
+                                                    fontSize: '0.65rem', fontWeight: 800, padding: '2px 6px',
+                                                    borderRadius: 5,
+                                                    background: (TYPE_COLOR[a.account_type] || '#9ca3af') + '22',
+                                                    color: TYPE_COLOR[a.account_type] || '#9ca3af',
+                                                    flexShrink: 0, minWidth: 32, textAlign: 'center'
+                                                }}>
+                                                    {TYPE_ABBREV[a.account_type] || a.account_type?.slice(0, 3)}
+                                                </span>
+                                                {/* Código DGCN */}
+                                                <span style={{
+                                                    fontFamily: 'monospace', fontSize: '0.78rem', fontWeight: 700,
+                                                    color: TYPE_COLOR[a.account_type] || '#9ca3af',
+                                                    flexShrink: 0, minWidth: 78
+                                                }}>
+                                                    {a.display_code}
+                                                </span>
+                                                {/* Nombre completo */}
+                                                <span style={{
+                                                    fontSize: '0.82rem', color: 'var(--text-primary)',
+                                                    whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis'
+                                                }}>
+                                                    {a.name}
+                                                </span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                    {/* Footer: contador */}
+                                    <div style={{
+                                        padding: '7px 14px',
+                                        fontSize: '0.72rem', color: 'var(--text-muted)',
+                                        borderTop: '1px solid var(--border-color)',
+                                        background: 'rgba(0,0,0,0.15)',
+                                        flexShrink: 0,
+                                    }}>
+                                        {total <= 12
+                                            ? `${total} cuenta${total !== 1 ? 's' : ''} disponible${total !== 1 ? 's' : ''}`
+                                            : `Mostrando 12 de ${total}  ·  Seguí escribiendo para afinar`
+                                        }
+                                    </div>
+                                </div>
+                            )
+                        })}
 
                         {/* Indicador de balance en tiempo real */}
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 16px', borderRadius: 8, marginBottom: 16, background: isBalanced ? 'rgba(16,185,129,0.1)' : totalDebit > 0 || totalCredit > 0 ? 'rgba(239,68,68,0.08)' : 'rgba(0,0,0,0.04)', border: `1px solid ${isBalanced ? '#10b981' : totalDebit > 0 || totalCredit > 0 ? '#ef4444' : 'var(--border-color)'}` }}>
