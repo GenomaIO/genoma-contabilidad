@@ -87,7 +87,26 @@ async def lifespan(app: FastAPI):
             logger.info("✅ Migración A1: tabla accounts creada/verificada")
         except Exception as e:
             logger.warning(f"⚠️  Migración A1 omitida: {e}")
-    else:
+
+        # ── Migración M_ENUM: agregar valores al enum entrysource ──
+        # Fix crítico: Postgres lanza DataError si se intenta insertar un valor
+        # que no existe en el enum. ALTER TYPE ... ADD VALUE IF NOT EXISTS es
+        # idempotente — no falla si el valor ya existe (Postgres 9.1+).
+        # Valores nuevos: APERTURA (apertura de ejercicio) y CIERRE (cierre de período).
+        try:
+            with _engine.begin() as conn:
+                # En Postgres, ALTER TYPE ADD VALUE no puede correr dentro de una
+                # transacción explícita abierta. Usamos AUTOCOMMIT para este bloque.
+                conn.execute(text(
+                    "ALTER TYPE entrysource ADD VALUE IF NOT EXISTS 'APERTURA'"
+                ))
+                conn.execute(text(
+                    "ALTER TYPE entrysource ADD VALUE IF NOT EXISTS 'CIERRE'"
+                ))
+            logger.info("✅ Migración M_ENUM: APERTURA y CIERRE agregados a entrysource")
+        except Exception as e:
+            logger.warning(f"⚠️  Migración M_ENUM omitida (puede ser SQLite o valor ya existente): {e}")
+
         logger.warning("⚠️  DATABASE_URL no configurado")
 
         # ── Migración B1: tablas ledger ───────────────────────────
