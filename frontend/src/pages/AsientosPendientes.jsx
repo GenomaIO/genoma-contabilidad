@@ -409,8 +409,8 @@ export default function AsientosPendientes() {
                                         <span style={{ textAlign: 'right', color: line.credit > 0 ? '#10b981' : 'var(--text-muted)' }}>
                                             {line.credit > 0 ? `¢${Number(line.credit).toLocaleString('es-CR', { minimumFractionDigits: 2 })}` : '—'}
                                         </span>
-                                        <span style={{ fontSize: '0.68rem', color: line.deductible_status === 'DEDUCTIBLE' ? '#10b981' : line.deductible_status === 'EXEMPT' ? '#6b7280' : '#f59e0b' }}>
-                                            {line.deductible_status?.slice(0, 6) || '—'}
+                                        <span style={{ fontSize: '0.68rem', color: line.deductible_status === 'DEDUCTIBLE' ? '#10b981' : line.deductible_status === 'NON_DEDUCTIBLE' ? '#ef4444' : '#6b7280' }}>
+                                            {(!line.deductible_status || line.deductible_status === 'PENDING') ? '—' : line.deductible_status.slice(0, 8)}
                                         </span>
                                     </div>
                                 ))}
