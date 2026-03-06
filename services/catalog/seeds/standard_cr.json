@@ -1744,6 +1744,87 @@
     "allow_entries": true
   },
   {
+    "code": "3400",
+    "name": "Capital Personal",
+    "type": "PATRIMONIO",
+    "allow_entries": false,
+    "sub_type": null,
+    "parent_code": "3000",
+    "is_generic": false
+  },
+  {
+    "code": "3401",
+    "name": "Capital del Propietario",
+    "type": "PATRIMONIO",
+    "allow_entries": false,
+    "sub_type": null,
+    "parent_code": "3400",
+    "is_generic": false
+  },
+  {
+    "code": "3402",
+    "name": "Resultados Acumulados del Propietario",
+    "type": "PATRIMONIO",
+    "allow_entries": false,
+    "sub_type": null,
+    "parent_code": "3400",
+    "is_generic": false
+  },
+  {
+    "code": "3401.01",
+    "name": "Capital Inicial Aportado",
+    "type": "PATRIMONIO",
+    "allow_entries": true,
+    "sub_type": null,
+    "parent_code": "3401",
+    "is_generic": false
+  },
+  {
+    "code": "3401.02",
+    "name": "Aportes Adicionales del Propietario",
+    "type": "PATRIMONIO",
+    "allow_entries": true,
+    "sub_type": null,
+    "parent_code": "3401",
+    "is_generic": false
+  },
+  {
+    "code": "3401.03",
+    "name": "Retiros del Propietario",
+    "type": "PATRIMONIO",
+    "allow_entries": true,
+    "sub_type": null,
+    "parent_code": "3401",
+    "is_generic": false
+  },
+  {
+    "code": "3402.01",
+    "name": "Utilidades de Ejercicios Anteriores",
+    "type": "PATRIMONIO",
+    "allow_entries": true,
+    "sub_type": null,
+    "parent_code": "3402",
+    "is_generic": false
+  },
+  {
+    "code": "3402.02",
+    "name": "Pérdidas de Ejercicios Anteriores",
+    "type": "PATRIMONIO",
+    "allow_entries": true,
+    "sub_type": null,
+    "parent_code": "3402",
+    "is_generic": false
+  },
+  {
+    "code": "3402.03",
+    "name": "Resultado del Ejercicio en Curso",
+    "type": "PATRIMONIO",
+    "allow_entries": true,
+    "sub_type": null,
+    "parent_code": "3402",
+    "is_generic": false
+  },
+  {
     "code": "4103.01",
     "name": "Ventas Exentas Canasta Básica",
     "type": "INGRESO",
