@@ -133,6 +133,8 @@ export default function Apertura() {
         newLines[i] = { ...newLines[i], account_code: acc.code, display_code: acc.display_code, _name: acc.name, _type: acc.account_type }
         setLines(newLines)
         closePicker(i)
+        // Tab-flow: pasar foco a la descripción de esta línea
+        setTimeout(() => document.getElementById(`ap-desc-${i}`)?.focus(), 30)
     }
 
     function updateLine(i, field, value) {
@@ -144,6 +146,12 @@ export default function Apertura() {
     }
 
     function addLine() { setLines(l => [...l, EMPTY_LINE()]) }
+    function addLineAndFocus() {
+        const newIdx = lines.length
+        setLines(l => [...l, EMPTY_LINE()])
+        // Tab-flow: foco al campo cuenta de la nueva línea
+        setTimeout(() => document.getElementById(`ap-account-${newIdx}`)?.focus(), 50)
+    }
     function removeLine(i) { if (lines.length > 2) setLines(l => l.filter((_, x) => x !== i)) }
 
     // ── Guardar apertura ───────────────────────────────────────────
@@ -379,6 +387,7 @@ export default function Apertura() {
 
                                 {/* Descripción */}
                                 <input
+                                    id={`ap-desc-${i}`}
                                     value={line._name}
                                     placeholder="Descripción de la cuenta"
                                     onChange={e => { const nl = [...lines]; nl[i] = { ...nl[i], _name: e.target.value }; setLines(nl) }}
@@ -396,9 +405,17 @@ export default function Apertura() {
 
                                 {/* Haber */}
                                 <input
+                                    id={`ap-credit-${i}`}
                                     type="number" min="0" step="0.01"
                                     value={line.credit}
                                     onChange={e => updateLine(i, 'credit', e.target.value)}
+                                    onKeyDown={e => {
+                                        // Tab en el último Haber de la última línea → nueva línea automática
+                                        if (e.key === 'Tab' && !e.shiftKey && i === lines.length - 1) {
+                                            e.preventDefault()
+                                            addLineAndFocus()
+                                        }
+                                    }}
                                     style={{ ...inputStyle, textAlign: 'right', fontSize: '0.82rem', padding: '5px 8px' }}
                                 />
 
