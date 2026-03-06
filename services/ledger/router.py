@@ -432,38 +432,33 @@ def list_entries(
 # GET /ledger/trial-balance — Balance de Comprobación
 # ─────────────────────────────────────────────────────────────────
 
+_BALANCE_ACCOUNT_TYPES   = {"ACTIVO", "PASIVO", "PATRIMONIO"}
+_RESULTADO_ACCOUNT_TYPES = {"INGRESO", "GASTO"}
+
+
 @router.get("/trial-balance")
 def trial_balance(
-    period: Optional[str] = Query(None, description="'YYYY-MM' (default: mes actual)"),
+    period:     Optional[str]  = Query(None, description="'YYYY-MM' (default: mes actual)"),
+    acumulado:  bool           = Query(False, description="Si True: ACTIVO/PASIVO/PAT muestran saldo acumulado desde apertura (NIIF correcto)"),
     current_user: dict = Depends(get_current_user),
     db:           Session = Depends(get_session),
 ):
     """
     Balance de Comprobación del período.
-    Retorna por cada cuenta: total_debit, total_credit y saldo (debit - credit).
-    Solo incluye asientos POSTED (los DRAFT no afectan saldos).
 
-    Formato de salida compatible con declaración D150 Hacienda y NIIF.
+    Modos:
+      acumulado=false (default): total movimientos del período (compatibilidad original).
+      acumulado=true  (NIIF):    ACTIVO/PASIVO/PATRIMONIO → saldo inicial (apertura) +
+                                 movimientos → saldo final.
+                                 INGRESO/GASTO → solo el período (correcto para EEFF).
+
+    Solo incluye asientos POSTED.
     """
     tenant_id = current_user["tenant_id"]
     if not period:
         period = datetime.now(timezone.utc).strftime("%Y-%m")
 
-    rows = db.execute(text("""
-        SELECT
-            jl.account_code,
-            SUM(jl.debit)  AS total_debit,
-            SUM(jl.credit) AS total_credit,
-            SUM(jl.debit) - SUM(jl.credit) AS saldo
-        FROM journal_lines jl
-        JOIN journal_entries je ON je.id = jl.entry_id
-        WHERE je.tenant_id = :tenant_id
-          AND je.period    = :period
-          AND je.status    = 'POSTED'
-        GROUP BY jl.account_code
-        ORDER BY jl.account_code
-    """), {"tenant_id": tenant_id, "period": period}).fetchall()
-
+    # Catálogo de cuentas para tipos
     accounts_map = {}
     try:
         accs = db.execute(text(
@@ -473,28 +468,88 @@ def trial_balance(
     except Exception:
         pass
 
-    total_debit = 0
-    total_credit = 0
+    # Movimientos del período (siempre, independiente del modo)
+    rows = db.execute(text("""
+        SELECT
+            jl.account_code,
+            SUM(jl.debit)  AS total_debit,
+            SUM(jl.credit) AS total_credit
+        FROM journal_lines jl
+        JOIN journal_entries je ON je.id = jl.entry_id
+        WHERE je.tenant_id = :tenant_id
+          AND je.period    = :period
+          AND je.status    = 'POSTED'
+        GROUP BY jl.account_code
+        ORDER BY jl.account_code
+    """), {"tenant_id": tenant_id, "period": period}).fetchall()
+
+    # ── Modo acumulado: cargar saldos de apertura ─────────────────
+    ap_map = {}
+    if acumulado:
+        for r in db.execute(text("""
+            SELECT jl.account_code,
+                   SUM(jl.debit) - SUM(jl.credit) AS saldo_aper
+            FROM journal_lines jl
+            JOIN journal_entries je ON je.id = jl.entry_id
+            WHERE je.tenant_id = :tid
+              AND je.status    = 'POSTED'
+              AND je.source    = 'APERTURA'
+            GROUP BY jl.account_code
+        """), {"tid": tenant_id}).fetchall():
+            ap_map[r.account_code] = round(float(r.saldo_aper or 0), 2)
+
+    # ── Construir resultado ───────────────────────────────────────
+    total_debit = 0.0; total_credit = 0.0
     lines_out = []
     for r in rows:
-        td = float(r.total_debit or 0)
+        td = float(r.total_debit  or 0)
         tc = float(r.total_credit or 0)
         total_debit  += td
         total_credit += tc
-        acc_info = accounts_map.get(r.account_code, {})
+        acc_info  = accounts_map.get(r.account_code, {})
+        acc_type  = acc_info.get("type", "")
+
+        if acumulado and acc_type in _BALANCE_ACCOUNT_TYPES:
+            saldo_inicial = ap_map.get(r.account_code, 0.0)
+            saldo_final   = round(saldo_inicial + td - tc, 2)
+        else:
+            saldo_inicial = 0.0
+            saldo_final   = round(td - tc, 2)
+
         lines_out.append({
             "account_code":  r.account_code,
             "account_name":  acc_info.get("name", ""),
-            "account_type":  acc_info.get("type", ""),
+            "account_type":  acc_type,
+            "saldo_inicial": saldo_inicial,
             "total_debit":   round(td, 2),
             "total_credit":  round(tc, 2),
-            "saldo":         round(float(r.saldo or 0), 2),
+            "saldo":         saldo_final,
         })
+
+    # Cuentas que solo tienen apertura (sin movimiento en el período) — solo si acumulado
+    if acumulado:
+        codes_in_rows = {r.account_code for r in rows}
+        for code, aper_saldo in ap_map.items():
+            if code not in codes_in_rows:
+                acc_info = accounts_map.get(code, {})
+                acc_type = acc_info.get("type", "")
+                if acc_type in _BALANCE_ACCOUNT_TYPES:
+                    lines_out.append({
+                        "account_code":  code,
+                        "account_name":  acc_info.get("name", ""),
+                        "account_type":  acc_type,
+                        "saldo_inicial": aper_saldo,
+                        "total_debit":   0.0,
+                        "total_credit":  0.0,
+                        "saldo":         aper_saldo,
+                    })
+        lines_out.sort(key=lambda x: x["account_code"])
 
     balanced = abs(total_debit - total_credit) < 0.01
 
     return {
         "period":        period,
+        "acumulado":     acumulado,
         "tenant_id":     tenant_id,
         "balanced":      balanced,
         "total_debit":   round(total_debit,  2),
