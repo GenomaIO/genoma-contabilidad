@@ -267,7 +267,7 @@ export default function ActivosFijos() {
                     <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: 3 }}>NIIF PYMES Sección 17 · Decreto 18455-H</p>
                 </div>
                 <button onClick={() => { setShowForm(true); setForm(EMPTY) }}
-                    style={{ background: 'var(--primary)', color: '#fff', border: 'none', borderRadius: 8, padding: '9px 18px', fontWeight: 600, cursor: 'pointer', fontSize: '0.87rem' }}>
+                    style={{ background: '#7c3aed', color: '#fff', border: 'none', borderRadius: 8, padding: '9px 18px', fontWeight: 600, cursor: 'pointer', fontSize: '0.87rem' }}>
                     + Nuevo Activo
                 </button>
             </div>
@@ -335,7 +335,7 @@ export default function ActivosFijos() {
                                     <span style={{ fontSize: '0.68rem', fontWeight: 700, padding: '2px 8px', borderRadius: 20, background: `${ESTADO_COLOR[a.estado]}25`, color: ESTADO_COLOR[a.estado] }}>{a.estado}</span>
                                     {a.estado === 'ACTIVO' && a.cuota_mensual > 0 && (
                                         <button disabled={depLoading === a.id} onClick={() => depreciate(a.id)}
-                                            style={{ background: 'var(--primary)', color: '#fff', border: 'none', borderRadius: 6, padding: '5px 12px', fontSize: '0.73rem', fontWeight: 600, cursor: 'pointer', opacity: depLoading === a.id ? 0.6 : 1 }}>
+                                            style={{ background: '#7c3aed', color: '#fff', border: 'none', borderRadius: 6, padding: '5px 12px', fontSize: '0.73rem', fontWeight: 600, cursor: 'pointer', opacity: depLoading === a.id ? 0.6 : 1 }}>
                                             {depLoading === a.id ? '...' : '📐 Depreciar'}
                                         </button>
                                     )}
@@ -538,7 +538,7 @@ export default function ActivosFijos() {
                             Cancelar
                         </button>
                         <button onClick={saveAsset} disabled={saving}
-                            style={{ padding: '9px 22px', borderRadius: 7, border: 'none', background: 'var(--primary)', color: '#fff', fontWeight: 700, cursor: 'pointer', fontSize: '0.85rem', opacity: saving ? 0.7 : 1 }}>
+                            style={{ padding: '9px 22px', borderRadius: 7, border: 'none', background: '#7c3aed', color: '#fff', fontWeight: 700, cursor: 'pointer', fontSize: '0.85rem', opacity: saving ? 0.7 : 1 }}>
                             {saving ? 'Guardando...' : '✅ Registrar Activo'}
                         </button>
                     </div>
