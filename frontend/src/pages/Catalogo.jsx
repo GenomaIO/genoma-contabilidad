@@ -59,6 +59,8 @@ export default function Catalogo() {
     // Botón ⊕ inline
     const [inlineForm, setInlineForm] = useState({ parentCode: null, name: '', saving: false })
     const [hoveredRow, setHoveredRow] = useState(null)
+    const [catalogHealth, setCatalogHealth] = useState(null)  // health check del catálogo
+    const [healthDismissed, setHealthDismissed] = useState(false)
 
     const apiUrl = import.meta.env.VITE_API_URL || ''
     const token = localStorage.getItem('gc_token')
@@ -89,6 +91,15 @@ export default function Catalogo() {
     useEffect(() => {
         fetchAccounts()
     }, [showInactive])
+
+    // Verificar salud del catálogo (ramas con niveles mixtos)
+    useEffect(() => {
+        if (!token || !canWrite) return
+        fetch(`${apiUrl}/catalog/health`, { headers: { Authorization: `Bearer ${token}` } })
+            .then(r => r.ok ? r.json() : null)
+            .then(d => { if (d) setCatalogHealth(d) })
+            .catch(() => { })
+    }, [accounts])  // re-chequear cada vez que cambia el catálogo
 
     async function fetchAccounts() {
         setLoading(true)
@@ -325,7 +336,44 @@ export default function Catalogo() {
                 </div>
             </div>
 
+            {/* ── Banner: niveles mixtos en el catálogo ── */}
+            {catalogHealth?.status === 'WARNING' && !healthDismissed && (
+                <div id="catalog-health-banner" style={{
+                    display: 'flex', alignItems: 'flex-start', gap: 12,
+                    background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.35)',
+                    borderRadius: 10, padding: '12px 16px', marginBottom: 16,
+                }}>
+                    <span style={{ fontSize: '1.2rem', flexShrink: 0 }}>⚠️</span>
+                    <div style={{ flex: 1 }}>
+                        <div style={{ fontWeight: 700, fontSize: '0.88rem', color: '#f59e0b', marginBottom: 4 }}>
+                            {catalogHealth.mix_level_count} rama(s) con niveles de detalle mixtos
+                        </div>
+                        <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', lineHeight: 1.5, marginBottom: 6 }}>
+                            Algunas cuentas del mismo rubro tienen sub-cuentas y otras no.
+                            Los asientos siempre se harán al nivel más profundo activo, pero
+                            se recomienda expandir las cuentas hermanas para mantener consistencia en los EEFF.
+                        </div>
+                        {catalogHealth.mix_level_branches?.slice(0, 3).map(b => (
+                            <div key={b.parent} style={{
+                                fontSize: '0.77rem', background: 'rgba(245,158,11,0.07)',
+                                borderRadius: 6, padding: '5px 8px', marginBottom: 4,
+                            }}>
+                                <strong style={{ color: '#f59e0b' }}>{b.parent} – {b.parent_name}:</strong>{' '}
+                                <span style={{ color: 'var(--text-muted)' }}>
+                                    {b.promoted_to_parent?.join(', ')} expandidas ·{' '}
+                                    {b.leaves_at_current_level?.join(', ')} en nivel anterior
+                                </span>
+                            </div>
+                        ))}
+                    </div>
+                    <button onClick={() => setHealthDismissed(true)}
+                        title="Ignorar advertencia"
+                        style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', fontSize: '1.1rem', cursor: 'pointer', flexShrink: 0 }}>✕</button>
+                </div>
+            )}
+
             {/* Buscador */}
+
             <input
                 id="catalogo-search"
                 type="text"
