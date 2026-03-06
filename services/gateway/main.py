@@ -18,9 +18,11 @@ from services.auth.router import router as auth_router
 from services.catalog.router import router as catalog_router
 from services.ledger.router import router as ledger_router
 from services.integration.webhook_receiver import router as integration_router
+from services.assets.router import router as assets_router
 import services.catalog.models  # noqa: F401 — registra Account en Base para create_all
 import services.ledger.models   # noqa: F401 — registra JournalEntry/JournalLine en Base
 import services.ledger.audit_log  # noqa: F401 — registra AuditLog en Base
+import services.assets.models   # noqa: F401 — registra FixedAsset en Base
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -187,6 +189,53 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning(f"⚠️  Migración B2 omitida: {e}")
 
+        # ── Migración M_ASSETS: tabla fixed_assets ────────────────
+        # Activos Fijos NIIF PYMES Sección 17 — idempotente.
+        try:
+            with _engine.begin() as conn:
+                conn.execute(text("""
+                    CREATE TABLE IF NOT EXISTS fixed_assets (
+                        id                    VARCHAR(36)  PRIMARY KEY,
+                        tenant_id             VARCHAR(36)  NOT NULL,
+                        categoria             VARCHAR(20)  NOT NULL DEFAULT 'OTRO',
+                        nombre                VARCHAR(200) NOT NULL,
+                        descripcion           TEXT,
+                        numero_serie          VARCHAR(100),
+                        ubicacion             VARCHAR(100),
+                        proveedor             VARCHAR(200),
+                        numero_factura        VARCHAR(100),
+                        account_code          VARCHAR(20)  NOT NULL,
+                        dep_acum_code         VARCHAR(20)  NOT NULL,
+                        dep_gasto_code        VARCHAR(20)  NOT NULL,
+                        fecha_adquisicion     VARCHAR(10)  NOT NULL,
+                        fecha_disponible      VARCHAR(10)  NOT NULL,
+                        costo_historico       NUMERIC(18,5) NOT NULL,
+                        valor_residual        NUMERIC(18,5) NOT NULL DEFAULT 0,
+                        vida_util_meses       INTEGER      NOT NULL,
+                        metodo_depreciacion   VARCHAR(30)  NOT NULL DEFAULT 'LINEA_RECTA',
+                        dep_acum_apertura     NUMERIC(18,5) NOT NULL DEFAULT 0,
+                        meses_usados_apertura INTEGER      NOT NULL DEFAULT 0,
+                        apertura_line_id      VARCHAR(36),
+                        estado                VARCHAR(10)  NOT NULL DEFAULT 'ACTIVO',
+                        baja_fecha            VARCHAR(10),
+                        baja_motivo           TEXT,
+                        created_by            VARCHAR(36)  NOT NULL,
+                        created_at            TIMESTAMPTZ  DEFAULT NOW(),
+                        updated_at            TIMESTAMPTZ
+                    )
+                """))
+                conn.execute(text(
+                    "CREATE INDEX IF NOT EXISTS idx_fa_tenant "
+                    "ON fixed_assets(tenant_id)"
+                ))
+                conn.execute(text(
+                    "CREATE INDEX IF NOT EXISTS idx_fa_tenant_st "
+                    "ON fixed_assets(tenant_id, estado)"
+                ))
+            logger.info("✅ Migración M_ASSETS: tabla fixed_assets creada/verificada")
+        except Exception as e:
+            logger.warning(f"⚠️  Migración M_ASSETS omitida: {e}")
+
     # ── Auto-reseed: al arrancar, aplica cuentas nuevas del seed a TODOS
     # los tenants con cuentas existentes. Usa seed_standard_catalog()
     # con raw SQL / ON CONFLICT DO NOTHING — igual que el boton Sembrar.
@@ -238,6 +287,7 @@ app.include_router(auth_router)
 app.include_router(catalog_router)
 app.include_router(ledger_router)
 app.include_router(integration_router)
+app.include_router(assets_router)
 
 # ── Endpoints API ──────────────────────────────────────────────
 

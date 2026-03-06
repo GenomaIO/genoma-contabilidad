@@ -11,6 +11,7 @@ import BalanceComprobacion from './pages/BalanceComprobacion'
 import CierrePeriodo from './pages/CierrePeriodo'
 import Apertura from './pages/Apertura'
 import Mayor from './pages/Mayor'
+import ActivosFijos from './pages/ActivosFijos'
 import { useApp } from './context/AppContext'
 
 // Guard de ruta — espera hidratación antes de decidir
@@ -72,6 +73,7 @@ function AppLayout() {
                     <Route path="/diario" element={<AsientosPendientes />} />
                     <Route path="/mayor" element={<Mayor />} />
                     <Route path="/balance" element={<BalanceComprobacion />} />
+                    <Route path="/auxiliares/activos" element={<ActivosFijos />} />
                     <Route path="/integracion" element={<ComingSoon name="Integración Facturador" />} />
                     <Route path="/asientos" element={<AsientosPendientes />} />
                     <Route path="/catalogo" element={<Catalogo />} />
