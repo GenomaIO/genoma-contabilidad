@@ -2111,5 +2111,240 @@
     "sub_type": null,
     "parent_code": "5402",
     "allow_entries": true
+  },
+  {
+    "code": "5900",
+    "name": "Otros Gastos",
+    "type": "GASTO",
+    "sub_type": null,
+    "parent_code": "5000",
+    "allow_entries": false
+  },
+  {
+    "code": "5901",
+    "name": "Gastos Misceláneos y Varios",
+    "type": "GASTO",
+    "sub_type": null,
+    "parent_code": "5900",
+    "allow_entries": false
+  },
+  {
+    "code": "5902",
+    "name": "Gastos No Deducibles",
+    "type": "GASTO",
+    "sub_type": null,
+    "parent_code": "5900",
+    "allow_entries": false,
+    "_legal_basis": "Art. 8 Ley 7092 — solo deduce gastos necesarios para producir renta gravable"
+  },
+  {
+    "code": "5903",
+    "name": "Pérdidas y Ajustes Contables",
+    "type": "GASTO",
+    "sub_type": null,
+    "parent_code": "5900",
+    "allow_entries": false
+  },
+  {
+    "code": "5901.01",
+    "name": "Gastos de Representación y Atención a Clientes",
+    "type": "GASTO",
+    "sub_type": null,
+    "parent_code": "5901",
+    "allow_entries": true
+  },
+  {
+    "code": "5901.02",
+    "name": "Gastos de Capacitación y Entrenamiento",
+    "type": "GASTO",
+    "sub_type": null,
+    "parent_code": "5901",
+    "allow_entries": true
+  },
+  {
+    "code": "5901.03",
+    "name": "Suscripciones, Revistas y Publicaciones",
+    "type": "GASTO",
+    "sub_type": null,
+    "parent_code": "5901",
+    "allow_entries": true
+  },
+  {
+    "code": "5901.04",
+    "name": "Membresías y Afiliaciones Gremiales",
+    "type": "GASTO",
+    "sub_type": null,
+    "parent_code": "5901",
+    "allow_entries": true
+  },
+  {
+    "code": "5901.05",
+    "name": "Donaciones y Contribuciones",
+    "type": "GASTO",
+    "sub_type": null,
+    "parent_code": "5901",
+    "allow_entries": true,
+    "_legal_basis": "Art. 8 inc. p) Ley 7092 — hasta 10% renta bruta"
+  },
+  {
+    "code": "5901.06",
+    "name": "Gastos de Papelería y Útiles",
+    "type": "GASTO",
+    "sub_type": null,
+    "parent_code": "5901",
+    "allow_entries": true
+  },
+  {
+    "code": "5902.01",
+    "name": "Multas, Recargos e Intereses Tributarios",
+    "type": "GASTO",
+    "sub_type": null,
+    "parent_code": "5902",
+    "allow_entries": true,
+    "_legal_basis": "Art. 9 Ley 7092 — no deducible"
+  },
+  {
+    "code": "5902.02",
+    "name": "Gastos Personales del Propietario",
+    "type": "GASTO",
+    "sub_type": null,
+    "parent_code": "5902",
+    "allow_entries": true
+  },
+  {
+    "code": "5902.03",
+    "name": "Gastos sin Soporte Documental",
+    "type": "GASTO",
+    "sub_type": null,
+    "parent_code": "5902",
+    "allow_entries": true
+  },
+  {
+    "code": "5903.01",
+    "name": "Pérdida en Enajenación de Activos Fijos",
+    "type": "GASTO",
+    "sub_type": null,
+    "parent_code": "5903",
+    "allow_entries": true
+  },
+  {
+    "code": "5903.02",
+    "name": "Pérdidas por Siniestros No Cubiertos por Seguro",
+    "type": "GASTO",
+    "sub_type": null,
+    "parent_code": "5903",
+    "allow_entries": true
+  },
+  {
+    "code": "5903.03",
+    "name": "Ajustes de Gastos de Períodos Anteriores",
+    "type": "GASTO",
+    "sub_type": null,
+    "parent_code": "5903",
+    "allow_entries": true
+  },
+  {
+    "code": "4900",
+    "name": "Otros Ingresos",
+    "type": "INGRESO",
+    "sub_type": null,
+    "parent_code": "4000",
+    "allow_entries": false
+  },
+  {
+    "code": "4901",
+    "name": "Ingresos Misceláneos",
+    "type": "INGRESO",
+    "sub_type": null,
+    "parent_code": "4900",
+    "allow_entries": false
+  },
+  {
+    "code": "4902",
+    "name": "Ganancias Eventuales y Extraordinarias",
+    "type": "INGRESO",
+    "sub_type": null,
+    "parent_code": "4900",
+    "allow_entries": false
+  },
+  {
+    "code": "4903",
+    "name": "Ingresos y Ajustes de Períodos Anteriores",
+    "type": "INGRESO",
+    "sub_type": null,
+    "parent_code": "4900",
+    "allow_entries": false
+  },
+  {
+    "code": "4901.01",
+    "name": "Ingresos por Subsidios y Ayudas Gubernamentales",
+    "type": "INGRESO",
+    "sub_type": null,
+    "parent_code": "4901",
+    "allow_entries": true
+  },
+  {
+    "code": "4901.02",
+    "name": "Recuperación de Créditos Incobrables",
+    "type": "INGRESO",
+    "sub_type": null,
+    "parent_code": "4901",
+    "allow_entries": true
+  },
+  {
+    "code": "4901.03",
+    "name": "Ingresos por Servicios Eventuales",
+    "type": "INGRESO",
+    "sub_type": null,
+    "parent_code": "4901",
+    "allow_entries": true
+  },
+  {
+    "code": "4901.04",
+    "name": "Alquileres e Ingresos por Arrendamiento",
+    "type": "INGRESO",
+    "sub_type": null,
+    "parent_code": "4901",
+    "allow_entries": true
+  },
+  {
+    "code": "4902.01",
+    "name": "Ganancia en Enajenación de Activos Fijos",
+    "type": "INGRESO",
+    "sub_type": null,
+    "parent_code": "4902",
+    "allow_entries": true
+  },
+  {
+    "code": "4902.02",
+    "name": "Dividendos Recibidos",
+    "type": "INGRESO",
+    "sub_type": null,
+    "parent_code": "4902",
+    "allow_entries": true
+  },
+  {
+    "code": "4902.03",
+    "name": "Ingresos por Indemnizaciones de Seguros",
+    "type": "INGRESO",
+    "sub_type": null,
+    "parent_code": "4902",
+    "allow_entries": true
+  },
+  {
+    "code": "4903.01",
+    "name": "Ajustes de Ingresos — Ejercicios Anteriores",
+    "type": "INGRESO",
+    "sub_type": null,
+    "parent_code": "4903",
+    "allow_entries": true
+  },
+  {
+    "code": "4903.02",
+    "name": "Reembolsos y Recuperaciones de Gastos",
+    "type": "INGRESO",
+    "sub_type": null,
+    "parent_code": "4903",
+    "allow_entries": true
   }
 ]
