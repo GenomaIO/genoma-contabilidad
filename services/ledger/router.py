@@ -891,3 +891,200 @@ def create_opening_entry(
         "message":     f"Asiento de apertura {fiscal_year} creado y aprobado. El libro queda abierto.",
     }
 
+
+# ─────────────────────────────────────────────────────────────────
+# GET /ledger/mayor/{account_code} — Libro Mayor (T-account)
+# ─────────────────────────────────────────────────────────────────
+
+@router.get("/mayor/{account_code}")
+def get_mayor(
+    account_code: str,
+    from_date: Optional[str] = Query(None, description="Fecha inicio YYYY-MM-DD"),
+    to_date:   Optional[str] = Query(None, description="Fecha fin   YYYY-MM-DD"),
+    current_user: dict    = Depends(get_current_user),
+    db:           Session = Depends(get_session),
+):
+    """
+    Libro Mayor de una cuenta — T-account con saldo running.
+
+    Lógica contable (NIIF):
+    1. Saldo inicial = neto del asiento APERTURA para esta cuenta.
+    2. Movimientos = lineas POSTED en from_date..to_date (sin APERTURA).
+    3. Saldo running se acumula linea a linea.
+    4. Saldo cierre = saldo_inicial + SUM(debit) - SUM(credit).
+    """
+    tenant_id = current_user["tenant_id"]
+    now_str   = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    year_str  = datetime.now(timezone.utc).strftime("%Y")
+    if not from_date:
+        from_date = f"{year_str}-01-01"
+    if not to_date:
+        to_date = now_str
+
+    # 1. Saldo inicial desde apertura
+    ap_rows = db.execute(text("""
+        SELECT jl.debit, jl.credit
+        FROM journal_lines jl
+        JOIN journal_entries je ON je.id = jl.entry_id
+        WHERE je.tenant_id = :tid
+          AND je.status    = 'POSTED'
+          AND je.source    = 'APERTURA'
+          AND jl.account_code = :code
+    """), {"tid": tenant_id, "code": account_code}).fetchall()
+
+    opening_balance = round(sum(float(r.debit) - float(r.credit) for r in ap_rows), 2)
+
+    # 2. Info de la cuenta
+    acc_row = db.execute(text(
+        "SELECT name, account_type FROM accounts WHERE tenant_id = :tid AND code = :code"
+    ), {"tid": tenant_id, "code": account_code}).fetchone()
+
+    account_name = acc_row.name         if acc_row else account_code
+    account_type = acc_row.account_type if acc_row else "DESCONOCIDO"
+
+    # 3. Movimientos del periodo (sin APERTURA)
+    move_rows = db.execute(text("""
+        SELECT jl.id AS line_id, je.id AS entry_id,
+               je.date, je.description AS entry_desc,
+               jl.description AS line_desc,
+               jl.debit, jl.credit, je.source, je.source_ref
+        FROM journal_lines jl
+        JOIN journal_entries je ON je.id = jl.entry_id
+        WHERE je.tenant_id    = :tid
+          AND je.status       = 'POSTED'
+          AND je.source      != 'APERTURA'
+          AND jl.account_code = :code
+          AND je.date BETWEEN :from_d AND :to_d
+        ORDER BY je.date ASC, je.created_at ASC
+    """), {"tid": tenant_id, "code": account_code,
+           "from_d": from_date, "to_d": to_date}).fetchall()
+
+    # 4. Saldo running
+    running = opening_balance
+    total_debit = 0.0; total_credit = 0.0
+    movements = []
+    for r in move_rows:
+        d  = float(r.debit  or 0)
+        cr = float(r.credit or 0)
+        running      = round(running + d - cr, 2)
+        total_debit  += d
+        total_credit += cr
+        movements.append({
+            "entry_id":    r.entry_id,
+            "date":        r.date,
+            "description": r.line_desc or r.entry_desc or "",
+            "source":      r.source,
+            "source_ref":  r.source_ref,
+            "debit":       round(d,  2),
+            "credit":      round(cr, 2),
+            "balance":     running,
+        })
+
+    return {
+        "account_code":    account_code,
+        "account_name":    account_name,
+        "account_type":    account_type,
+        "from_date":       from_date,
+        "to_date":         to_date,
+        "opening_balance": opening_balance,
+        "total_debit":     round(total_debit,  2),
+        "total_credit":    round(total_credit, 2),
+        "closing_balance": round(opening_balance + total_debit - total_credit, 2),
+        "movements":       movements,
+        "has_apertura":    len(ap_rows) > 0,
+    }
+
+
+# ─────────────────────────────────────────────────────────────────
+# GET /ledger/mayor — Indice del Mayor: todas las cuentas con saldo
+# ─────────────────────────────────────────────────────────────────
+
+@router.get("/mayor")
+def get_mayor_summary(
+    from_date:    Optional[str] = Query(None, description="Fecha inicio YYYY-MM-DD"),
+    to_date:      Optional[str] = Query(None, description="Fecha fin   YYYY-MM-DD"),
+    account_type: Optional[str] = Query(None, description="Filtrar tipo: ACTIVO|PASIVO|PATRIMONIO|INGRESO|GASTO"),
+    current_user: dict    = Depends(get_current_user),
+    db:           Session = Depends(get_session),
+):
+    """
+    Indice del Libro Mayor — resumen de todas las cuentas con actividad.
+    Saldo inicial (apertura) + movimientos del periodo = saldo cierre.
+    """
+    tenant_id = current_user["tenant_id"]
+    now_str   = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    year_str  = datetime.now(timezone.utc).strftime("%Y")
+    if not from_date:
+        from_date = f"{year_str}-01-01"
+    if not to_date:
+        to_date = now_str
+
+    # Saldos de apertura por cuenta
+    ap_map = {}
+    for r in db.execute(text("""
+        SELECT jl.account_code,
+               SUM(jl.debit) - SUM(jl.credit) AS saldo_aper
+        FROM journal_lines jl
+        JOIN journal_entries je ON je.id = jl.entry_id
+        WHERE je.tenant_id = :tid AND je.status = 'POSTED' AND je.source = 'APERTURA'
+        GROUP BY jl.account_code
+    """), {"tid": tenant_id}).fetchall():
+        ap_map[r.account_code] = round(float(r.saldo_aper or 0), 2)
+
+    # Movimientos del periodo (sin apertura)
+    type_clause = f"AND a.account_type = '{account_type}'" if account_type else ""
+    m_rows = db.execute(text(f"""
+        SELECT jl.account_code, a.name AS account_name, a.account_type,
+               SUM(jl.debit) AS total_debit, SUM(jl.credit) AS total_credit
+        FROM journal_lines jl
+        JOIN journal_entries je ON je.id = jl.entry_id
+        LEFT JOIN accounts a ON a.tenant_id = je.tenant_id AND a.code = jl.account_code
+        WHERE je.tenant_id = :tid AND je.status = 'POSTED' AND je.source != 'APERTURA'
+          AND je.date BETWEEN :from_d AND :to_d {type_clause}
+        GROUP BY jl.account_code, a.name, a.account_type
+        ORDER BY jl.account_code
+    """), {"tid": tenant_id, "from_d": from_date, "to_d": to_date}).fetchall()
+
+    move_idx = {r.account_code: r for r in m_rows}
+    all_codes = sorted(set(ap_map.keys()) | set(move_idx.keys()))
+
+    # Info para cuentas solo en apertura
+    aper_only = set(ap_map.keys()) - set(move_idx.keys())
+    extra_info = {}
+    if aper_only:
+        for r in db.execute(text(
+            "SELECT code, name, account_type FROM accounts WHERE tenant_id = :tid AND code IN :codes"
+        ), {"tid": tenant_id, "codes": tuple(aper_only)}).fetchall():
+            extra_info[r.code] = r
+
+    result = []
+    for code in all_codes:
+        aper = ap_map.get(code, 0.0)
+        if code in move_idx:
+            r = move_idx[code]
+            td = round(float(r.total_debit or 0), 2)
+            tc = round(float(r.total_credit or 0), 2)
+            name  = r.account_name or code
+            atype = r.account_type or ""
+        else:
+            td = 0.0; tc = 0.0
+            ex    = extra_info.get(code)
+            name  = ex.name if ex else code
+            atype = ex.account_type if ex else ""
+        result.append({
+            "account_code":    code,
+            "account_name":    name,
+            "account_type":    atype,
+            "opening_balance": aper,
+            "total_debit":     td,
+            "total_credit":    tc,
+            "closing_balance": round(aper + td - tc, 2),
+        })
+
+    return {
+        "from_date": from_date,
+        "to_date":   to_date,
+        "tenant_id": tenant_id,
+        "accounts":  result,
+        "total":     len(result),
+    }
