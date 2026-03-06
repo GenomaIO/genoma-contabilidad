@@ -33,6 +33,7 @@ export default function BalanceComprobacion() {
     const [data, setData] = useState(null)
     const [loading, setLoading] = useState(false)
     const [error, setError] = useState(null)
+    const [presentLevel, setPresentLevel] = useState(4)  // nivel de presentación EEFF: 4 (default) o 5
 
     const apiUrl = import.meta.env.VITE_API_URL || ''
     const token = localStorage.getItem('gc_token')
@@ -60,10 +61,55 @@ export default function BalanceComprobacion() {
         periodOptions.push({ val, label: `${MONTHS[d.getMonth()]} ${d.getFullYear()}` })
     }
 
-    const accounts = data?.accounts || []
-    const totalDebit = data?.total_debit || 0
-    const totalCredit = data?.total_credit || 0
-    const balanced = data?.balanced ?? true
+    // get_level: nivel real de un código interno
+    // 1000→N1, 1100→N2, 1101→N3, 1101.01→N4, 1101.01.01→N5
+    function getLevel(code) {
+        const parts = code.split('.')
+        const base = parts[0]
+        const suffixCount = parts.length - 1
+        let baseLevel
+        if (base.slice(1) === '000') baseLevel = 1
+        else if (base.slice(2) === '00') baseLevel = 2
+        else baseLevel = 3
+        return baseLevel + suffixCount
+    }
+
+    // Roll-up: agrega cuentas de nivel superior al nivel de presentación
+    // El backend devuelve cuentas al nivel que tienen movimientos (puede ser N5).
+    // Este proceso acumula N5 en su padre N4 cuando presentLevel=4, evitando doble conteo.
+    function rollUpAccounts(rawAccounts, level) {
+        const accumulated = {}
+        const metaMap = {}
+        for (const acc of rawAccounts) {
+            const code = acc.account_code
+            const lvl = getLevel(code)
+            let targetCode = code
+            if (lvl > level) {
+                // Encontrar el ancestro al nivel deseado
+                const parts = code.split('.')
+                while (parts.length > 0 && getLevel(parts.join('.')) > level) parts.pop()
+                targetCode = parts.join('.') || code
+            }
+            if (!accumulated[targetCode]) {
+                accumulated[targetCode] = { debit: 0, credit: 0 }
+                metaMap[targetCode] = acc  // usar meta del primer acc que aporta
+            }
+            accumulated[targetCode].debit += acc.total_debit || 0
+            accumulated[targetCode].credit += acc.total_credit || 0
+        }
+        return Object.entries(accumulated).sort(([a], [b]) => a.localeCompare(b)).map(([code, sums]) => ({
+            ...metaMap[code],
+            account_code: code,
+            total_debit: sums.debit,
+            total_credit: sums.credit,
+        }))
+    }
+
+    const rawAccounts = data?.accounts || []
+    const accounts = rollUpAccounts(rawAccounts, presentLevel)
+    const totalDebit = accounts.reduce((s, a) => s + (a.total_debit || 0), 0)
+    const totalCredit = accounts.reduce((s, a) => s + (a.total_credit || 0), 0)
+    const balanced = Math.abs(totalDebit - totalCredit) < 0.01
 
     return (
         <div style={{ padding: '24px', maxWidth: 960, margin: '0 auto', fontFamily: 'Inter, sans-serif' }}>
@@ -90,6 +136,24 @@ export default function BalanceComprobacion() {
                 >
                     {periodOptions.map(o => <option key={o.val} value={o.val}>{o.label}</option>)}
                 </select>
+                {/* Selector de nivel de presentación EEFF */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>Ver hasta:</span>
+                    {[4, 5].map(lvl => (
+                        <button key={lvl}
+                            id={`btn-nivel-${lvl}`}
+                            onClick={() => setPresentLevel(lvl)}
+                            title={lvl === 4 ? 'Nivel 4 (recomendado DGCN)' : 'Nivel 5+ (detalle máximo)'}
+                            style={{
+                                padding: '5px 10px', borderRadius: 6, border: '1px solid var(--border-color)',
+                                background: presentLevel === lvl ? '#7c3aed' : 'var(--bg-card)',
+                                color: presentLevel === lvl ? 'white' : 'var(--text-secondary)',
+                                fontWeight: presentLevel === lvl ? 700 : 400,
+                                cursor: 'pointer', fontSize: '0.8rem',
+                            }}
+                        >N{lvl}</button>
+                    ))}
+                </div>
             </div>
 
             {error && (
