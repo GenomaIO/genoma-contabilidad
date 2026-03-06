@@ -129,6 +129,13 @@ class FixedAsset(Base):
     # ── Link a apertura (Mass-Add desde apertura) ─────────────────
     apertura_line_id = Column(String(36), nullable=True)   # FK soft a journal_lines.id
 
+    # ── Tasa fiscal (Decreto 18455-H, Art. 24 Ley Renta) ─────────
+    # Cuando se usa Modo Tasa Fiscal, la cuota mensual es constante:
+    #   cuota = costo_historico × tasa_anual% / 12
+    # El sistema infiere vida_util_meses y meses_usados_apertura automáticamente.
+    # None / 0 → Modo NIIF Detallado (cuota calculada del saldo residual).
+    tasa_anual = Column(Numeric(5, 2), nullable=True)   # ej: 10.00 para 10%
+
     # ── Estado y control ──────────────────────────────────────────
     estado      = Column(Enum(AssetEstado),  nullable=False, default=AssetEstado.ACTIVO)
     baja_fecha  = Column(String(10), nullable=True)   # fecha de la baja
@@ -153,13 +160,30 @@ class FixedAsset(Base):
 
     @property
     def cuota_mensual(self) -> float:
-        """Cuota mensual LINEA_RECTA. Devuelve 0 si ya está totalmente depreciado."""
-        if self.metodo_depreciacion == AssetMetodo.LINEA_RECTA:
+        """
+        Dual motor de depreciación (Línea Recta):
+
+        MODO TASA FISCAL (tasa_anual > 0):
+          cuota = costo_historico × (tasa_anual / 100) / 12
+          → CONSTANTE — nunca cambia durante la vida del activo.
+          → Correcto para el régimen fiscal CR (Decreto 18455-H).
+
+        MODO NIIF DETALLADO (tasa_anual = 0 / None):
+          cuota = (costo_historico − valor_residual − dep_acum_apertura)
+                  / meses_restantes
+          → Varía según el saldo residual y los meses ingresados.
+          → Estricto NIIF Sección 17.
+        """
+        if self.metodo_depreciacion != AssetMetodo.LINEA_RECTA:
+            return 0.0   # SALDO_DECRECIENTE y UNIDADES_PRODUCCION requieren input manual
+        if self.tasa_anual and float(self.tasa_anual) > 0:
+            # Modo Tasa Fiscal: cuota constante
+            return round(float(self.costo_historico) * float(self.tasa_anual) / 100 / 12, 5)
+        else:
+            # Modo NIIF Detallado: cuota del saldo residual
             if self.meses_restantes == 0:
                 return 0.0
             return round(self.depreciable_base / self.meses_restantes, 5)
-        # SALDO_DECRECIENTE y UNIDADES_PRODUCCION requieren input manual adicional
-        return 0.0
 
     def __repr__(self):
         return (

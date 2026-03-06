@@ -236,6 +236,19 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning(f"⚠️  Migración M_ASSETS omitida: {e}")
 
+        # ── Migración M_ASSETS_V2: columna tasa_anual ─────────────
+        # Modo Tasa Fiscal (Decreto 18455-H) — cuota constante.
+        # ALTER ... IF NOT EXISTS es idempotente en Postgres 9.6+.
+        try:
+            with _engine.begin() as conn:
+                conn.execute(text(
+                    "ALTER TABLE fixed_assets "
+                    "ADD COLUMN IF NOT EXISTS tasa_anual NUMERIC(5,2)"
+                ))
+            logger.info("✅ Migración M_ASSETS_V2: columna tasa_anual agregada")
+        except Exception as e:
+            logger.warning(f"⚠️  Migración M_ASSETS_V2 omitida: {e}")
+
     # ── Auto-reseed: al arrancar, aplica cuentas nuevas del seed a TODOS
     # los tenants con cuentas existentes. Usa seed_standard_catalog()
     # con raw SQL / ON CONFLICT DO NOTHING — igual que el boton Sembrar.

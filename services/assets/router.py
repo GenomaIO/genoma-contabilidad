@@ -60,7 +60,15 @@ class AssetIn(BaseModel):
     fecha_disponible:  str    # NIIF: depreciación inicia aquí
     costo_historico:   float
     valor_residual:    float  = 0.0
-    vida_util_meses:   int
+
+    # ── Modo Tasa Fiscal (Decreto 18455-H, Art. 24) ──────────────────
+    # Si tasa_anual > 0: el sistema infiere vida_util_meses y meses_usados.
+    # Cuota mensual = costo_historico × tasa_anual% / 12 (constante sempre).
+    tasa_anual:    Optional[float] = None  # ej: 10.0 para 10%
+
+    # ── Modo NIIF Detallado ──────────────────────────────────────
+    # Requerido cuando tasa_anual es None. Opcional con tasa (se recalculan).
+    vida_util_meses:   Optional[int] = None
 
     metodo_depreciacion: AssetMetodo = AssetMetodo.LINEA_RECTA
 
@@ -70,6 +78,18 @@ class AssetIn(BaseModel):
 
     # Link opcional a la línea de apertura
     apertura_line_id: Optional[str] = None
+
+
+# Tasas fiscales máximas CR — Decreto 18455-H, Art. 24 Ley 7092
+# Usadas para inferir vida_util y cuota en el Modo Tasa Fiscal.
+TASAS_CR: dict[str, float] = {
+    "INMUEBLE":   2.5,   # Edificios: 2.5% → 40 años
+    "VEHICULO":   10.0,  # Vehículos: 10% → 10 años
+    "EQUIPO":     10.0,  # Maquinaria: 10% → 10 años
+    "MOBILIARIO": 10.0,  # Muebles: 10% → 10 años
+    "INTANGIBLE": 10.0,  # Intangibles: 10% → 10 años
+    "OTRO":       10.0,  # Default conservador
+}
 
 
 class BajaIn(BaseModel):
@@ -100,6 +120,7 @@ def _asset_to_dict(a: FixedAsset) -> dict:
         "costo_historico":      float(a.costo_historico),
         "valor_residual":       float(a.valor_residual),
         "vida_util_meses":      a.vida_util_meses,
+        "tasa_anual":           float(a.tasa_anual) if a.tasa_anual else None,
         "metodo_depreciacion":  a.metodo_depreciacion.value if hasattr(a.metodo_depreciacion, 'value') else str(a.metodo_depreciacion),
         "dep_acum_apertura":    float(a.dep_acum_apertura),
         "meses_usados_apertura": a.meses_usados_apertura,
@@ -226,19 +247,30 @@ def create_asset(
     """Registrar un activo fijo nuevo o importado desde la apertura."""
     tenant_id = current_user["tenant_id"]
 
-    # Validaciones básicas NIIF
+    # ── Modo Tasa Fiscal: inferir vida_util y meses_usados automáticamente ──
+    tasa = body.tasa_anual
+    vida_util = body.vida_util_meses
+    meses_usados = body.meses_usados_apertura
+
+    if tasa and tasa > 0:
+        if tasa > 100 or tasa <= 0:
+            raise HTTPException(400, "tasa_anual debe estar entre 0.1 y 100")
+        cuota_constante = body.costo_historico * (tasa / 100) / 12
+        vida_util  = round(12 * 100 / tasa)          # ej: 10% → 120 meses
+        meses_usados = round(body.dep_acum_apertura / cuota_constante) if cuota_constante > 0 else 0
+        meses_usados = max(0, min(meses_usados, vida_util - 1))  # clamp
+    else:
+        # Modo NIIF Detallado: validaciones manuales
+        if not vida_util or vida_util <= 0:
+            raise HTTPException(400, "vida_util_meses es requerido en Modo NIIF Detallado")
+
+    # Validaciones comunes
     if body.costo_historico <= 0:
         raise HTTPException(400, "costo_historico debe ser > 0")
     if body.valor_residual < 0:
         raise HTTPException(400, "valor_residual no puede ser negativo")
     if body.valor_residual >= body.costo_historico:
         raise HTTPException(400, "valor_residual no puede ser >= costo_historico")
-    if body.vida_util_meses <= 0:
-        raise HTTPException(400, "vida_util_meses debe ser > 0")
-    if body.meses_usados_apertura < 0:
-        raise HTTPException(400, "meses_usados_apertura no puede ser negativo")
-    if body.meses_usados_apertura >= body.vida_util_meses:
-        raise HTTPException(400, "meses_usados_apertura debe ser < vida_util_meses")
     if body.dep_acum_apertura < 0:
         raise HTTPException(400, "dep_acum_apertura no puede ser negativo")
 
@@ -259,10 +291,11 @@ def create_asset(
         fecha_disponible     = body.fecha_disponible,
         costo_historico      = body.costo_historico,
         valor_residual       = body.valor_residual,
-        vida_util_meses      = body.vida_util_meses,
+        vida_util_meses      = vida_util or 120,
+        tasa_anual           = tasa,
         metodo_depreciacion  = body.metodo_depreciacion,
         dep_acum_apertura    = body.dep_acum_apertura,
-        meses_usados_apertura = body.meses_usados_apertura,
+        meses_usados_apertura = meses_usados,
         apertura_line_id     = body.apertura_line_id,
         estado               = AssetEstado.ACTIVO,
         created_by           = _uid(current_user),
