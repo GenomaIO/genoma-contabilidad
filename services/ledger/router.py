@@ -249,6 +249,26 @@ def approve_entry(
     if entry.status != EntryStatus.DRAFT:
         raise HTTPException(400, f"Solo asientos DRAFT pueden aprobarse. Estado actual: {entry.status.value}")
 
+    # ── Guard: re-validar partida doble antes de aprobar (anti-corrupción) ───
+    # Aunque create_entry ya valida, un asiento podría estar desbalanceado
+    # si fue creado por fuera del UI o por un bug. Este guard es la última
+    # línea de defensa antes de inmortalizar el asiento como POSTED.
+    lines_db = entry.lines  # relación lazy-loaded
+    total_debit_ap  = sum(round(float(l.debit  or 0), 5) for l in lines_db)
+    total_credit_ap = sum(round(float(l.credit or 0), 5) for l in lines_db)
+    if abs(total_debit_ap - total_credit_ap) > 0.00001:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"El asiento no está balanceado: "
+                f"débitos={total_debit_ap:,.2f} ≠ créditos={total_credit_ap:,.2f}. "
+                f"No se puede aprobar un asiento sin partida doble perfecta (NIIF / principio contable básico)."
+            )
+        )
+    if len(lines_db) < 2:
+        raise HTTPException(400, "El asiento debe tener al menos 2 líneas para ser aprobado.")
+    # ── Fin guard ─────────────────────────────────────────────────────────────
+
     now = datetime.now(timezone.utc)
     entry.status      = EntryStatus.POSTED
     entry.approved_by = current_user["user_id"]
@@ -263,6 +283,7 @@ def approve_entry(
     db.commit()
 
     return {"ok": True, "entry_id": entry_id, "status": "POSTED", "approved_at": str(now)}
+
 
 
 # ─────────────────────────────────────────────────────────────────
