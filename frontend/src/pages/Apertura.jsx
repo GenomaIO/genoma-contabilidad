@@ -187,13 +187,33 @@ export default function Apertura() {
     // ── Vista: apertura ya existe (solo lectura) ───────────────────
     if (existing?.exists) return (
         <div style={{ maxWidth: 760, margin: '0 auto', padding: '32px 20px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 24 }}>
-                <span style={{ fontSize: '1.5rem' }}>📋</span>
-                <div>
-                    <h2 style={{ margin: 0, fontSize: '1.2rem', color: 'var(--text-primary)' }}>
-                        Apertura de Ejercicio {currentYear}
-                    </h2>
-                    <span style={{ fontSize: '0.78rem', color: '#10b981' }}>✅ Aprobada — inmutable</span>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 24 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                    <span style={{ fontSize: '1.5rem' }}>📋</span>
+                    <div>
+                        <h2 style={{ margin: 0, fontSize: '1.2rem', color: 'var(--text-primary)' }}>
+                            Apertura de Ejercicio {currentYear}
+                        </h2>
+                        <span style={{ fontSize: '0.78rem', color: '#10b981' }}>✅ Aprobada — inmutable</span>
+                    </div>
+                </div>
+                {/* 💡 Tooltip hover — sin click */}
+                <div style={{ position: 'relative', display: 'inline-block' }}
+                    onMouseEnter={e => e.currentTarget.querySelector('.apertura-guide').style.display = 'block'}
+                    onMouseLeave={e => e.currentTarget.querySelector('.apertura-guide').style.display = 'none'}
+                >
+                    <button id="btn-guia-apertura" style={{ background: 'transparent', border: '1px solid var(--border-color)', borderRadius: 20, padding: '5px 10px', cursor: 'pointer', color: 'var(--text-secondary)', fontSize: '0.82rem', display: 'flex', alignItems: 'center', gap: 5 }}>💡 Guía</button>
+                    <div className="apertura-guide" style={{ display: 'none', position: 'absolute', right: 0, top: '110%', zIndex: 999, background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: 10, padding: '14px 16px', width: 340, boxShadow: '0 8px 24px rgba(0,0,0,0.35)', fontSize: '0.78rem' }}>
+                        <p style={{ margin: '0 0 8px', fontWeight: 700, color: 'var(--text-primary)', fontSize: '0.85rem' }}>💡 ¿Para qué sirve la Apertura de Ejercicio?</p>
+                        <p style={{ margin: '0 0 10px', color: 'var(--text-secondary)', lineHeight: 1.6 }}>Es el primer registro contable del año. Define los saldos iniciales de todas las cuentas de Balance (Activo, Pasivo, Patrimonio). Una vez aprobada, es <strong>perpetua e inmutable</strong>.</p>
+                        <p style={{ margin: '0 0 6px', fontWeight: 600, color: 'var(--text-primary)' }}>Flujo correcto:</p>
+                        <ol style={{ margin: '0 0 10px', paddingLeft: 16, color: 'var(--text-secondary)', lineHeight: 1.7 }}>
+                            <li>Define el Catálogo de Cuentas</li>
+                            <li>Ingresa los saldos iniciales aquí</li>
+                            <li>Confirma → el sistema queda habilitado</li>
+                        </ol>
+                        <p style={{ margin: 0, fontSize: '0.73rem', color: 'var(--text-muted)', borderTop: '1px solid var(--border-color)', paddingTop: 8 }}>Solo <strong>ACTIVO, PASIVO y PATRIMONIO</strong> — nunca ingresos ni gastos.<br />Debe = Haber obligatorio (partida doble).</p>
+                    </div>
                 </div>
             </div>
 
@@ -248,15 +268,35 @@ export default function Apertura() {
     return (
         <div style={{ maxWidth: 820, margin: '0 auto', padding: '32px 20px' }}>
             {/* Header */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
-                <span style={{ fontSize: '1.5rem' }}>📂</span>
-                <div>
-                    <h2 style={{ margin: 0, fontSize: '1.2rem', color: 'var(--text-primary)' }}>
-                        Apertura de Ejercicio {currentYear}
-                    </h2>
-                    <p style={{ margin: 0, fontSize: '0.82rem', color: 'var(--text-muted)' }}>
-                        Registra los saldos iniciales. Una vez aprobado, este asiento es perpetuo e inmutable.
-                    </p>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 8 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                    <span style={{ fontSize: '1.5rem' }}>📂</span>
+                    <div>
+                        <h2 style={{ margin: 0, fontSize: '1.2rem', color: 'var(--text-primary)' }}>
+                            Apertura de Ejercicio {currentYear}
+                        </h2>
+                        <p style={{ margin: 0, fontSize: '0.82rem', color: 'var(--text-muted)' }}>
+                            Registra los saldos iniciales. Una vez aprobado, este asiento es perpetuo e inmutable.
+                        </p>
+                    </div>
+                </div>
+                {/* 💡 Tooltip hover — sin click */}
+                <div style={{ position: 'relative', display: 'inline-block' }}
+                    onMouseEnter={e => e.currentTarget.querySelector('.apertura-guide').style.display = 'block'}
+                    onMouseLeave={e => e.currentTarget.querySelector('.apertura-guide').style.display = 'none'}
+                >
+                    <button id="btn-guia-apertura" style={{ background: 'transparent', border: '1px solid var(--border-color)', borderRadius: 20, padding: '5px 10px', cursor: 'pointer', color: 'var(--text-secondary)', fontSize: '0.82rem', display: 'flex', alignItems: 'center', gap: 5 }}>💡 Guía</button>
+                    <div className="apertura-guide" style={{ display: 'none', position: 'absolute', right: 0, top: '110%', zIndex: 999, background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: 10, padding: '14px 16px', width: 340, boxShadow: '0 8px 24px rgba(0,0,0,0.35)', fontSize: '0.78rem' }}>
+                        <p style={{ margin: '0 0 8px', fontWeight: 700, color: 'var(--text-primary)', fontSize: '0.85rem' }}>💡 ¿Para qué sirve la Apertura de Ejercicio?</p>
+                        <p style={{ margin: '0 0 10px', color: 'var(--text-secondary)', lineHeight: 1.6 }}>Es el primer registro contable del año. Define los saldos iniciales de todas las cuentas de Balance (Activo, Pasivo, Patrimonio). Una vez aprobada, es <strong>perpetua e inmutable</strong>.</p>
+                        <p style={{ margin: '0 0 6px', fontWeight: 600, color: 'var(--text-primary)' }}>Flujo correcto:</p>
+                        <ol style={{ margin: '0 0 10px', paddingLeft: 16, color: 'var(--text-secondary)', lineHeight: 1.7 }}>
+                            <li>Define el Catálogo de Cuentas</li>
+                            <li>Ingresa los saldos iniciales aquí</li>
+                            <li>Confirma → el sistema queda habilitado</li>
+                        </ol>
+                        <p style={{ margin: 0, fontSize: '0.73rem', color: 'var(--text-muted)', borderTop: '1px solid var(--border-color)', paddingTop: 8 }}>Solo <strong>ACTIVO, PASIVO y PATRIMONIO</strong> — nunca ingresos ni gastos.<br />Debe = Haber obligatorio (partida doble).</p>
+                    </div>
                 </div>
             </div>
 
