@@ -540,61 +540,76 @@ export default function Catalogo() {
                                             )}
                                         </div>
 
-                                        {/* Formulario inline ⊕ — se expande bajo la cuenta padre */}
+                                        {/* Formulario inline ⊕ — padre visible + badge código nuevo */}
                                         {canWrite && inlineForm.parentCode === acc.code && (
                                             <div style={{
-                                                display: 'flex', alignItems: 'center', gap: 8,
-                                                padding: '8px 16px',
+                                                padding: '8px 16px 10px',
                                                 paddingLeft: `${(getLevel(acc.code)) * 20 + 16}px`,
                                                 background: `${cfg.color}08`,
                                                 borderLeft: `2px solid ${cfg.color}`,
                                                 borderTop: `1px dashed ${cfg.color}40`,
-                                                flexWrap: 'wrap',
                                             }}>
-                                                <span style={{ fontSize: '0.72rem', color: cfg.color, fontWeight: 600, flexShrink: 0 }}>
-                                                    ↳ {getDisplayCode(nextChildCode(acc.code))}
-                                                </span>
-                                                <input
-                                                    id={`inline-name-${acc.code}`}
-                                                    autoFocus
-                                                    placeholder="Nombre de la cuenta..."
-                                                    value={inlineForm.name}
-                                                    onChange={e => setInlineForm(f => ({ ...f, name: e.target.value }))}
-                                                    onKeyDown={e => { if (e.key === 'Enter') handleAddChild(acc); if (e.key === 'Escape') closeInline() }}
-                                                    style={{
-                                                        flex: 1, minWidth: 160,
-                                                        padding: '5px 9px',
-                                                        fontSize: '0.82rem',
-                                                        border: `1px solid ${cfg.color}50`,
-                                                        borderRadius: 6,
-                                                        background: 'var(--bg-card)',
-                                                        color: 'var(--text-primary)',
-                                                        outline: 'none',
-                                                    }}
-                                                />
-                                                <button
-                                                    id={`inline-save-${acc.code}`}
-                                                    onClick={() => handleAddChild(acc)}
-                                                    disabled={inlineForm.name.trim().length < 2 || inlineForm.saving}
-                                                    style={{
-                                                        padding: '5px 12px', fontSize: '0.78rem', flexShrink: 0,
-                                                        background: cfg.color, color: '#fff',
-                                                        border: 'none', borderRadius: 6, cursor: 'pointer',
-                                                        opacity: inlineForm.name.trim().length < 2 ? 0.45 : 1,
-                                                    }}
-                                                >
-                                                    {inlineForm.saving ? '...' : '💾 Guardar'}
-                                                </button>
-                                                <button
-                                                    onClick={closeInline}
-                                                    style={{
-                                                        padding: '5px 8px', fontSize: '0.78rem', flexShrink: 0,
-                                                        background: 'transparent', color: 'var(--text-muted)',
-                                                        border: '1px solid var(--border-color)', borderRadius: 6, cursor: 'pointer',
-                                                    }}
-                                                >✕</button>
+                                                {/* Línea 1: contexto del padre */}
+                                                <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginBottom: 6 }}>
+                                                    Sub-cuenta de →{' '}
+                                                    <strong style={{ color: cfg.color }}>
+                                                        {getDisplayCode(acc.code)} {acc.name}
+                                                    </strong>
+                                                </div>
+                                                {/* Línea 2: badge código nuevo + input + botones */}
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                                                    <span style={{
+                                                        fontSize: '0.78rem', fontWeight: 800, fontFamily: 'monospace',
+                                                        padding: '4px 10px', borderRadius: 6,
+                                                        background: cfg.color + '22', color: cfg.color,
+                                                        border: `1px solid ${cfg.color}55`, flexShrink: 0,
+                                                        letterSpacing: '0.02em',
+                                                    }}>
+                                                        {getDisplayCode(nextChildCode(acc.code))}
+                                                    </span>
+                                                    <input
+                                                        id={`inline-name-${acc.code}`}
+                                                        autoFocus
+                                                        placeholder="Nombre de la cuenta..."
+                                                        value={inlineForm.name}
+                                                        onChange={e => setInlineForm(f => ({ ...f, name: e.target.value }))}
+                                                        onKeyDown={e => { if (e.key === 'Enter') handleAddChild(acc); if (e.key === 'Escape') closeInline() }}
+                                                        style={{
+                                                            flex: 1, minWidth: 160,
+                                                            padding: '5px 9px',
+                                                            fontSize: '0.82rem',
+                                                            border: `1px solid ${cfg.color}50`,
+                                                            borderRadius: 6,
+                                                            background: 'var(--bg-card)',
+                                                            color: 'var(--text-primary)',
+                                                            outline: 'none',
+                                                        }}
+                                                    />
+                                                    <button
+                                                        id={`inline-save-${acc.code}`}
+                                                        onClick={() => handleAddChild(acc)}
+                                                        disabled={inlineForm.name.trim().length < 2 || inlineForm.saving}
+                                                        style={{
+                                                            padding: '5px 12px', fontSize: '0.78rem', flexShrink: 0,
+                                                            background: cfg.color, color: '#fff',
+                                                            border: 'none', borderRadius: 6, cursor: 'pointer',
+                                                            opacity: inlineForm.name.trim().length < 2 ? 0.45 : 1,
+                                                        }}
+                                                    >
+                                                        {inlineForm.saving ? '...' : '💾 Guardar'}
+                                                    </button>
+                                                    <button
+                                                        onClick={closeInline}
+                                                        style={{
+                                                            padding: '5px 8px', fontSize: '0.78rem', flexShrink: 0,
+                                                            background: 'transparent', color: 'var(--text-muted)',
+                                                            border: '1px solid var(--border-color)', borderRadius: 6, cursor: 'pointer',
+                                                        }}
+                                                    >✕</button>
+                                                </div>
                                             </div>
                                         )}
+
                                     </div>
                                 ))}
                             </div>
