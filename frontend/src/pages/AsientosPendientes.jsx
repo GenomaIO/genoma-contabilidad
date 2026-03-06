@@ -48,7 +48,8 @@ export default function AsientosPendientes() {
 
     // ── E1: estado del formulario nuevo asiento ──
     const [showForm, setShowForm] = useState(false)
-    const [accounts, setAccounts] = useState([])  // catálogo para autocomplete
+    // accounts: SOLO cuentas de movimiento (hojas) desde /posteable — con display_code
+    const [accounts, setAccounts] = useState([])
     const [saving, setSaving] = useState(false)
     const [formError, setFormError] = useState(null)
     const [form, setForm] = useState({
@@ -56,6 +57,8 @@ export default function AsientosPendientes() {
         description: '',
         lines: [EMPTY_LINE(), EMPTY_LINE()],
     })
+    // AccountPicker: estado por línea {open, query, highlighted}
+    const [pickers, setPickers] = useState({})
 
     const apiUrl = import.meta.env.VITE_API_URL || ''
     const token = localStorage.getItem('gc_token')
@@ -64,16 +67,53 @@ export default function AsientosPendientes() {
 
     useEffect(() => { fetchEntries() }, [period, statusFilter])
 
-    // Pre-cargar catálogo de cuentas para autocomplete (solo la primera vez)
+    // Cargar SOLO cuentas de movimiento (hojas) con display_code — principio NIIF
     useEffect(() => {
         if (!canWrite || !token) return
-        fetch(`${apiUrl}/catalog/accounts?only_active=true`, {
+        fetch(`${apiUrl}/catalog/accounts/posteable`, {
             headers: { Authorization: `Bearer ${token}` }
         })
             .then(r => r.ok ? r.json() : [])
             .then(data => setAccounts(Array.isArray(data) ? data : []))
             .catch(() => { })
     }, [canWrite])
+
+    // Colores por tipo de cuenta
+    const TYPE_COLOR = {
+        ACTIVO: '#3b82f6', PASIVO: '#ef4444',
+        INGRESO: '#10b981', GASTO: '#f59e0b', PATRIMONIO: '#8b5cf6'
+    }
+
+    // Búsqueda fuzzy: por display_code, code o name
+    function fuzzyAccounts(q) {
+        if (!q || !q.trim()) return accounts.slice(0, 8)
+        const ql = q.toLowerCase().trim()
+        return accounts
+            .filter(a =>
+                a.code.toLowerCase().includes(ql) ||
+                (a.display_code || '').toLowerCase().includes(ql) ||
+                a.name.toLowerCase().includes(ql)
+            )
+            .slice(0, 10)
+    }
+
+    function openPicker(i) { setPickers(p => ({ ...p, [i]: { open: true, query: form.lines[i]?.display_code || '', hi: 0 } })) }
+    function closePicker(i) { setPickers(p => ({ ...p, [i]: { ...p[i], open: false } })) }
+    function selectAccount(i, acc) {
+        setForm(f => {
+            const lines = [...f.lines]
+            lines[i] = {
+                ...lines[i],
+                account_code: acc.code,           // código interno → va al backend
+                display_code: acc.display_code,   // display → ve el usuario
+                description: lines[i].description || acc.name,  // auto-rellena nombre
+                _accName: acc.name,
+                _accType: acc.account_type,
+            }
+            return { ...f, lines }
+        })
+        closePicker(i)
+    }
 
     async function fetchEntries() {
         setLoading(true); setError(null)
@@ -398,22 +438,88 @@ export default function AsientosPendientes() {
                             </div>
 
                             {form.lines.map((line, i) => (
-                                <div key={i} id={`line-row-${i}`} style={{ display: 'grid', gridTemplateColumns: '130px 1fr 130px 130px 36px', gap: 6, padding: '6px 12px', borderTop: '1px solid var(--border-color)', alignItems: 'center', background: i % 2 === 0 ? 'transparent' : 'rgba(0,0,0,0.03)' }}>
-                                    {/* Cuenta (con datalist) */}
-                                    <div>
-                                        <input
-                                            id={`line-account-${i}`}
-                                            list={`accounts-list-${i}`}
-                                            value={line.account_code}
-                                            placeholder="1101"
-                                            onChange={e => updateLine(i, 'account_code', e.target.value)}
-                                            style={{ ...inputStyle, fontFamily: 'monospace', fontSize: '0.8rem' }}
-                                        />
-                                        <datalist id={`accounts-list-${i}`}>
-                                            {accounts.map(a => (
-                                                <option key={a.code} value={a.code}>{a.code} — {a.name}</option>
-                                            ))}
-                                        </datalist>
+                                <div key={i} id={`line-row-${i}`} style={{ display: 'grid', gridTemplateColumns: '210px 1fr 120px 120px 36px', gap: 6, padding: '6px 12px', borderTop: '1px solid var(--border-color)', alignItems: 'center', background: i % 2 === 0 ? 'transparent' : 'rgba(0,0,0,0.03)' }}>
+                                    {/* ── AccountPicker ── */}
+                                    <div style={{ position: 'relative' }}>
+                                        {/* Campo de búsqueda — muestra display_code */}
+                                        <div style={{
+                                            display: 'flex', alignItems: 'center', gap: 4,
+                                            border: `1px solid ${line.account_code ? (TYPE_COLOR[line._accType] || 'var(--border-color)') + '80' : 'var(--border-color)'}`,
+                                            borderRadius: 6, overflow: 'hidden', background: 'var(--bg-card)'
+                                        }}>
+                                            {line._accType && (
+                                                <span style={{
+                                                    fontSize: '0.62rem', fontWeight: 700, padding: '0 5px',
+                                                    background: TYPE_COLOR[line._accType] + '20',
+                                                    color: TYPE_COLOR[line._accType], whiteSpace: 'nowrap', lineHeight: '28px'
+                                                }}>
+                                                    {line._accType?.slice(0, 3)}
+                                                </span>
+                                            )}
+                                            <input
+                                                id={`line-account-${i}`}
+                                                value={pickers[i]?.open ? (pickers[i]?.query || '') : (line.display_code || line.account_code || '')}
+                                                placeholder="Buscar cuenta..."
+                                                onFocus={() => openPicker(i)}
+                                                onChange={e => setPickers(p => ({ ...p, [i]: { ...p[i], open: true, query: e.target.value, hi: 0 } }))}
+                                                onKeyDown={e => {
+                                                    const opts = fuzzyAccounts(pickers[i]?.query || '')
+                                                    const hi = pickers[i]?.hi || 0
+                                                    if (e.key === 'ArrowDown') { e.preventDefault(); setPickers(p => ({ ...p, [i]: { ...p[i], hi: Math.min(hi + 1, opts.length - 1) } })) }
+                                                    if (e.key === 'ArrowUp') { e.preventDefault(); setPickers(p => ({ ...p, [i]: { ...p[i], hi: Math.max(hi - 1, 0) } })) }
+                                                    if ((e.key === 'Enter' || e.key === 'Tab') && opts[hi]) { e.preventDefault(); selectAccount(i, opts[hi]); if (e.key === 'Tab') document.getElementById(`line-debit-${i}`)?.focus() }
+                                                    if (e.key === 'Escape') closePicker(i)
+                                                }}
+                                                onBlur={() => setTimeout(() => closePicker(i), 180)}
+                                                style={{
+                                                    flex: 1, border: 'none', background: 'transparent', padding: '5px 6px',
+                                                    fontSize: '0.78rem', fontFamily: 'monospace', color: 'var(--text-primary)',
+                                                    outline: 'none', minWidth: 0
+                                                }}
+                                            />
+                                        </div>
+                                        {/* Dropdown de resultados */}
+                                        {pickers[i]?.open && (
+                                            <div style={{
+                                                position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 200,
+                                                background: 'var(--bg-elevated)', border: '1px solid var(--border-color)',
+                                                borderRadius: 8, boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
+                                                maxHeight: 240, overflowY: 'auto', marginTop: 2
+                                            }}>
+                                                {fuzzyAccounts(pickers[i]?.query || '').length === 0 ? (
+                                                    <div style={{ padding: '10px 12px', fontSize: '0.78rem', color: 'var(--text-muted)' }}>Sin resultados</div>
+                                                ) : fuzzyAccounts(pickers[i]?.query || '').map((a, idx) => (
+                                                    <div key={a.code}
+                                                        onMouseDown={() => selectAccount(i, a)}
+                                                        style={{
+                                                            display: 'flex', alignItems: 'center', gap: 8,
+                                                            padding: '7px 12px', cursor: 'pointer',
+                                                            background: idx === (pickers[i]?.hi || 0) ? TYPE_COLOR[a.account_type] + '18' : 'transparent',
+                                                            borderBottom: '1px solid var(--border-color)'
+                                                        }}>
+                                                        <span style={{
+                                                            fontSize: '0.6rem', fontWeight: 700, padding: '2px 5px',
+                                                            borderRadius: 4, background: TYPE_COLOR[a.account_type] + '25',
+                                                            color: TYPE_COLOR[a.account_type], flexShrink: 0
+                                                        }}>
+                                                            {a.account_type?.slice(0, 3)}
+                                                        </span>
+                                                        <span style={{
+                                                            fontFamily: 'monospace', fontSize: '0.75rem',
+                                                            color: TYPE_COLOR[a.account_type], flexShrink: 0, minWidth: 72
+                                                        }}>
+                                                            {a.display_code}
+                                                        </span>
+                                                        <span style={{
+                                                            fontSize: '0.78rem', color: 'var(--text-primary)',
+                                                            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'
+                                                        }}>
+                                                            {a.name}
+                                                        </span>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
                                     </div>
                                     {/* Descripción línea */}
                                     <input
