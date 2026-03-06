@@ -13,7 +13,7 @@ Endpoints:
 """
 import uuid
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Optional, Dict
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -82,7 +82,7 @@ class AssetIn(BaseModel):
 
 # Tasas fiscales máximas CR — Decreto 18455-H, Art. 24 Ley 7092
 # Usadas para inferir vida_util y cuota en el Modo Tasa Fiscal.
-TASAS_CR: dict[str, float] = {
+TASAS_CR: Dict[str, float] = {
     "INMUEBLE":   2.5,   # Edificios: 2.5% → 40 años
     "VEHICULO":   10.0,  # Vehículos: 10% → 10 años
     "EQUIPO":     10.0,  # Maquinaria: 10% → 10 años
