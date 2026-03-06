@@ -300,6 +300,57 @@ def create_account(
             )
 
     import uuid
+
+    # ── Auto-promote: si el padre era hoja, convertirlo en grupo ──────
+    promoted_parent_info = None
+    mix_level_warning    = None
+
+    if req.parent_code:
+        parent = db.query(Account).filter(
+            Account.tenant_id == tenant_id,
+            Account.code == req.parent_code
+        ).first()
+
+        if parent and parent.allow_entries:
+            # El padre ERA hoja → se convierte en grupo al tener hijos
+            parent.allow_entries = False
+            promoted_parent_info  = {"code": parent.code, "name": parent.name}
+
+            # Detectar hermanas del padre que siguen en el nivel inferior
+            # (hijos del ABUELO, distintos del padre recién promovido, que aún son hojas)
+            if parent.parent_code:
+                sibling_raw = db.execute(
+                    text("""
+                        SELECT a.code, a.name
+                        FROM accounts a
+                        WHERE a.tenant_id = :tid
+                          AND a.parent_code = :abuelo
+                          AND a.code != :parent_code
+                          AND a.is_active = true
+                          AND NOT EXISTS (
+                              SELECT 1 FROM accounts ch
+                              WHERE ch.tenant_id = a.tenant_id
+                                AND ch.parent_code = a.code
+                          )
+                    """),
+                    {"tid": tenant_id, "abuelo": parent.parent_code, "parent_code": parent.code},
+                ).fetchall()
+
+                if sibling_raw:
+                    sib_codes = [r[0] for r in sibling_raw[:3]]
+                    mix_level_warning = {
+                        "type": "MIX_LEVEL",
+                        "count": len(sibling_raw),
+                        "detail": (
+                            f"{len(sibling_raw)} cuenta(s) hermana(s) de '{parent.code}' "
+                            f"quedan en nivel anterior: {sib_codes}. "
+                            f"Se recomienda expandirlas al mismo nivel para evitar "
+                            f"inconsistencias en estados financieros."
+                        ),
+                        "affected_codes": [r[0] for r in sibling_raw],
+                    }
+    # ── Fin auto-promote ───────────────────────────────────────────
+
     account = Account(
         id=str(uuid.uuid4()),
         tenant_id=tenant_id,
@@ -315,7 +366,29 @@ def create_account(
     db.add(account)
     db.commit()
     db.refresh(account)
-    return account
+
+    # Respuesta enriquecida con promoted_parent y warnings
+    response = {
+        "id":           account.id,
+        "code":         account.code,
+        "name":         account.name,
+        "account_type": account.account_type.value if hasattr(account.account_type, 'value') else str(account.account_type),
+        "parent_code":  account.parent_code,
+        "allow_entries": account.allow_entries,
+        "warnings":     [],
+    }
+    if promoted_parent_info:
+        response["promoted_parent"] = promoted_parent_info
+        response["warnings"].append({
+            "type":   "PARENT_PROMOTED",
+            "detail": f"'{promoted_parent_info['code']} – {promoted_parent_info['name']}' "
+                      f"dejó de aceptar asientos directos (ahora es cuenta de agrupación).",
+        })
+    if mix_level_warning:
+        response["warnings"].append(mix_level_warning)
+
+    return response
+
 
 
 # ──────────────────────────────────────────────────────────────────
