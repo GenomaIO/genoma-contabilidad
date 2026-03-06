@@ -157,6 +157,27 @@ export default function Catalogo() {
         }
     }
 
+    // G3: Actualiza el catálogo añadiendo solo las cuentas nuevas del seed estándar
+    async function handleReseedMissing() {
+        setSeeding(true)
+        setError(null)
+        try {
+            const res = await fetch(`${apiUrl}/catalog/reseed-missing`, {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${token}` },
+            })
+            const data = await res.json()
+            if (!res.ok) throw new Error(data.detail || 'Error al actualizar catálogo')
+            await fetchAccounts()
+            if (data.inserted > 0)
+                alert(`✅ ${data.inserted} cuentas nuevas agregadas al catálogo.`)
+        } catch (e) {
+            setError(e.message)
+        } finally {
+            setSeeding(false)
+        }
+    }
+
     // ─── Funciones form inline ⊕ ─────────────────────────────────────────────
     function nextChildCode(parentCode) {
         const prefix = parentCode + '.'
@@ -251,6 +272,22 @@ export default function Catalogo() {
                         Ver inactivas
                     </label>
 
+                    {/* 🔄 Actualizar catálogo — agrega cuentas nuevas del seed sin perder nada */}
+                    {canWrite && (
+                        <button
+                            id="btn-actualizar-catalogo"
+                            onClick={handleReseedMissing}
+                            disabled={seeding}
+                            title="Agrega las cuentas nuevas del catálogo estándar que aún no tienes"
+                            style={{
+                                padding: '5px 12px', fontSize: '0.82rem', cursor: seeding ? 'wait' : 'pointer',
+                                background: 'transparent', border: '1px solid var(--border-color)',
+                                borderRadius: 20, color: 'var(--text-secondary)',
+                                display: 'flex', alignItems: 'center', gap: 5,
+                                opacity: seeding ? 0.5 : 1,
+                            }}
+                        >🔄 Actualizar</button>
+                    )}
                     {/* 💡 Guía de jerarquía DGCN — tooltip al hover */}
                     <div style={{ position: 'relative', display: 'inline-block' }}
                         onMouseEnter={e => e.currentTarget.querySelector('.dgcn-guide').style.display = 'block'}
