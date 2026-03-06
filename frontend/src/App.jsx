@@ -7,6 +7,8 @@ import ClientSelector from './pages/ClientSelector'
 import Onboarding from './pages/Onboarding'
 import Catalogo from './pages/Catalogo'
 import AsientosPendientes from './pages/AsientosPendientes'
+import BalanceComprobacion from './pages/BalanceComprobacion'
+import CierrePeriodo from './pages/CierrePeriodo'
 import { useApp } from './context/AppContext'
 
 // Guard de ruta — espera hidratación antes de decidir
@@ -67,14 +69,14 @@ function AppLayout() {
                     <Route path="/" element={<Dashboard />} />
                     <Route path="/diario" element={<AsientosPendientes />} />
                     <Route path="/mayor" element={<ComingSoon name="Mayor General" />} />
-                    <Route path="/balance" element={<ComingSoon name="Balance de Comprobación" />} />
+                    <Route path="/balance" element={<BalanceComprobacion />} />
                     <Route path="/integracion" element={<ComingSoon name="Integración Facturador" />} />
                     <Route path="/asientos" element={<AsientosPendientes />} />
                     <Route path="/catalogo" element={<Catalogo />} />
                     <Route path="/declaraciones" element={<ComingSoon name="Declaraciones Tribu-CR" />} />
                     <Route path="/prorrata" element={<ComingSoon name="Prorrata IVA" />} />
                     <Route path="/reportes" element={<ComingSoon name="Estados Financieros" />} />
-                    <Route path="/cierre" element={<ComingSoon name="Cierre de Período" />} />
+                    <Route path="/cierre" element={<CierrePeriodo />} />
                     <Route path="/config" element={<ComingSoon name="Configuración" />} />
                     <Route path="*" element={<ComingSoon name="Página no encontrada" />} />
                 </Routes>
