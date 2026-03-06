@@ -85,14 +85,166 @@
         "type": "ACTIVO",
         "sub_type": "NO_CIRCULANTE",
         "parent_code": "1200",
-        "allow_entries": true
+        "allow_entries": false
+    },
+    {
+        "code": "1201.01",
+        "name": "Terrenos",
+        "type": "ACTIVO",
+        "sub_type": "NO_CIRCULANTE",
+        "parent_code": "1201",
+        "allow_entries": true,
+        "_nota": "No deprecia — NIIF S.17.15"
+    },
+    {
+        "code": "1201.02",
+        "name": "Edificios y Construcciones",
+        "type": "ACTIVO",
+        "sub_type": "NO_CIRCULANTE",
+        "parent_code": "1201",
+        "allow_entries": true,
+        "_dep_rate": 0.025,
+        "_dep_years": 40,
+        "_legal_basis": "Reglamento LISR — Anexo"
+    },
+    {
+        "code": "1201.03",
+        "name": "Maquinaria y Equipo Industrial",
+        "type": "ACTIVO",
+        "sub_type": "NO_CIRCULANTE",
+        "parent_code": "1201",
+        "allow_entries": true,
+        "_dep_rate": 0.10,
+        "_dep_years": 10,
+        "_legal_basis": "Reglamento LISR — Anexo"
+    },
+    {
+        "code": "1201.04",
+        "name": "Vehículos y Medios de Transporte",
+        "type": "ACTIVO",
+        "sub_type": "NO_CIRCULANTE",
+        "parent_code": "1201",
+        "allow_entries": true,
+        "_dep_rate": 0.10,
+        "_dep_years": 10,
+        "_legal_basis": "Reglamento LISR / Ley 31652 VE"
+    },
+    {
+        "code": "1201.05",
+        "name": "Mobiliario y Equipo de Oficina",
+        "type": "ACTIVO",
+        "sub_type": "NO_CIRCULANTE",
+        "parent_code": "1201",
+        "allow_entries": true,
+        "_dep_rate": 0.10,
+        "_dep_years": 10,
+        "_legal_basis": "Reglamento LISR — Anexo"
+    },
+    {
+        "code": "1201.06",
+        "name": "Equipo de Cómputo y Tecnología",
+        "type": "ACTIVO",
+        "sub_type": "NO_CIRCULANTE",
+        "parent_code": "1201",
+        "allow_entries": true,
+        "_dep_rate": 0.3333,
+        "_dep_years": 3,
+        "_legal_basis": "Criterio Hacienda / CCPA — 3 años"
+    },
+    {
+        "code": "1201.07",
+        "name": "Equipo de Comunicaciones",
+        "type": "ACTIVO",
+        "sub_type": "NO_CIRCULANTE",
+        "parent_code": "1201",
+        "allow_entries": true,
+        "_dep_rate": 0.10,
+        "_dep_years": 10,
+        "_legal_basis": "Reglamento LISR — Anexo"
+    },
+    {
+        "code": "1201.08",
+        "name": "Herramientas y Accesorios",
+        "type": "ACTIVO",
+        "sub_type": "NO_CIRCULANTE",
+        "parent_code": "1201",
+        "allow_entries": true,
+        "_dep_rate": 0.20,
+        "_dep_years": 5,
+        "_legal_basis": "Reglamento LISR — Anexo"
+    },
+    {
+        "code": "1201.09",
+        "name": "Obras en Proceso (CIP)",
+        "type": "ACTIVO",
+        "sub_type": "NO_CIRCULANTE",
+        "parent_code": "1201",
+        "allow_entries": true,
+        "_nota": "No deprecia hasta entrar en operación — NIIF S.17.10"
     },
     {
         "code": "1202",
-        "name": "Depreciación Acumulada",
+        "name": "Depreciación Acumulada (PPE)",
         "type": "ACTIVO",
         "sub_type": "NO_CIRCULANTE",
         "parent_code": "1200",
+        "allow_entries": false,
+        "_nota": "Contra-activo — resta del costo PPE en el Balance General"
+    },
+    {
+        "code": "1202.01",
+        "name": "Dep. Acumulada — Edificios y Construcciones",
+        "type": "ACTIVO",
+        "sub_type": "NO_CIRCULANTE",
+        "parent_code": "1202",
+        "allow_entries": true
+    },
+    {
+        "code": "1202.02",
+        "name": "Dep. Acumulada — Maquinaria y Equipo Industrial",
+        "type": "ACTIVO",
+        "sub_type": "NO_CIRCULANTE",
+        "parent_code": "1202",
+        "allow_entries": true
+    },
+    {
+        "code": "1202.03",
+        "name": "Dep. Acumulada — Vehículos y Medios de Transporte",
+        "type": "ACTIVO",
+        "sub_type": "NO_CIRCULANTE",
+        "parent_code": "1202",
+        "allow_entries": true
+    },
+    {
+        "code": "1202.04",
+        "name": "Dep. Acumulada — Mobiliario y Equipo de Oficina",
+        "type": "ACTIVO",
+        "sub_type": "NO_CIRCULANTE",
+        "parent_code": "1202",
+        "allow_entries": true
+    },
+    {
+        "code": "1202.05",
+        "name": "Dep. Acumulada — Equipo de Cómputo y Tecnología",
+        "type": "ACTIVO",
+        "sub_type": "NO_CIRCULANTE",
+        "parent_code": "1202",
+        "allow_entries": true
+    },
+    {
+        "code": "1202.06",
+        "name": "Dep. Acumulada — Equipo de Comunicaciones",
+        "type": "ACTIVO",
+        "sub_type": "NO_CIRCULANTE",
+        "parent_code": "1202",
+        "allow_entries": true
+    },
+    {
+        "code": "1202.07",
+        "name": "Dep. Acumulada — Herramientas y Accesorios",
+        "type": "ACTIVO",
+        "sub_type": "NO_CIRCULANTE",
+        "parent_code": "1202",
         "allow_entries": true
     },
     {
@@ -509,7 +661,71 @@
         "type": "GASTO",
         "sub_type": "OPERATIVO",
         "parent_code": "5200",
-        "allow_entries": true
+        "allow_entries": false,
+        "_nota": "Cuenta padre — usar sub-cuentas por categoria de activo"
+    },
+    {
+        "code": "5210.01",
+        "name": "Gasto Dep. — Edificios y Construcciones",
+        "type": "GASTO",
+        "sub_type": "OPERATIVO",
+        "parent_code": "5210",
+        "allow_entries": true,
+        "_legal_basis": "Art. 8 Ley Renta 7092 / Reglamento LISR Anexo"
+    },
+    {
+        "code": "5210.02",
+        "name": "Gasto Dep. — Maquinaria y Equipo Industrial",
+        "type": "GASTO",
+        "sub_type": "OPERATIVO",
+        "parent_code": "5210",
+        "allow_entries": true,
+        "_legal_basis": "Art. 8 Ley Renta 7092"
+    },
+    {
+        "code": "5210.03",
+        "name": "Gasto Dep. — Vehículos y Medios de Transporte",
+        "type": "GASTO",
+        "sub_type": "OPERATIVO",
+        "parent_code": "5210",
+        "allow_entries": true,
+        "_legal_basis": "Art. 8 Ley Renta 7092 / Ley 31652"
+    },
+    {
+        "code": "5210.04",
+        "name": "Gasto Dep. — Mobiliario y Equipo de Oficina",
+        "type": "GASTO",
+        "sub_type": "OPERATIVO",
+        "parent_code": "5210",
+        "allow_entries": true,
+        "_legal_basis": "Art. 8 Ley Renta 7092"
+    },
+    {
+        "code": "5210.05",
+        "name": "Gasto Dep. — Equipo de Cómputo y Tecnología",
+        "type": "GASTO",
+        "sub_type": "OPERATIVO",
+        "parent_code": "5210",
+        "allow_entries": true,
+        "_legal_basis": "Criterio Hacienda CCPA — 3 años"
+    },
+    {
+        "code": "5210.06",
+        "name": "Gasto Dep. — Equipo de Comunicaciones",
+        "type": "GASTO",
+        "sub_type": "OPERATIVO",
+        "parent_code": "5210",
+        "allow_entries": true,
+        "_legal_basis": "Art. 8 Ley Renta 7092"
+    },
+    {
+        "code": "5210.07",
+        "name": "Gasto Dep. — Herramientas y Accesorios",
+        "type": "GASTO",
+        "sub_type": "OPERATIVO",
+        "parent_code": "5210",
+        "allow_entries": true,
+        "_legal_basis": "Art. 8 Ley Renta 7092"
     },
     {
         "code": "5211",

@@ -19,6 +19,32 @@ const TYPE_CONFIG = {
 
 const TYPE_ORDER = ['ACTIVO', 'PASIVO', 'PATRIMONIO', 'INGRESO', 'GASTO']
 
+// ─── Jerarquía punteada — estándar NIIF PYMES Costa Rica (CCPA) ─────────────
+// Convierte código interno → notación académica CR
+// 1000→1  1100→1.1  1101→1.1.1  1201.02→1.2.1.02  5210.01→5.2.10.01
+function getDisplayCode(code) {
+    if (code.includes('.')) {
+        const [base, sub] = code.split('.', 2)
+        return `${getDisplayCode(base)}.${sub}`
+    }
+    if (code.length !== 4) return code
+    const [g1, g2, g3, g4] = code
+    if (g2 === '0' && g3 === '0' && g4 === '0') return g1          // 1000 → 1
+    if (g3 === '0' && g4 === '0') return `${g1}.${g2}` // 1100 → 1.1
+    const seq = String(parseInt(g3 + g4, 10))                       // 1101 → '1'
+    return `${g1}.${g2}.${seq}`                                      // 1101 → 1.1.1
+}
+
+// Nivel de indentación: 1=raíz, 2=subgrupo, 3=cuenta, 4+=sub-cuenta
+function getLevel(code) {
+    if (code.includes('.')) return getLevel(code.split('.')[0]) + 1
+    if (code.length !== 4) return 1
+    const [, g2, g3, g4] = code
+    if (g2 === '0' && g3 === '0' && g4 === '0') return 1
+    if (g3 === '0' && g4 === '0') return 2
+    return 3
+}
+
 export default function Catalogo() {
     const { state } = useApp()
     const [accounts, setAccounts] = useState([])
@@ -265,25 +291,39 @@ export default function Catalogo() {
                                             display: 'flex',
                                             justifyContent: 'space-between',
                                             alignItems: 'center',
-                                            padding: '10px 16px',
-                                            paddingLeft: acc.parent_code ? 32 : 16,
+                                            padding: `${getLevel(acc.code) === 4 ? 7 : 9}px 16px`,
+                                            paddingLeft: `${(getLevel(acc.code) - 1) * 20 + 16}px`,
                                             background: i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.02)',
                                             borderTop: '1px solid var(--border-color)',
-                                            opacity: acc.is_active ? 1 : 0.45
+                                            opacity: acc.is_active ? 1 : 0.45,
+                                            borderLeft: getLevel(acc.code) >= 4
+                                                ? `2px solid ${cfg.color}40`
+                                                : getLevel(acc.code) === 3
+                                                    ? `2px solid ${cfg.color}22`
+                                                    : 'none',
                                         }}
                                     >
-                                        {/* Código + nombre */}
+                                        {/* Código punteado + nombre */}
                                         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                                            {/* Código en notación académica */}
                                             <span style={{
                                                 fontFamily: 'monospace',
-                                                fontSize: '0.85rem',
-                                                color: cfg.color,
-                                                fontWeight: 700,
-                                                minWidth: 70
+                                                fontSize: getLevel(acc.code) <= 2 ? '0.88rem' : '0.78rem',
+                                                color: getLevel(acc.code) <= 2 ? cfg.color : cfg.color + 'bb',
+                                                fontWeight: getLevel(acc.code) <= 2 ? 700 : 500,
+                                                minWidth: getLevel(acc.code) >= 4 ? 90 : 70,
+                                                letterSpacing: '-0.01em',
                                             }}>
-                                                {acc.code}
+                                                {getDisplayCode(acc.code)}
                                             </span>
-                                            <span style={{ fontSize: '0.88rem', color: 'var(--text-primary)' }}>
+                                            {/* Nombre */}
+                                            <span style={{
+                                                fontSize: getLevel(acc.code) <= 1 ? '0.95rem'
+                                                    : getLevel(acc.code) === 2 ? '0.88rem'
+                                                        : getLevel(acc.code) === 3 ? '0.85rem' : '0.8rem',
+                                                fontWeight: getLevel(acc.code) <= 2 ? 600 : 400,
+                                                color: getLevel(acc.code) <= 2 ? 'var(--text-primary)' : 'var(--text-secondary)',
+                                            }}>
                                                 {acc.name}
                                             </span>
                                             {!acc.allow_entries && (
