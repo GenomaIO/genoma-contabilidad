@@ -1,6 +1,7 @@
 import { useApp } from '../context/AppContext'
 import { useNavigate, useLocation } from 'react-router-dom'
 
+// coming: true → muestra el ítem desactivado con badge "Pronto" (no navega, no rompe rutas)
 const NAV_ITEMS = [
     {
         section: 'Principal',
@@ -19,10 +20,27 @@ const NAV_ITEMS = [
         ]
     },
     {
+        section: 'Auxiliares',
+        items: [
+            { icon: '🏗️', label: 'Activos Fijos', path: '/auxiliares/activos' },
+            { icon: '👥', label: 'Clientes (CxC)', path: '/auxiliares/clientes', coming: true },
+            { icon: '🤝', label: 'Proveedores (CxP)', path: '/auxiliares/proveedores', coming: true },
+        ]
+    },
+    {
+        section: 'Generadores',
+        items: [
+            { icon: '📐', label: 'Provisiones', path: '/generadores/provisiones' },
+            { icon: '💵', label: 'Nómina', path: '/generadores/nomina', coming: true },
+            { icon: '💱', label: 'Ajuste FX', path: '/generadores/fx', coming: true },
+        ]
+    },
+    {
         section: 'Impuestos',
         items: [
             { icon: '🏛️', label: 'Tribu-CR', path: '/declaraciones' },
             { icon: '🔢', label: 'Prorrata IVA', path: '/prorrata' },
+            { icon: '📋', label: 'D-102 Renta', path: '/impuestos/d102', coming: true },
         ]
     },
     {
@@ -30,6 +48,7 @@ const NAV_ITEMS = [
         items: [
             { icon: '📑', label: 'Estados Financieros', path: '/reportes' },
             { icon: '📆', label: 'Cierre', path: '/cierre' },
+            { icon: '📝', label: 'Notas EEFF', path: '/reportes/notas', coming: true },
         ]
     },
     {
@@ -40,6 +59,7 @@ const NAV_ITEMS = [
                 children: [
                     { icon: '📂', label: 'Apertura', path: '/config/apertura' },
                     { icon: '📁', label: 'Catálogo', path: '/catalogo' },
+                    { icon: '🗂️', label: 'Dimensiones', path: '/config/dimensiones', coming: true },
                 ]
             },
         ]
@@ -110,35 +130,74 @@ export default function Sidebar() {
                             {section.items.map(item => (
                                 <div key={item.path}>
                                     {/* Ítem principal */}
-                                    <div
-                                        className={`nav-item${parentActive(item) ? ' active' : ''}`}
-                                        onClick={() => handleNav(item.path)}
-                                        role="button"
-                                        tabIndex={0}
-                                        onKeyDown={e => e.key === 'Enter' && handleNav(item.path)}
-                                    >
-                                        <span className="nav-icon">{item.icon}</span>
-                                        <span>{item.label}</span>
-                                    </div>
+                                    {item.coming ? (
+                                        /* Coming-soon: desactivado, badge "Pronto" */
+                                        <div
+                                            className="nav-item"
+                                            style={{ opacity: 0.45, cursor: 'default', pointerEvents: 'none' }}
+                                        >
+                                            <span className="nav-icon">{item.icon}</span>
+                                            <span style={{ flex: 1 }}>{item.label}</span>
+                                            <span style={{
+                                                fontSize: '0.6rem', fontWeight: 700,
+                                                background: 'rgba(251,191,36,0.25)',
+                                                color: '#fbbf24', padding: '1px 5px',
+                                                borderRadius: 4, letterSpacing: '0.04em',
+                                            }}>PRONTO</span>
+                                        </div>
+                                    ) : (
+                                        <div
+                                            className={`nav-item${parentActive(item) ? ' active' : ''}`}
+                                            onClick={() => handleNav(item.path)}
+                                            role="button"
+                                            tabIndex={0}
+                                            onKeyDown={e => e.key === 'Enter' && handleNav(item.path)}
+                                        >
+                                            <span className="nav-icon">{item.icon}</span>
+                                            <span>{item.label}</span>
+                                        </div>
+                                    )}
 
                                     {/* Sub-ítems (children) — siempre visibles con indentación */}
                                     {item.children?.map(child => (
-                                        <div
-                                            key={child.path}
-                                            className={`nav-item${isActive(child.path) ? ' active' : ''}`}
-                                            onClick={() => handleNav(child.path)}
-                                            role="button"
-                                            tabIndex={0}
-                                            onKeyDown={e => e.key === 'Enter' && handleNav(child.path)}
-                                            style={{
-                                                paddingLeft: 36,
-                                                fontSize: '0.82rem',
-                                                opacity: 0.85,
-                                            }}
-                                        >
-                                            <span className="nav-icon" style={{ fontSize: '0.85rem' }}>{child.icon}</span>
-                                            <span>{child.label}</span>
-                                        </div>
+                                        child.coming ? (
+                                            <div
+                                                key={child.path}
+                                                className="nav-item"
+                                                style={{
+                                                    paddingLeft: 36, fontSize: '0.82rem',
+                                                    opacity: 0.4, cursor: 'default',
+                                                    pointerEvents: 'none',
+                                                    display: 'flex', alignItems: 'center', gap: 4,
+                                                }}
+                                            >
+                                                <span className="nav-icon" style={{ fontSize: '0.85rem' }}>{child.icon}</span>
+                                                <span style={{ flex: 1 }}>{child.label}</span>
+                                                <span style={{
+                                                    fontSize: '0.6rem', fontWeight: 700,
+                                                    background: 'rgba(251,191,36,0.25)',
+                                                    color: '#fbbf24', padding: '1px 5px',
+                                                    borderRadius: 4,
+                                                }}>PRONTO</span>
+                                            </div>
+                                        ) : (
+                                            <div
+                                                key={child.path}
+                                                className={`nav-item${isActive(child.path) ? ' active' : ''}`}
+                                                onClick={() => handleNav(child.path)}
+                                                role="button"
+                                                tabIndex={0}
+                                                onKeyDown={e => e.key === 'Enter' && handleNav(child.path)}
+                                                style={{
+                                                    paddingLeft: 36,
+                                                    fontSize: '0.82rem',
+                                                    opacity: 0.85,
+                                                }}
+                                            >
+                                                <span className="nav-icon" style={{ fontSize: '0.85rem' }}>{child.icon}</span>
+                                                <span>{child.label}</span>
+                                            </div>
+                                        )
                                     ))}
                                 </div>
                             ))}
