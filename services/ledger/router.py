@@ -992,20 +992,26 @@ def get_mayor(
     if not to_date:
         to_date = now_str
 
-    # 1. Saldo inicial desde apertura
+    # ── REGLA: Mayorización a N4 ───────────────────────────────────
+    # El Mayor siempre consolida a N4. Si un tenant creó subcuentas N5
+    # (ej: 1101.01.01, 1101.01.02), sus movimientos se agregan al T-account
+    # de la cuenta N4 padre (1101.01). Se usa LIKE '{code}.%' para capturar.
+    code_prefix = f"{account_code}.%"
+
+    # 1. Saldo inicial desde apertura — incluye N4 exacto Y subcuentas N5+
     ap_rows = db.execute(text("""
-        SELECT jl.debit, jl.credit
+        SELECT jl.debit, jl.credit, jl.account_code AS sub_code
         FROM journal_lines jl
         JOIN journal_entries je ON je.id = jl.entry_id
         WHERE je.tenant_id = :tid
           AND je.status    = 'POSTED'
           AND je.source    = 'APERTURA'
-          AND jl.account_code = :code
-    """), {"tid": tenant_id, "code": account_code}).fetchall()
+          AND (jl.account_code = :code OR jl.account_code LIKE :prefix)
+    """), {"tid": tenant_id, "code": account_code, "prefix": code_prefix}).fetchall()
 
     opening_balance = round(sum(float(r.debit) - float(r.credit) for r in ap_rows), 2)
 
-    # 2. Info de la cuenta
+    # 2. Info de la cuenta N4 (la raíz consultada)
     acc_row = db.execute(text(
         "SELECT name, account_type FROM accounts WHERE tenant_id = :tid AND code = :code"
     ), {"tid": tenant_id, "code": account_code}).fetchone()
@@ -1013,24 +1019,25 @@ def get_mayor(
     account_name = acc_row.name         if acc_row else account_code
     account_type = acc_row.account_type if acc_row else "DESCONOCIDO"
 
-    # 3. Movimientos del periodo (sin APERTURA)
+    # 3. Movimientos del periodo — incluye N5+ con roll-up al T-account N4
     move_rows = db.execute(text("""
         SELECT jl.id AS line_id, je.id AS entry_id,
                je.date, je.description AS entry_desc,
                jl.description AS line_desc,
-               jl.debit, jl.credit, je.source, je.source_ref
+               jl.debit, jl.credit, je.source, je.source_ref,
+               jl.account_code AS sub_code
         FROM journal_lines jl
         JOIN journal_entries je ON je.id = jl.entry_id
         WHERE je.tenant_id    = :tid
           AND je.status       = 'POSTED'
           AND je.source      != 'APERTURA'
-          AND jl.account_code = :code
+          AND (jl.account_code = :code OR jl.account_code LIKE :prefix)
           AND je.date BETWEEN :from_d AND :to_d
         ORDER BY je.date ASC, je.created_at ASC
-    """), {"tid": tenant_id, "code": account_code,
+    """), {"tid": tenant_id, "code": account_code, "prefix": code_prefix,
            "from_d": from_date, "to_d": to_date}).fetchall()
 
-    # 4. Saldo running
+    # 4. Saldo running con N5 consolidados
     running = opening_balance
     total_debit = 0.0; total_credit = 0.0
     movements = []
@@ -1040,12 +1047,18 @@ def get_mayor(
         running      = round(running + d - cr, 2)
         total_debit  += d
         total_credit += cr
+        # Si es una subcuenta N5, indicarlo en la descripción
+        sub = r.sub_code if r.sub_code != account_code else None
+        desc = r.line_desc or r.entry_desc or ""
+        if sub:
+            desc = f"[{sub}] {desc}"
         movements.append({
             "entry_id":    r.entry_id,
             "date":        r.date,
-            "description": r.line_desc or r.entry_desc or "",
+            "description": desc,
             "source":      r.source,
             "source_ref":  r.source_ref,
+            "sub_account": sub,
             "debit":       round(d,  2),
             "credit":      round(cr, 2),
             "balance":     running,
@@ -1063,6 +1076,8 @@ def get_mayor(
         "closing_balance": round(opening_balance + total_debit - total_credit, 2),
         "movements":       movements,
         "has_apertura":    len(ap_rows) > 0,
+        "consolidates_n5": any(r.sub_code != account_code for r in ap_rows if hasattr(r, 'sub_code'))
+                           or any(r.sub_code != account_code for r in move_rows if hasattr(r, 'sub_code')),
     }
 
 
@@ -1142,13 +1157,23 @@ def get_mayor_summary(
             ex    = extra_info.get(code)
             name  = ex.name if ex else code
             atype = ex.account_type if ex else ""
+        # display_code: convierte 1101.01 → 1.1.1.01 para el frontend
+        def _disp(c):
+            if '.' not in c: 
+                if len(c) == 4:
+                    if c[1:] == '000': return c[0]
+                    if c[2:] == '00':  return f'{c[0]}.{c[1]}'
+                    return f'{c[0]}.{c[1]}.{int(c[2:])}'
+            return c
         result.append({
             "account_code":    code,
+            "display_code":    _disp(code),
             "account_name":    name,
             "account_type":    atype,
             "opening_balance": aper,
             "total_debit":     td,
             "total_credit":    tc,
+            "net_movement":    round(td - tc, 2),
             "closing_balance": round(aper + td - tc, 2),
         })
 

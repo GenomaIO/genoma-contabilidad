@@ -148,13 +148,23 @@ def _get_display_code(code: str) -> str:
 
 @router.get("/accounts/posteable")
 def list_posteable_accounts(
+    mayorizable: bool = Query(False, description=(
+        "false (default): solo hojas sin hijos — para ingresar asientos. "
+        "true: cuentas N4 aunque tengan hijos N5 — para el Libro Mayor. "
+        "La mayorización siempre es a N4; los reportes pueden parametrizarse a más niveles."
+    )),
     current_user: dict = Depends(get_current_user),
     db:           Session = Depends(get_session),
 ):
     """
-    Cuentas de movimiento del tenant: solo hojas (sin hijos) con allow_entries=True.
-    Incluye display_code (notación DGCN/NIIF) para uso en formularios de asientos.
-    Usadas por el AccountPicker y validadas en create_entry().
+    Cuentas de movimiento del tenant.
+
+    Dos modos:
+    - mayorizable=false (default): hojas reales (allow_entries=True, sin hijos).
+      Para AccountPicker en creación de asientos.
+    - mayorizable=true: cuentas N4, incluyendo las que tienen subcuentas N5.
+      Para el Libro Mayor — la mayorización siempre es a N4.
+      Los movimientos de N5 se consolidan en el T-account N4.
     """
     tenant_id = current_user["tenant_id"]
 
@@ -165,26 +175,66 @@ def list_posteable_accounts(
     ).fetchall()
     parent_set = {r[0] for r in parent_codes_raw}
 
-    # Cuentas activas de movimiento: allow_entries=True Y no son padre de nadie
-    all_active = db.query(Account).filter(
-        Account.tenant_id == tenant_id,
-        Account.is_active == True,        # noqa: E712
-        Account.allow_entries == True,    # noqa: E712
-    ).order_by(Account.code).all()
+    def _get_level(code: str) -> int:
+        """Calcula el nivel contable: N1..N5+"""
+        parts = code.split('.')
+        base  = parts[0]
+        suffix_count = len(parts) - 1
+        if len(base) >= 2 and base[1:] == '0' * (len(base) - 1):
+            base_level = 1
+        elif len(base) >= 3 and base[2:] == '0' * (len(base) - 2):
+            base_level = 2
+        else:
+            base_level = 3
+        return base_level + suffix_count
 
-    result = []
-    for a in all_active:
-        if a.code not in parent_set:          # es hoja real
-            result.append({
-                "code":         a.code,
-                "display_code": _get_display_code(a.code),
-                "name":         a.name,
-                "account_type": a.account_type.value if hasattr(a.account_type, 'value') else str(a.account_type),
-                "sub_type":     a.account_sub_type.value if a.account_sub_type and hasattr(a.account_sub_type, 'value') else None,
-                "allow_entries": a.allow_entries,
-            })
+    if mayorizable:
+        # Modo Mayor: retornar cuentas N4 (con o sin hijos N5)
+        # Una cuenta es N4 si su get_level == 4.
+        # Incluye cuentas con allow_entries=True o False — el Mayor necesita
+        # consultar cualquier N4 que tenga movimientos, incluso padres de N5.
+        all_accs = db.query(Account).filter(
+            Account.tenant_id == tenant_id,
+            Account.is_active == True,   # noqa: E712
+        ).order_by(Account.code).all()
 
-    return result
+        result = []
+        for a in all_accs:
+            lvl = _get_level(a.code)
+            if lvl == 4:
+                # Es una cuenta N4: la incluimos sin importar si tiene hijos
+                result.append({
+                    "code":          a.code,
+                    "display_code":  _get_display_code(a.code),
+                    "name":          a.name,
+                    "account_type":  a.account_type.value if hasattr(a.account_type, 'value') else str(a.account_type),
+                    "sub_type":      a.account_sub_type.value if a.account_sub_type and hasattr(a.account_sub_type, 'value') else None,
+                    "allow_entries": a.allow_entries,
+                    "has_children":  a.code in parent_set,
+                })
+        return result
+
+    else:
+        # Modo asientos: solo hojas reales (allow_entries=True, sin hijos)
+        all_active = db.query(Account).filter(
+            Account.tenant_id == tenant_id,
+            Account.is_active == True,        # noqa: E712
+            Account.allow_entries == True,    # noqa: E712
+        ).order_by(Account.code).all()
+
+        result = []
+        for a in all_active:
+            if a.code not in parent_set:          # es hoja real
+                result.append({
+                    "code":          a.code,
+                    "display_code":  _get_display_code(a.code),
+                    "name":          a.name,
+                    "account_type":  a.account_type.value if hasattr(a.account_type, 'value') else str(a.account_type),
+                    "sub_type":      a.account_sub_type.value if a.account_sub_type and hasattr(a.account_sub_type, 'value') else None,
+                    "allow_entries": a.allow_entries,
+                    "has_children":  False,
+                })
+        return result
 
 
 # ──────────────────────────────────────────────────────────────────

@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { useApp } from '../context/AppContext'
 
 // ─── Helpers ─────────────────────────────────────────────────────
@@ -52,11 +52,15 @@ export default function Mayor() {
     const [showSearch, setShowSearch] = useState(false)
     const [accsLoaded, setAccsLoaded] = useState(false)
 
-    // ── Cargar catálogo de cuentas (para el selector) ─────────────
+    // Índice automático — cuentas con actividad al cargar
+    const [indexData, setIndexData] = useState(null)
+    const [indexLoading, setIndexLoading] = useState(false)
+
+    // ── Cargar catálogo N4 (mayorizable=true) — incluye N4 aunque tengan hijos N5 ──
     const loadAccounts = useCallback(async () => {
         if (accsLoaded) return
         try {
-            const r = await fetch(`${apiUrl}/catalog/accounts/posteable`, {
+            const r = await fetch(`${apiUrl}/catalog/accounts/posteable?mayorizable=true`, {
                 headers: { Authorization: `Bearer ${token}` }
             })
             if (r.ok) {
@@ -66,6 +70,23 @@ export default function Mayor() {
             }
         } catch { /* sin catálogo */ }
     }, [apiUrl, token, accsLoaded])
+
+    // ── Índice automático: al cargar, buscar cuentas con actividad ──
+    const loadIndex = useCallback(async () => {
+        if (indexData || indexLoading) return
+        setIndexLoading(true)
+        try {
+            const r = await fetch(
+                `${apiUrl}/ledger/mayor?from_date=${fromDate}&to_date=${toDate}`,
+                { headers: { Authorization: `Bearer ${token}` } }
+            )
+            if (r.ok) setIndexData(await r.json())
+        } catch { /* sin índice */ }
+        finally { setIndexLoading(false) }
+    }, [apiUrl, token, fromDate, toDate, indexData, indexLoading])
+
+    // Cargar índice al montar
+    useEffect(() => { loadIndex() }, [])  // eslint-disable-line react-hooks/exhaustive-deps
 
     // ── Filtrar cuentas por búsqueda ──────────────────────────────
     const filtered = allAccounts.filter(a =>
@@ -436,14 +457,88 @@ export default function Mayor() {
                 </div>
             )}
 
-            {/* Estado vacío */}
+            {/* Estado vacío: índice automático de cuentas con actividad */}
             {!hasData && !loading && !error && (
-                <div style={{ textAlign: 'center', padding: '60px 0', color: 'var(--text-muted)' }}>
-                    <div style={{ fontSize: '3rem', marginBottom: 12 }}>📖</div>
-                    <p style={{ fontSize: '0.9rem' }}>Selecciona una cuenta y presiona <strong>Consultar</strong></p>
-                    <p style={{ fontSize: '0.8rem', marginTop: 4 }}>
-                        El mayor muestra el saldo inicial (apertura) + todos los movimientos del período
-                    </p>
+                <div>
+                    {/* Disparar carga del índice al mostrar */}
+                    {!indexData && !indexLoading && loadIndex()}
+
+                    {indexLoading && (
+                        <div style={{ textAlign: 'center', padding: '40px 0', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+                            ⏳ Buscando cuentas con actividad...
+                        </div>
+                    )}
+
+                    {indexData && indexData.accounts && indexData.accounts.length > 0 && (
+                        <div>
+                            <div style={{ marginBottom: 12, fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: 600, letterSpacing: '0.05em' }}>
+                                📊 ÍNDICE DEL MAYOR — Cuentas con actividad ({indexData.accounts.length})
+                            </div>
+                            <div style={{ display: 'grid', gridTemplateColumns: '60px 1fr 140px 140px 140px', gap: 0, borderRadius: 10, overflow: 'hidden', border: '1px solid var(--border-color)' }}>
+                                {/* Header */}
+                                <div style={{ display: 'contents' }}>
+                                    {['TIPO', 'CUENTA', 'SALDO APERTURA', 'MOVIMIENTOS', 'SALDO CIERRE'].map((h, i) => (
+                                        <div key={i} style={{
+                                            background: 'var(--bg-header)', padding: '8px 12px',
+                                            fontSize: '0.68rem', fontWeight: 700, letterSpacing: '0.05em',
+                                            color: 'var(--text-muted)', textAlign: i >= 2 ? 'right' : 'left',
+                                            borderBottom: '1px solid var(--border-color)',
+                                        }}>{h}</div>
+                                    ))}
+                                </div>
+                                {/* Filas */}
+                                {indexData.accounts.map((acc, i) => {
+                                    const col = TYPE_COLOR[acc.account_type] || '#6b7280'
+                                    return (
+                                        <div key={acc.account_code} style={{ display: 'contents' }}
+                                            onClick={() => {
+                                                setSelectedAcc({ code: acc.account_code, display_code: acc.display_code || acc.account_code, name: acc.account_name, account_type: acc.account_type })
+                                                fetchMayor(acc.account_code)
+                                            }}
+                                        >
+                                            {[' ', ' ', ' ', ' ', ' '].map((_, ci) => (
+                                                <div key={ci} style={{
+                                                    padding: '9px 12px',
+                                                    borderBottom: '1px solid var(--border-color)',
+                                                    background: i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.015)',
+                                                    cursor: 'pointer',
+                                                    transition: 'background 0.1s',
+                                                }}
+                                                    onMouseEnter={e => { e.currentTarget.parentElement.querySelectorAll('div').forEach(d => d.style.background = 'var(--bg-hover)') }}
+                                                    onMouseLeave={e => { e.currentTarget.parentElement.querySelectorAll('div').forEach(d => d.style.background = i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.015)') }}
+                                                >
+                                                    {ci === 0 && <span style={{ fontSize: '0.68rem', color: col, fontWeight: 700, background: `${col}20`, padding: '2px 6px', borderRadius: 4 }}>{TYPE_LABEL[acc.account_type] || '?'}</span>}
+                                                    {ci === 1 && <><span style={{ fontFamily: 'monospace', color: col, fontWeight: 700, fontSize: '0.8rem', marginRight: 8 }}>{acc.display_code || acc.account_code}</span><span style={{ fontSize: '0.82rem', color: 'var(--text-primary)' }}>{acc.account_name}</span></>}
+                                                    {ci === 2 && <span style={{ fontFamily: 'monospace', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{fmt(acc.opening_balance)}</span>}
+                                                    {ci === 3 && <span style={{ fontFamily: 'monospace', fontSize: '0.8rem', color: acc.net_movement > 0 ? '#10b981' : acc.net_movement < 0 ? '#ef4444' : 'var(--text-muted)' }}>{fmt(Math.abs(acc.net_movement))}</span>}
+                                                    {ci === 4 && <span style={{ fontFamily: 'monospace', fontSize: '0.82rem', fontWeight: 700, color: getSaldoColor(acc.closing_balance, acc.account_type) }}>{fmt(acc.closing_balance)}</span>}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )
+                                })}
+                            </div>
+                            <div style={{ marginTop: 8, fontSize: '0.72rem', color: 'var(--text-muted)', textAlign: 'right' }}>
+                                👇 Haz clic en una cuenta para ver su T-account
+                            </div>
+                        </div>
+                    )}
+
+                    {indexData && (!indexData.accounts || indexData.accounts.length === 0) && (
+                        <div style={{ textAlign: 'center', padding: '60px 0', color: 'var(--text-muted)' }}>
+                            <div style={{ fontSize: '3rem', marginBottom: 12 }}>📖</div>
+                            <p style={{ fontSize: '0.9rem' }}>No hay movimientos registrados aún</p>
+                            <p style={{ fontSize: '0.8rem', marginTop: 4 }}>El libro mayor se abre con el asiento de Apertura</p>
+                        </div>
+                    )}
+
+                    {!indexData && !indexLoading && (
+                        <div style={{ textAlign: 'center', padding: '60px 0', color: 'var(--text-muted)' }}>
+                            <div style={{ fontSize: '3rem', marginBottom: 12 }}>📖</div>
+                            <p style={{ fontSize: '0.9rem' }}>Selecciona una cuenta y presiona <strong>Consultar</strong></p>
+                            <p style={{ fontSize: '0.8rem', marginTop: 4 }}>El mayor muestra el saldo inicial (apertura) + todos los movimientos del período</p>
+                        </div>
+                    )}
                 </div>
             )}
 
