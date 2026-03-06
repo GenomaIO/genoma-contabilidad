@@ -250,25 +250,56 @@ export default function Catalogo() {
                         <input type="checkbox" checked={showInactive} onChange={e => setShowInactive(e.target.checked)} />
                         Ver inactivas
                     </label>
-                    {/* Nueva cuenta — solo admin/contador */}
-                    {canWrite && (
-                        <button
-                            id="btn-nueva-cuenta"
-                            onClick={() => setShowForm(true)}
-                            style={{
-                                padding: '8px 16px',
-                                background: '#7c3aed',
-                                border: 'none',
-                                borderRadius: 8,
-                                color: 'white',
-                                fontSize: '0.85rem',
-                                fontWeight: 600,
-                                cursor: 'pointer'
-                            }}
-                        >
-                            + Nueva cuenta
-                        </button>
-                    )}
+
+                    {/* 💡 Guía de jerarquía DGCN — tooltip al hover */}
+                    <div style={{ position: 'relative', display: 'inline-block' }}
+                        onMouseEnter={e => e.currentTarget.querySelector('.dgcn-guide').style.display = 'block'}
+                        onMouseLeave={e => e.currentTarget.querySelector('.dgcn-guide').style.display = 'none'}
+                    >
+                        <button id="btn-guia-catalogo" style={{
+                            background: 'transparent', border: '1px solid var(--border-color)',
+                            borderRadius: 20, padding: '5px 10px', cursor: 'pointer',
+                            color: 'var(--text-secondary)', fontSize: '0.82rem', display: 'flex', alignItems: 'center', gap: 5,
+                        }}>💡 Guía</button>
+                        <div className="dgcn-guide" style={{
+                            display: 'none', position: 'absolute', right: 0, top: '110%', zIndex: 999,
+                            background: 'var(--bg-card)', border: '1px solid var(--border-color)',
+                            borderRadius: 10, padding: '14px 16px', width: 360,
+                            boxShadow: '0 8px 24px rgba(0,0,0,0.35)', fontSize: '0.78rem',
+                        }}>
+                            <p style={{ margin: '0 0 8px', fontWeight: 700, color: 'var(--text-primary)', fontSize: '0.85rem' }}>💡 Guía del Catálogo</p>
+                            <p style={{ margin: '0 0 10px', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                                Tu catálogo sigue la estructura de cuentas NIIF PYMES.
+                                Recomendamos llegar hasta el <strong>Nivel 4 (Cuenta)</strong> y dejar que el usuario profundice si lo necesita.
+                            </p>
+                            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                                <thead><tr style={{ borderBottom: '1px solid var(--border-color)' }}>
+                                    <th style={{ textAlign: 'left', padding: '3px 6px', color: 'var(--text-muted)', fontWeight: 600 }}>Nivel</th>
+                                    <th style={{ textAlign: 'left', padding: '3px 6px', color: 'var(--text-muted)', fontWeight: 600 }}>Nombre</th>
+                                    <th style={{ textAlign: 'left', padding: '3px 6px', color: 'var(--text-muted)', fontWeight: 600 }}>Ejemplo</th>
+                                </tr></thead>
+                                <tbody>
+                                    {[['A', 'Clase', '1 = ACTIVO', '#3b82f6', true],
+                                    ['B', 'Grupo', '1.1 = Activo Corriente', '#3b82f6', true],
+                                    ['C', 'Rubro', '1.1.1 = Efectivo y Equiv.', '#3b82f6', true],
+                                    ['DD', 'Cuenta ⭐', '1.1.1.01 = Caja y Bancos', '#10b981', true],
+                                    ['EE', 'Subcuenta', '1.1.1.01.01 = Caja Chica', '#f59e0b', false],
+                                    ['FF', 'Subcuenta anexa', '1.1.1.01.01.01', '#9ca3af', false],
+                                    ['G', 'Detalle', '…nivel máximo', '#6b7280', false],
+                                    ].map(([niv, nom, ej, col, rec]) => (
+                                        <tr key={niv} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)', opacity: rec ? 1 : 0.55 }}>
+                                            <td style={{ padding: '4px 6px', fontFamily: 'monospace', color: col, fontWeight: 700 }}>{niv}</td>
+                                            <td style={{ padding: '4px 6px', color: 'var(--text-primary)' }}>{nom}</td>
+                                            <td style={{ padding: '4px 6px', color: 'var(--text-secondary)', fontFamily: 'monospace', fontSize: '0.72rem' }}>{ej}</td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                            <p style={{ margin: '10px 0 0', fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                                ⭐ = Nivel recomendado · Use ⊕ en cualquier cuenta para agregar sub-cuentas.
+                            </p>
+                        </div>
+                    </div>
                 </div>
             </div>
 
@@ -397,8 +428,8 @@ export default function Catalogo() {
                                             {/* Acciones */}
                                             {canWrite && !acc.is_generic && (
                                                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
-                                                    {/* ⊕ Agregar sub-cuenta — solo en cuentas grupo, visible al hover */}
-                                                    {!acc.allow_entries && acc.is_active && (
+                                                    {/* ⊕ Agregar sub-cuenta — en CUALQUIER cuenta activa, crea una hija directa (lógica DGCN) */}
+                                                    {acc.is_active && (
                                                         <button
                                                             id={`add-child-${acc.code}`}
                                                             title="Agregar subcuenta"
