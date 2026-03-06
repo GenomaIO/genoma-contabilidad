@@ -49,6 +49,7 @@ export default function Onboarding() {
     const { dispatch } = useApp()
     const [selected, setSelected] = useState(null)
     const [saving, setSaving] = useState(false)
+    const [step, setStep] = useState('idle')  // idle | saving-mode | seeding | done
     const [error, setError] = useState(null)
 
     const apiUrl = import.meta.env.VITE_API_URL || ''
@@ -57,8 +58,10 @@ export default function Onboarding() {
     async function confirm() {
         if (!selected) return
         setSaving(true)
+        setStep('saving-mode')
         setError(null)
         try {
+            // Paso 1: Guardar el modo elegido
             const res = await fetch(`${apiUrl}/auth/catalog-mode`, {
                 method: 'PATCH',
                 headers: {
@@ -71,12 +74,40 @@ export default function Onboarding() {
                 const err = await res.json()
                 throw new Error(err.detail || 'Error guardando el modo')
             }
-            // Guardar en el contexto para que AppLayout no vuelva a mostrar esto
-            dispatch({ type: 'SET_CATALOG_MODE', payload: selected })
+
+            // Paso 2: Auto-seed del catalogo (solo NONE y STANDARD, no CUSTOM)
+            if (selected !== 'CUSTOM') {
+                setStep('seeding')
+                try {
+                    await fetch(`${apiUrl}/catalog/seed`, {
+                        method: 'POST',
+                        headers: { Authorization: `Bearer ${token}` }
+                    })
+                    // El seed es idempotente, no critico si falla
+                } catch (_) {
+                    // Seed fallo pero el modo quedo guardado — no bloquear al usuario
+                    console.warn('Seed autocatalogo fallo, el usuario puede reintentarlo desde el catalogo')
+                }
+            }
+
+            // Paso 3: Actualizar contexto y redirigir al dashboard
+            setStep('done')
+            setTimeout(() => {
+                dispatch({ type: 'SET_CATALOG_MODE', payload: selected })
+            }, 700)
+
         } catch (e) {
             setError(e.message)
             setSaving(false)
+            setStep('idle')
         }
+    }
+
+    const stepLabel = {
+        idle: 'Confirmar →',
+        'saving-mode': '⏳ Guardando modo...',
+        seeding: '⏳ Cargando catálogo...',
+        done: '✅ ¡Listo!',
     }
 
     return (
@@ -203,7 +234,7 @@ export default function Onboarding() {
                     opacity: selected ? 1 : 0.5
                 }}
             >
-                {saving ? '⏳ Guardando...' : 'Confirmar →'}
+                {saving ? stepLabel[step] || '...' : 'Confirmar →'}
             </button>
 
             <p style={{ color: 'var(--text-muted)', fontSize: '0.78rem', marginTop: 20 }}>
