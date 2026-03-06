@@ -126,6 +126,68 @@ def list_accounts(
 
 
 # ──────────────────────────────────────────────────────────────────
+# GET /catalog/accounts/posteable
+# Devuelve SOLO cuentas de movimiento (hojas del árbol) con display_code.
+# Principio NIIF/SAP: solo la cuenta más detallada sin hijos acepta asientos.
+# ──────────────────────────────────────────────────────────────────
+
+def _get_display_code(code: str) -> str:
+    """Convierte código interno (1101.01) a display DGCN (1.1.1.01)."""
+    if '.' in code:
+        base, sub = code.split('.', 1)
+        return f'{_get_display_code(base)}.{sub}'
+    if len(code) != 4:
+        return code
+    g1, g2, g3, g4 = code
+    if g2 == '0' and g3 == '0' and g4 == '0':
+        return g1
+    if g3 == '0' and g4 == '0':
+        return f'{g1}.{g2}'
+    return f'{g1}.{g2}.{str(int(g3 + g4))}'
+
+
+@router.get("/accounts/posteable")
+def list_posteable_accounts(
+    current_user: dict = Depends(get_current_user),
+    db:           Session = Depends(get_session),
+):
+    """
+    Cuentas de movimiento del tenant: solo hojas (sin hijos) con allow_entries=True.
+    Incluye display_code (notación DGCN/NIIF) para uso en formularios de asientos.
+    Usadas por el AccountPicker y validadas en create_entry().
+    """
+    tenant_id = current_user["tenant_id"]
+
+    # Códigos que son padres de otras cuentas en este tenant
+    parent_codes_raw = db.execute(
+        text("SELECT DISTINCT parent_code FROM accounts WHERE tenant_id = :tid AND parent_code IS NOT NULL"),
+        {"tid": tenant_id},
+    ).fetchall()
+    parent_set = {r[0] for r in parent_codes_raw}
+
+    # Cuentas activas de movimiento: allow_entries=True Y no son padre de nadie
+    all_active = db.query(Account).filter(
+        Account.tenant_id == tenant_id,
+        Account.is_active == True,        # noqa: E712
+        Account.allow_entries == True,    # noqa: E712
+    ).order_by(Account.code).all()
+
+    result = []
+    for a in all_active:
+        if a.code not in parent_set:          # es hoja real
+            result.append({
+                "code":         a.code,
+                "display_code": _get_display_code(a.code),
+                "name":         a.name,
+                "account_type": a.account_type.value if hasattr(a.account_type, 'value') else str(a.account_type),
+                "sub_type":     a.account_sub_type.value if a.account_sub_type and hasattr(a.account_sub_type, 'value') else None,
+                "allow_entries": a.allow_entries,
+            })
+
+    return result
+
+
+# ──────────────────────────────────────────────────────────────────
 # POST /catalog/accounts
 # ──────────────────────────────────────────────────────────────────
 
