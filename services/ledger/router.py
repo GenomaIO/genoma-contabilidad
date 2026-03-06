@@ -128,15 +128,13 @@ def create_entry(
     El asistente contable puede crear; el contador es quien aprueba (POSTED).
     Se valida balance debit=credit antes de guardar.
     """
-    _require_role(current_user["role"], ["admin", "contador", "lectura"])
-    # Aunque lectura no puede crear: en realidad el asistente crea para
-    # que el contador apruebe. Acá permitimos contador y admin.
-    # (La lógica de roles en el frontend controla quién VE el botón.)
+    # E0: eliminado _require_role duplicado (código muerto con 'lectura').
+    # Solo admin y contador pueden crear asientos — el asistente no crea, aprueba el contador.
     _require_role(current_user["role"], ["admin", "contador"])
 
-    _validate_balance(req.lines)
-    if not req.lines:
+    if not req.lines or len(req.lines) < 2:
         raise HTTPException(400, "El asiento debe tener al menos 2 líneas")
+    _validate_balance(req.lines)
 
     tenant_id = current_user["tenant_id"]
     period    = req.date[:7]  # 'YYYY-MM'

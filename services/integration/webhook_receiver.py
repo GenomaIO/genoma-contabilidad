@@ -75,7 +75,8 @@ class WebhookDocumentPayload(BaseModel):
 
 def _verify_hmac(payload_bytes: bytes, signature: str, secret: str) -> bool:
     """Verifica el HMAC-SHA256 del payload para autenticar el webhook."""
-    expected = hmac.new(
+    # E0-C: corregido hmac.new() → hmac.HMAC() (API estándar Python hashlib/hmac)
+    expected = hmac.HMAC(
         key=secret.encode(),
         msg=payload_bytes,
         digestmod=hashlib.sha256
