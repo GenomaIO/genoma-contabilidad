@@ -249,6 +249,31 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning(f"⚠️  Migración M_ASSETS_V2 omitida: {e}")
 
+        # ── Migración M_PERIOD: mes_inicio_periodo + period_locks ───
+        # Cierre de período por mes → generación de libros digitales.
+        # Art. 51 Ley Renta CR: Diario, Mayor, Inventarios y Balances.
+        try:
+            with _engine.begin() as conn:
+                conn.execute(text(
+                    "ALTER TABLE tenants "
+                    "ADD COLUMN IF NOT EXISTS mes_inicio_periodo INTEGER DEFAULT 1"
+                ))
+                conn.execute(text("""
+                    CREATE TABLE IF NOT EXISTS period_locks (
+                        id          TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+                        tenant_id   TEXT NOT NULL,
+                        year_month  TEXT NOT NULL,
+                        status      TEXT NOT NULL DEFAULT 'OPEN',
+                        closed_by   TEXT,
+                        closed_at   TIMESTAMPTZ,
+                        notes       TEXT,
+                        UNIQUE(tenant_id, year_month)
+                    )
+                """))
+            logger.info("✅ Migración M_PERIOD: mes_inicio_periodo + period_locks")
+        except Exception as e:
+            logger.warning(f"⚠️  Migración M_PERIOD omitida: {e}")
+
     # ── Auto-reseed: al arrancar, aplica cuentas nuevas del seed a TODOS
     # los tenants con cuentas existentes. Usa seed_standard_catalog()
     # con raw SQL / ON CONFLICT DO NOTHING — igual que el boton Sembrar.

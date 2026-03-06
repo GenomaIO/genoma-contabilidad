@@ -154,6 +154,19 @@ def create_entry(
 
     tenant_id = current_user["tenant_id"]
 
+    # ── Guard: período bloqueado (art. 51 Ley Renta CR — inalterabilidad) ──
+    _ym = req.date[:7]  # 'YYYY-MM'
+    _lock = db.execute(
+        text("SELECT status FROM period_locks WHERE tenant_id=:tid AND year_month=:ym"),
+        {"tid": tenant_id, "ym": _ym}
+    ).fetchone()
+    if _lock and _lock.status == 'CLOSED':
+        raise HTTPException(
+            status_code=423,
+            detail=f"El período {_ym} está CERRADO. No se pueden agregar asientos. "
+                   f"Los libros digitales ya fueron generados."
+        )
+
     # ── Validación NIIF: solo cuentas de movimiento (hojas) aceptan asientos ──
     # Obtener códigos que son padres de otras cuentas en este tenant
     _parent_rows = db.execute(
@@ -815,6 +828,7 @@ class OpeningEntryCreate(BaseModel):
     date:        str             # 'YYYY-MM-DD' — primer día del ejercicio
     description: str = "Asiento de Apertura de Ejercicio"
     lines:       List[OpeningLineIn]
+    mes_inicio:  int = 1        # 1=enero ... 12=diciembre (para prorrateo de créditos fiscales)
 
 
 @router.post("/opening-entry", status_code=201)
@@ -949,17 +963,30 @@ def create_opening_entry(
     )
     db.commit()
 
+    # ── Guardar mes de inicio del período en el tenant ──────────────
+    # Afecta prorrateo de créditos fiscales por familia (Hacienda CR)
+    mes = max(1, min(12, req.mes_inicio))  # clamp 1-12 seguro
+    try:
+        db.execute(
+            text("UPDATE tenants SET mes_inicio_periodo=:mes WHERE id=:tid"),
+            {"mes": mes, "tid": tenant_id}
+        )
+        db.commit()
+    except Exception:
+        pass  # columna puede no existir en SQLite dev local
+
     return {
-        "ok":          True,
-        "entry_id":    entry_id,
-        "period":      period,
-        "year":        fiscal_year,
-        "status":      "POSTED",
-        "source":      "APERTURA",
-        "lines":       len(req.lines),
-        "total_debe":  round(total_dr, 2),
-        "total_haber": round(total_cr, 2),
-        "message":     f"Asiento de apertura {fiscal_year} creado y aprobado. El libro queda abierto.",
+        "ok":           True,
+        "entry_id":     entry_id,
+        "period":       period,
+        "year":         fiscal_year,
+        "mes_inicio":   req.mes_inicio,
+        "status":       "POSTED",
+        "source":       "APERTURA",
+        "lines":        len(req.lines),
+        "total_debe":   round(total_dr, 2),
+        "total_haber":  round(total_cr, 2),
+        "message":      f"Asiento de apertura {fiscal_year} creado y aprobado. El libro queda abierto.",
     }
 
 
@@ -1184,3 +1211,250 @@ def get_mayor_summary(
         "accounts":  result,
         "total":     len(result),
     }
+
+
+# ─────────────────────────────────────────────────────────────────
+# Cierre de Período — OPEN → CLOSING → CLOSED
+# Art. 51 Ley Renta CR: inalterabilidad tras cierre
+# ─────────────────────────────────────────────────────────────────
+
+@router.get("/period/{year_month}/status")
+def get_period_status(
+    year_month:   str,
+    current_user: dict    = Depends(get_current_user),
+    db:           Session = Depends(get_session),
+):
+    """Retorna el estado actual del período (OPEN | CLOSING | CLOSED)."""
+    tenant_id = current_user["tenant_id"]
+    row = db.execute(
+        text("SELECT status, closed_by, closed_at FROM period_locks "
+             "WHERE tenant_id=:tid AND year_month=:ym"),
+        {"tid": tenant_id, "ym": year_month}
+    ).fetchone()
+    status_val = row.status if row else "OPEN"
+    return {
+        "year_month": year_month,
+        "status":     status_val,
+        "closed_by":  row.closed_by if row else None,
+        "closed_at":  str(row.closed_at) if row and row.closed_at else None,
+    }
+
+
+@router.post("/period/{year_month}/close-request")
+def request_period_close(
+    year_month:   str,
+    current_user: dict    = Depends(get_current_user),
+    db:           Session = Depends(get_session),
+):
+    """Contador solicita cierre: OPEN → CLOSING. No bloquea aún."""
+    _require_role(current_user["role"], ["admin", "contador"])
+    tenant_id = current_user["tenant_id"]
+    # Verificar que no haya DRAFT pendientes en el período
+    draft_count = db.execute(
+        text("SELECT COUNT(*) FROM journal_entries "
+             "WHERE tenant_id=:tid AND period=:ym AND status='DRAFT'"),
+        {"tid": tenant_id, "ym": year_month}
+    ).scalar()
+    if draft_count and draft_count > 0:
+        raise HTTPException(
+            400,
+            f"Hay {draft_count} asiento(s) en DRAFT. Aprueba o elimina antes de cerrar."
+        )
+    # UPSERT period_lock
+    db.execute(
+        text("""
+            INSERT INTO period_locks (id, tenant_id, year_month, status, closed_by)
+            VALUES (gen_random_uuid()::text, :tid, :ym, 'CLOSING', :user)
+            ON CONFLICT (tenant_id, year_month)
+            DO UPDATE SET status='CLOSING', closed_by=:user
+        """),
+        {"tid": tenant_id, "ym": year_month, "user": _uid(current_user)}
+    )
+    db.commit()
+    return {"year_month": year_month, "status": "CLOSING",
+            "message": "Período en CLOSING. Admin puede ahora bloquear (lock)."}
+
+
+@router.post("/period/{year_month}/lock")
+def lock_period(
+    year_month:   str,
+    current_user: dict    = Depends(get_current_user),
+    db:           Session = Depends(get_session),
+):
+    """Admin bloquea el período: CLOSING → CLOSED. Inalterabilidad total."""
+    _require_role(current_user["role"], ["admin"])
+    tenant_id = current_user["tenant_id"]
+    # Solo puede bloquear si está en CLOSING
+    row = db.execute(
+        text("SELECT status FROM period_locks WHERE tenant_id=:tid AND year_month=:ym"),
+        {"tid": tenant_id, "ym": year_month}
+    ).fetchone()
+    if not row or row.status != "CLOSING":
+        raise HTTPException(
+            400,
+            f"El período {year_month} debe estar en CLOSING antes de bloquear. "
+            f"Estado actual: {row.status if row else 'OPEN'}"
+        )
+    db.execute(
+        text("""
+            UPDATE period_locks
+            SET status='CLOSED', closed_by=:user, closed_at=NOW()
+            WHERE tenant_id=:tid AND year_month=:ym
+        """),
+        {"tid": tenant_id, "ym": year_month, "user": _uid(current_user)}
+    )
+    db.commit()
+    return {"year_month": year_month, "status": "CLOSED",
+            "message": "Período CERRADO. Libros digitales disponibles. Sin modificaciones posibles."}
+
+
+# ─────────────────────────────────────────────────────────────────
+# Libros Digitales — Solo disponibles cuando status = CLOSED
+# Art. 51 Ley Renta CR: Diario, Mayor, Inventarios y Balances
+# ─────────────────────────────────────────────────────────────────
+
+def _check_closed(tenant_id: str, year_month: str, db: Session):
+    """Lanza 423 si el período NO está CLOSED."""
+    row = db.execute(
+        text("SELECT status FROM period_locks WHERE tenant_id=:tid AND year_month=:ym"),
+        {"tid": tenant_id, "ym": year_month}
+    ).fetchone()
+    if not row or row.status != "CLOSED":
+        raise HTTPException(
+            status_code=423,
+            detail=f"El período {year_month} aún no está CLOSED. "
+                   f"Estado: {row.status if row else 'OPEN'}. "
+                   f"Cierra el período antes de exportar los libros."
+        )
+
+
+@router.get("/libros/{year_month}/diario")
+def libro_diario(
+    year_month:   str,
+    current_user: dict    = Depends(get_current_user),
+    db:           Session = Depends(get_session),
+):
+    """Libro Diario del período — todos los asientos POSTED en orden cronológico."""
+    tenant_id = current_user["tenant_id"]
+    _check_closed(tenant_id, year_month, db)
+    from_d = f"{year_month}-01"
+    import calendar
+    y, m = int(year_month[:4]), int(year_month[5:7])
+    to_d = f"{year_month}-{calendar.monthrange(y, m)[1]:02d}"
+
+    rows = db.execute(text("""
+        SELECT je.date, je.id AS entry_id, je.source_ref, je.description AS entry_desc,
+               je.source, jl.account_code, jl.description AS line_desc,
+               jl.debit, jl.credit
+        FROM journal_entries je
+        JOIN journal_lines jl ON jl.entry_id = je.id
+        WHERE je.tenant_id = :tid AND je.status = 'POSTED'
+          AND je.date BETWEEN :fd AND :td
+        ORDER BY je.date ASC, je.created_at ASC, jl.id ASC
+    """), {"tid": tenant_id, "fd": from_d, "td": to_d}).fetchall()
+
+    lineas = [{
+        "fecha":        r.date,
+        "entry_id":     r.entry_id,
+        "ref":          r.source_ref or f"#{str(r.entry_id)[-6:]}",
+        "cuenta":       r.account_code,
+        "descripcion":  r.line_desc or r.entry_desc or "",
+        "fuente":       r.source,
+        "debe":         round(float(r.debit or 0), 2),
+        "haber":        round(float(r.credit or 0), 2),
+    } for r in rows]
+
+    return {"year_month": year_month, "libro": "DIARIO",
+            "total_lineas": len(lineas), "lineas": lineas}
+
+
+@router.get("/libros/{year_month}/mayor")
+def libro_mayor(
+    year_month:   str,
+    current_user: dict    = Depends(get_current_user),
+    db:           Session = Depends(get_session),
+):
+    """Libro Mayor del período — T-account de cada cuenta."""
+    tenant_id = current_user["tenant_id"]
+    _check_closed(tenant_id, year_month, db)
+    from_d = f"{year_month}-01"
+    import calendar
+    y, m = int(year_month[:4]), int(year_month[5:7])
+    to_d = f"{year_month}-{calendar.monthrange(y, m)[1]:02d}"
+
+    # Reutiliza la lógica del GET /mayor (index)
+    ap_map = {}
+    for r in db.execute(text("""
+        SELECT jl.account_code, SUM(jl.debit) - SUM(jl.credit) AS saldo_aper
+        FROM journal_lines jl JOIN journal_entries je ON je.id = jl.entry_id
+        WHERE je.tenant_id=:tid AND je.status='POSTED' AND je.source='APERTURA'
+        GROUP BY jl.account_code
+    """), {"tid": tenant_id}).fetchall():
+        ap_map[r.account_code] = round(float(r.saldo_aper or 0), 2)
+
+    m_rows = db.execute(text("""
+        SELECT jl.account_code, a.name AS acc_name, a.account_type,
+               SUM(jl.debit) AS dr, SUM(jl.credit) AS cr
+        FROM journal_lines jl JOIN journal_entries je ON je.id = jl.entry_id
+        LEFT JOIN accounts a ON a.tenant_id=je.tenant_id AND a.code=jl.account_code
+        WHERE je.tenant_id=:tid AND je.status='POSTED' AND je.source!='APERTURA'
+          AND je.date BETWEEN :fd AND :td
+        GROUP BY jl.account_code, a.name, a.account_type
+        ORDER BY jl.account_code
+    """), {"tid": tenant_id, "fd": from_d, "td": to_d}).fetchall()
+
+    cuentas = []
+    all_codes = sorted(set(ap_map.keys()) | {r.account_code for r in m_rows})
+    m_idx = {r.account_code: r for r in m_rows}
+    for code in all_codes:
+        aper = ap_map.get(code, 0.0)
+        r = m_idx.get(code)
+        dr = round(float(r.dr or 0), 2) if r else 0.0
+        cr = round(float(r.cr or 0), 2) if r else 0.0
+        cuentas.append({
+            "cuenta": code, "nombre": r.acc_name if r else code,
+            "tipo": r.account_type if r else "",
+            "saldo_inicial": aper, "debe": dr, "haber": cr,
+            "saldo_cierre": round(aper + dr - cr, 2),
+        })
+
+    return {"year_month": year_month, "libro": "MAYOR",
+            "total_cuentas": len(cuentas), "cuentas": cuentas}
+
+
+@router.get("/libros/{year_month}/balance")
+def libro_balance(
+    year_month:   str,
+    current_user: dict    = Depends(get_current_user),
+    db:           Session = Depends(get_session),
+):
+    """Inventarios y Balances — Balance de comprobación del período."""
+    tenant_id = current_user["tenant_id"]
+    _check_closed(tenant_id, year_month, db)
+    from_d = f"{year_month}-01"
+    import calendar
+    y, m = int(year_month[:4]), int(year_month[5:7])
+    to_d = f"{year_month}-{calendar.monthrange(y, m)[1]:02d}"
+
+    rows = db.execute(text("""
+        SELECT jl.account_code, a.name, a.account_type,
+               SUM(jl.debit) AS dr, SUM(jl.credit) AS cr
+        FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
+        LEFT JOIN accounts a ON a.tenant_id=je.tenant_id AND a.code=jl.account_code
+        WHERE je.tenant_id=:tid AND je.status='POSTED'
+          AND je.date BETWEEN :fd AND :td
+        GROUP BY jl.account_code, a.name, a.account_type
+        ORDER BY jl.account_code
+    """), {"tid": tenant_id, "fd": from_d, "td": to_d}).fetchall()
+
+    cuentas = [{"cuenta": r.account_code, "nombre": r.name,
+                "tipo": r.account_type,
+                "debe": round(float(r.dr or 0), 2),
+                "haber": round(float(r.cr or 0), 2)} for r in rows]
+    total_dr = sum(c["debe"]  for c in cuentas)
+    total_cr = sum(c["haber"] for c in cuentas)
+
+    return {"year_month": year_month, "libro": "INVENTARIOS_Y_BALANCES",
+            "balanceado": abs(total_dr - total_cr) < 0.01,
+            "total_debe": round(total_dr, 2), "total_haber": round(total_cr, 2),
+            "cuentas": cuentas}

@@ -50,6 +50,7 @@ export default function Apertura() {
     const [lines, setLines] = useState([EMPTY_LINE(), EMPTY_LINE()])
     const [date, setDate] = useState(todayStr())
     const [desc, setDesc] = useState('Asiento de Apertura de Ejercicio')
+    const [mesInicio, setMesInicio] = useState(1)  // 1=enero ... 12=diciembre
     const [saving, setSaving] = useState(false)
     const [formError, setFormError] = useState(null)
     const [success, setSuccess] = useState(false)
@@ -162,6 +163,7 @@ export default function Apertura() {
             const body = {
                 date,
                 description: desc,
+                mes_inicio: mesInicio,
                 lines: lines.map(l => ({
                     account_code: l.account_code,
                     description: l._name || '',
@@ -232,6 +234,15 @@ export default function Apertura() {
                     <div><span style={{ color: 'var(--text-muted)' }}>Estado:</span> <strong style={{ color: '#10b981' }}>POSTED</strong></div>
                     <div style={{ gridColumn: '1/-1' }}><span style={{ color: 'var(--text-muted)' }}>Descripción:</span> {existing.description}</div>
                     <div><span style={{ color: 'var(--text-muted)' }}>Aprobado:</span> {existing.approved_at?.slice(0, 10)}</div>
+                    {existing.mes_inicio && (
+                        <div>
+                            <span style={{ color: 'var(--text-muted)' }}>Mes de inicio:</span>{' '}
+                            <strong style={{ color: '#8b5cf6' }}>
+                                {['', 'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'][existing.mes_inicio]}
+                            </strong>
+                            <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginLeft: 6 }}>· {12 - existing.mes_inicio + 1} meses activos</span>
+                        </div>
+                    )}
                 </div>
             </div>
 
@@ -333,7 +344,7 @@ export default function Apertura() {
 
             {catOk && canWrite && (
                 <>
-                    {/* Fecha + Descripción */}
+                    {/* Fecha + Descripción + Mes Inicio */}
                     <div style={{ display: 'grid', gridTemplateColumns: '160px 1fr', gap: 12, marginBottom: 16 }}>
                         <div>
                             <label style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>Fecha de Apertura *</label>
@@ -342,6 +353,35 @@ export default function Apertura() {
                         <div>
                             <label style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>Descripción *</label>
                             <input type="text" value={desc} onChange={e => setDesc(e.target.value)} style={inputStyle} />
+                        </div>
+                    </div>
+
+                    {/* Mes de inicio del período fiscal */}
+                    <div style={{
+                        marginBottom: 16, padding: '12px 16px', borderRadius: 8,
+                        background: 'rgba(139,92,246,0.06)', border: '1px solid rgba(139,92,246,0.25)'
+                    }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
+                            <div>
+                                <label style={{ fontSize: '0.75rem', color: '#8b5cf6', fontWeight: 700, display: 'block', marginBottom: 4 }}>Mes de inicio del período fiscal *</label>
+                                <select
+                                    id="mes-inicio-apertura"
+                                    value={mesInicio}
+                                    onChange={e => setMesInicio(parseInt(e.target.value))}
+                                    style={{ ...inputStyle, width: 'auto', minWidth: 160, cursor: 'pointer' }}
+                                >
+                                    {['', 'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
+                                        .slice(1).map((m, idx) => (
+                                            <option key={idx + 1} value={idx + 1}>{m}</option>
+                                        ))}
+                                </select>
+                            </div>
+                            <div style={{ flex: 1, fontSize: '0.79rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                                <strong style={{ color: '#8b5cf6' }}>¿Por qué importa?</strong><br />
+                                Méses activos del ejercicio: <strong>{12 - mesInicio + 1}</strong>.
+                                Los créditos fiscales por familia (Hacienda CR) se prorratean por mes activo en la renta anual.
+                                Empresa que inicia en julio = 6 meses, no 12.
+                            </div>
                         </div>
                     </div>
 

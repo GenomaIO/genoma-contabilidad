@@ -1,205 +1,373 @@
 /**
- * CierrePeriodo.jsx — Cierre Contable de Período
+ * CierrePeriodo.jsx — Cierre Contable de Período (5 Pasos)
  *
- * Genera un asiento DRAFT que transfiere saldos de Ingresos/Gastos
- * a la cuenta de Utilidad (3303) o Pérdida (3302) del ejercicio.
+ * Flujo legal (Art. 51 Ley Renta CR — inalterabilidad):
+ *  Paso 1: Asientos del mes completados (DRAFT = 0)
+ *  Paso 2: Ajustes aplicados (depreciación, devengados)
+ *  Paso 3: Asiento de cierre I/E generado (POSTED)
+ *  Paso 4: Balance cuadrado (DR = CR)
+ *  Paso 5: Admin bloquea → CLOSED (libros digitales disponibles)
  *
- * Flujo:
- * 1. El contador elige el período a cerrar
- * 2. El sistema verifica que no haya asientos DRAFT pendientes
- * 3. Si está OK, genera el asiento de cierre en DRAFT (requiere aprobación)
- * 4. El contador aprueba el asiento desde el Libro Diario (/diario)
- *
- * Solo admin/contador pueden ejecutar el cierre.
+ * Estados: OPEN → CLOSING → CLOSED
  */
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useApp } from '../context/AppContext'
 
-const MONTHS = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic']
+const MESES = ['', 'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
+    'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
 
-function getPreviousPeriod() {
-    const d = new Date()
-    // El cierre es del período anterior al actual
-    d.setMonth(d.getMonth() - 1)
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+function periodOptions() {
+    const opts = []
+    const now = new Date()
+    for (let i = 0; i <= 11; i++) {
+        const d = new Date(now.getFullYear(), now.getMonth() - i, 1)
+        const ym = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+        opts.push({ ym, label: `${MESES[d.getMonth() + 1]} ${d.getFullYear()}` })
+    }
+    return opts
 }
+
+const STATUS_COLOR = { OPEN: '#3b82f6', CLOSING: '#f59e0b', CLOSED: '#10b981' }
+const STATUS_ICON = { OPEN: '🔓', CLOSING: '⏳', CLOSED: '🔒' }
+const STATUS_LABEL = { OPEN: 'Abierto', CLOSING: 'En cierre', CLOSED: 'Cerrado' }
 
 export default function CierrePeriodo() {
     const { state } = useApp()
-    const [period, setPeriod] = useState(getPreviousPeriod())
-    const [checking, setChecking] = useState(false)
-    const [closing, setClosing] = useState(false)
-    const [draftCount, setDraftCount] = useState(null)  // null=sin verificar
-    const [result, setResult] = useState(null)
-    const [error, setError] = useState(null)
-
     const apiUrl = import.meta.env.VITE_API_URL || ''
     const token = localStorage.getItem('gc_token')
     const role = state.user?.role
-    const canClose = role === 'admin' || role === 'contador'
+    const isAdmin = role === 'admin'
+    const isContador = role === 'contador' || isAdmin
 
-    // Verificar DRAFTs pendientes cada vez que cambia el período
-    useEffect(() => {
-        checkDrafts()
-        setResult(null)
-    }, [period])
+    const opts = periodOptions()
+    const [period, setPeriod] = useState(opts[1]?.ym || opts[0]?.ym)
 
-    async function checkDrafts() {
-        setChecking(true); setError(null); setDraftCount(null)
+    // Estado del período
+    const [status, setStatus] = useState('OPEN')
+    const [statusInfo, setStatusInfo] = useState(null)
+    const [loadingStatus, setLoadingStatus] = useState(false)
+
+    // Checks automáticos
+    const [draftCount, setDraftCount] = useState(null)
+    const [hasCierre, setHasCierre] = useState(false)
+    const [balanced, setBalanced] = useState(false)
+    const [loadingChecks, setLoadingChecks] = useState(false)
+
+    // Acciones
+    const [loadingAction, setLoadingAction] = useState(false)
+    const [actionMsg, setActionMsg] = useState(null)
+    const [actionErr, setActionErr] = useState(null)
+    const [closing, setClosing] = useState(false)
+
+    // ── Cargar estado del período ────────────────────────────────
+    const loadStatus = useCallback(async () => {
+        if (!token || !period) return
+        setLoadingStatus(true)
         try {
-            const res = await fetch(`${apiUrl}/ledger/entries?period=${period}&status=DRAFT`, {
+            const r = await fetch(`${apiUrl}/ledger/period/${period}/status`, {
                 headers: { Authorization: `Bearer ${token}` }
             })
-            if (!res.ok) throw new Error('Error al verificar asientos pendientes')
-            const entries = await res.json()
-            setDraftCount(entries.length)
-        } catch (e) { setError(e.message) }
-        finally { setChecking(false) }
-    }
+            if (r.ok) {
+                const d = await r.json()
+                setStatus(d.status)
+                setStatusInfo(d)
+            }
+        } catch { /* red */ }
+        finally { setLoadingStatus(false) }
+    }, [apiUrl, token, period])
 
-    async function handleClose() {
-        if (!canClose) return
-        if (draftCount > 0) {
-            alert(`❌ No se puede cerrar: hay ${draftCount} asiento(s) DRAFT pendiente(s). Apróbalos o anúlalos primero.`)
-            return
-        }
-        setClosing(true); setError(null); setResult(null)
+    // ── Cargar checks automáticos ────────────────────────────────
+    const loadChecks = useCallback(async () => {
+        if (!token || !period) return
+        setLoadingChecks(true)
         try {
-            const res = await fetch(`${apiUrl}/ledger/close-period`, {
+            // Check 1: DRAFTs pendientes
+            const rDraft = await fetch(`${apiUrl}/ledger/entries?period=${period}&status=DRAFT`, {
+                headers: { Authorization: `Bearer ${token}` }
+            })
+            if (rDraft.ok) {
+                const d = await rDraft.json()
+                setDraftCount(Array.isArray(d) ? d.length : (d.total || 0))
+            }
+            // Check 3: Asiento de cierre (source=CIERRE, POSTED)
+            const rCierre = await fetch(`${apiUrl}/ledger/entries?period=${period}&source=CIERRE&status=POSTED`, {
+                headers: { Authorization: `Bearer ${token}` }
+            })
+            if (rCierre.ok) {
+                const d = await rCierre.json()
+                setHasCierre(Array.isArray(d) ? d.length > 0 : (d.total || 0) > 0)
+            }
+            // Check 4: Balance cuadrado — via balance endpoint
+            const rBal = await fetch(`${apiUrl}/ledger/balance?period=${period}`, {
+                headers: { Authorization: `Bearer ${token}` }
+            })
+            if (rBal.ok) {
+                const d = await rBal.json()
+                setBalanced(d.balanced === true || d.is_balanced === true)
+            }
+        } catch { /* net error */ }
+        finally { setLoadingChecks(false) }
+    }, [apiUrl, token, period])
+
+    useEffect(() => {
+        loadStatus()
+        loadChecks()
+    }, [period, token])
+
+    // ── Generar asiento de cierre I/E (DRAFT) ───────────────────
+    async function generateCierre() {
+        setClosing(true); setActionMsg(null); setActionErr(null)
+        try {
+            const r = await fetch(`${apiUrl}/ledger/close-period`, {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    Authorization: `Bearer ${token}`
-                },
+                headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
                 body: JSON.stringify({ period })
             })
-            const data = await res.json()
-            if (!res.ok) throw new Error(data.detail || 'Error al generar el cierre')
-            setResult(data)
-        } catch (e) { setError(e.message) }
+            const d = await r.json()
+            if (!r.ok) throw new Error(d.detail || 'Error al generar cierre')
+            setActionMsg('✅ Asiento de cierre I/E generado como DRAFT. Revísalo y apruébalo en el Diario.')
+            await loadChecks()
+        } catch (e) { setActionErr(e.message) }
         finally { setClosing(false) }
     }
 
-    // Opciones de período (24 meses)
-    const periodOptions = []
-    const base = new Date()
-    for (let i = 1; i < 25; i++) {
-        const d = new Date(base.getFullYear(), base.getMonth() - i, 1)
-        const val = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
-        periodOptions.push({ val, label: `${MONTHS[d.getMonth()]} ${d.getFullYear()}` })
+    // ── Solicitar cierre OPEN → CLOSING ────────────────────────
+    async function requestClose() {
+        setLoadingAction(true); setActionMsg(null); setActionErr(null)
+        try {
+            const r = await fetch(`${apiUrl}/ledger/period/${period}/close-request`, {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${token}` }
+            })
+            const d = await r.json()
+            if (!r.ok) throw new Error(d.detail || 'Error')
+            setActionMsg('✅ Período en CLOSING. El administrador puede ahora bloquearlo.')
+            await loadStatus()
+        } catch (e) { setActionErr(e.message) }
+        finally { setLoadingAction(false) }
     }
 
-    const hasDrafts = draftCount !== null && draftCount > 0
-    const readyToClose = draftCount === 0 && !checking
+    // ── Bloquear CLOSING → CLOSED ───────────────────────────────
+    async function lockPeriod() {
+        if (!window.confirm(`¿CONFIRMAR bloqueo del período ${period}?\n\nEsta acción es IRREVERSIBLE. Ningún asiento podrá agregarse o modificarse. Los libros digitales quedarán disponibles para exportar.`)) return
+        setLoadingAction(true); setActionMsg(null); setActionErr(null)
+        try {
+            const r = await fetch(`${apiUrl}/ledger/period/${period}/lock`, {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${token}` }
+            })
+            const d = await r.json()
+            if (!r.ok) throw new Error(d.detail || 'Error')
+            setActionMsg('🔒 Período CERRADO. Libros digitales disponibles en "Libros Digitales".')
+            await loadStatus()
+        } catch (e) { setActionErr(e.message) }
+        finally { setLoadingAction(false) }
+    }
+
+    // ── Pasos del stepper ────────────────────────────────────────
+    const step1OK = draftCount === 0
+    const step2OK = true  // manual por ahora — sin activos fijos requeridos
+    const step3OK = hasCierre
+    const step4OK = balanced
+    const allChecksOK = step1OK && step3OK && step4OK
+
+    const steps = [
+        { n: 1, label: 'Asientos del mes', desc: draftCount === null ? 'Verificando...' : draftCount === 0 ? '0 borradoes pendientes ✓' : `${draftCount} DRAFT pendiente(s) — aprueba en el Diario`, ok: step1OK },
+        { n: 2, label: 'Ajustes aplicados', desc: 'Depreciación, devengados. Verificación manual.', ok: step2OK, manual: true },
+        { n: 3, label: 'Asiento de cierre I/E', desc: hasCierre ? 'Asiento de cierre POSTED ✓' : 'Pendiente — genera el asiento de cierre abajo', ok: step3OK },
+        { n: 4, label: 'Balance cuadrado', desc: loadingChecks ? 'Verificando...' : balanced ? 'DR = CR ✓' : 'Débitos ≠ Créditos — revisa asientos', ok: step4OK },
+        { n: 5, label: 'Bloquear período', desc: status === 'CLOSED' ? '🔒 Período bloqueado — libros digitales listos' : 'Admin bloquea → CLOSED', ok: status === 'CLOSED' },
+    ]
 
     return (
-        <div style={{ padding: '24px', maxWidth: 700, margin: '0 auto', fontFamily: 'Inter, sans-serif' }}>
+        <div style={{ maxWidth: 780, margin: '0 auto', padding: '32px 20px' }}>
             {/* Header */}
-            <div style={{ marginBottom: 28 }}>
-                <h1 style={{ margin: 0, fontSize: '1.35rem', fontWeight: 700, color: 'var(--text-primary)' }}>
-                    🔒 Cierre de Período
-                </h1>
-                <p style={{ margin: '6px 0 0', fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
-                    Genera un asiento de cierre DRAFT que transfiere los saldos de Ingresos y Gastos
-                    a la cuenta de <strong>Utilidad del Ejercicio (3303)</strong> o <strong>Pérdida (3302)</strong>.
-                    El asiento queda en borrador — el contador debe aprobarlo desde el Libro Diario.
-                </p>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24, gap: 12 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                    <span style={{ fontSize: '1.5rem' }}>📅</span>
+                    <div>
+                        <h2 style={{ margin: 0, fontSize: '1.2rem', color: 'var(--text-primary)' }}>Cierre de Período</h2>
+                        <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                            Art. 51 Ley Renta CR · Flujo OPEN → CLOSING → CLOSED
+                        </p>
+                    </div>
+                </div>
+                {/* Estado badge */}
+                {!loadingStatus && (
+                    <div style={{
+                        display: 'flex', alignItems: 'center', gap: 6, padding: '5px 14px',
+                        borderRadius: 20, background: STATUS_COLOR[status] + '20',
+                        border: `1px solid ${STATUS_COLOR[status]}40`, fontSize: '0.82rem',
+                        fontWeight: 700, color: STATUS_COLOR[status]
+                    }}>
+                        {STATUS_ICON[status]} {STATUS_LABEL[status]}
+                    </div>
+                )}
             </div>
 
             {/* Selector de período */}
-            <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: 10, padding: 20, marginBottom: 20 }}>
-                <label style={{ display: 'block', fontSize: '0.82rem', color: 'var(--text-secondary)', marginBottom: 8, fontWeight: 600 }}>
-                    Período a cerrar
-                </label>
+            <div style={{ marginBottom: 24 }}>
+                <label style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>Período a cerrar</label>
                 <select
                     id="cierre-period-select"
                     value={period}
-                    onChange={e => setPeriod(e.target.value)}
-                    style={{ width: '100%', padding: '10px 12px', borderRadius: 7, border: '1px solid var(--border-color)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: '0.9rem' }}
+                    onChange={e => { setPeriod(e.target.value); setActionMsg(null); setActionErr(null) }}
+                    style={{
+                        padding: '8px 12px', borderRadius: 7, border: '1px solid var(--border-color)',
+                        background: 'var(--bg-card)', color: 'var(--text-primary)', fontSize: '0.9rem',
+                        minWidth: 240, cursor: 'pointer'
+                    }}
                 >
-                    {periodOptions.map(o => <option key={o.val} value={o.val}>{o.label} ({o.val})</option>)}
+                    {opts.map(o => (
+                        <option key={o.ym} value={o.ym}>{o.label} ({o.ym})</option>
+                    ))}
                 </select>
             </div>
 
-            {/* Estado de verificación */}
-            <div style={{ background: 'var(--bg-card)', border: `1px solid ${hasDrafts ? 'rgba(239,68,68,0.4)' : readyToClose ? 'rgba(16,185,129,0.4)' : 'var(--border-color)'}`, borderRadius: 10, padding: 18, marginBottom: 20 }}>
-                <div style={{ fontSize: '0.88rem', fontWeight: 600, marginBottom: 8, color: 'var(--text-primary)' }}>
-                    Estado del período {period}
-                </div>
-                {checking && <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>⏳ Verificando asientos pendientes...</p>}
-                {!checking && draftCount !== null && (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                        <span style={{ fontSize: '1.3rem' }}>{hasDrafts ? '❌' : '✅'}</span>
-                        <span style={{ fontSize: '0.85rem', color: hasDrafts ? '#ef4444' : '#10b981', fontWeight: 600 }}>
-                            {hasDrafts
-                                ? `${draftCount} asiento(s) DRAFT pendiente(s) — debe(n) aprobarse o anularse antes del cierre`
-                                : 'Sin asientos pendientes — listo para cerrar'}
-                        </span>
+            {/* Stepper */}
+            <div style={{
+                background: 'var(--bg-card)', borderRadius: 12, border: '1px solid var(--border-color)',
+                overflow: 'hidden', marginBottom: 24
+            }}>
+                {steps.map((s, idx) => (
+                    <div key={s.n} style={{
+                        display: 'flex', alignItems: 'flex-start', gap: 14, padding: '14px 18px',
+                        borderBottom: idx < steps.length - 1 ? '1px solid var(--border-color)' : 'none',
+                        background: s.ok ? 'rgba(16,185,129,0.04)' : 'transparent'
+                    }}>
+                        {/* Número / check */}
+                        <div style={{
+                            width: 32, height: 32, borderRadius: '50%', display: 'flex', alignItems: 'center',
+                            justifyContent: 'center', flexShrink: 0, fontSize: '0.82rem', fontWeight: 700,
+                            background: s.ok ? '#10b981' : s.manual ? '#f59e0b20' : 'var(--bg-header)',
+                            color: s.ok ? 'white' : s.manual ? '#f59e0b' : 'var(--text-muted)',
+                            border: s.ok ? 'none' : s.manual ? '1px solid #f59e0b40' : '1px solid var(--border-color)'
+                        }}>
+                            {s.ok ? '✓' : s.n}
+                        </div>
+                        {/* Texto */}
+                        <div style={{ flex: 1 }}>
+                            <div style={{ fontSize: '0.88rem', fontWeight: 600, color: s.ok ? '#10b981' : 'var(--text-primary)' }}>
+                                {s.label}
+                                {s.manual && <span style={{ marginLeft: 6, fontSize: '0.68rem', background: '#f59e0b20', color: '#f59e0b', borderRadius: 4, padding: '1px 5px' }}>manual</span>}
+                            </div>
+                            <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: 2 }}>{s.desc}</div>
+                        </div>
                     </div>
-                )}
-                {hasDrafts && (
-                    <a href="/diario" style={{ display: 'inline-block', marginTop: 10, fontSize: '0.82rem', color: '#7c3aed', textDecoration: 'underline' }}>
-                        → Ir al Libro Diario para gestionarlos
-                    </a>
-                )}
+                ))}
             </div>
 
-            {error && (
-                <div style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 8, padding: '10px 14px', color: '#ef4444', marginBottom: 16, fontSize: '0.88rem' }}>
-                    ⚠️ {error}
+            {/* Mensajes */}
+            {actionMsg && (
+                <div style={{
+                    padding: '10px 14px', borderRadius: 8, background: 'rgba(16,185,129,0.1)',
+                    border: '1px solid #10b981', color: '#10b981', fontSize: '0.85rem', marginBottom: 16
+                }}>
+                    {actionMsg}
+                </div>
+            )}
+            {actionErr && (
+                <div style={{
+                    padding: '10px 14px', borderRadius: 8, background: 'rgba(239,68,68,0.1)',
+                    border: '1px solid #ef4444', color: '#ef4444', fontSize: '0.85rem', marginBottom: 16
+                }}>
+                    ⚠️ {actionErr}
                 </div>
             )}
 
-            {/* Resultado exitoso */}
-            {result && (
-                <div style={{ background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.3)', borderRadius: 10, padding: 20, marginBottom: 20 }}>
-                    <div style={{ fontWeight: 700, color: '#10b981', marginBottom: 8 }}>✅ Asiento de cierre generado</div>
-                    <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: 1.7 }}>
-                        <div>ID: <code style={{ background: 'rgba(0,0,0,0.2)', padding: '1px 6px', borderRadius: 4 }}>{result.entry_id?.slice(0, 12)}...</code></div>
-                        <div>Estado: <strong>DRAFT</strong> — requiere aprobación del contador</div>
-                        <div style={{ marginTop: 8, color: '#10b981', fontWeight: 600 }}>{result.next_action}</div>
+            {/* Botones de acción */}
+            {status !== 'CLOSED' && isContador && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+
+                    {/* Botón 1: Generar asiento cierre I/E */}
+                    {!step3OK && status === 'OPEN' && (
+                        <button
+                            id="btn-generar-cierre"
+                            onClick={generateCierre}
+                            disabled={closing || !step1OK}
+                            style={{
+                                padding: '10px 22px', background: step1OK ? '#7c3aed' : 'var(--bg-card)',
+                                border: 'none', borderRadius: 8, color: step1OK ? 'white' : 'var(--text-muted)',
+                                fontWeight: 700, cursor: step1OK ? 'pointer' : 'not-allowed', fontSize: '0.88rem'
+                            }}
+                        >
+                            {closing ? '⏳ Generando...' : '📋 Generar asiento de cierre I/E (DRAFT)'}
+                        </button>
+                    )}
+
+                    {/* Botón 2: Solicitar cierre (OPEN → CLOSING) */}
+                    {status === 'OPEN' && (
+                        <button
+                            id="btn-solicitar-cierre"
+                            onClick={requestClose}
+                            disabled={loadingAction || !allChecksOK}
+                            title={!allChecksOK ? 'Completa los 4 pasos primero' : 'Solicitar cierre al administrador'}
+                            style={{
+                                padding: '10px 22px', background: allChecksOK ? '#f59e0b' : 'var(--bg-card)',
+                                border: 'none', borderRadius: 8, color: allChecksOK ? 'white' : 'var(--text-muted)',
+                                fontWeight: 700, cursor: allChecksOK ? 'pointer' : 'not-allowed', fontSize: '0.88rem'
+                            }}
+                        >
+                            {loadingAction ? '⏳ Procesando...' : '✅ Solicitar cierre del período'}
+                        </button>
+                    )}
+
+                    {/* Botón 3: Bloquear (CLOSING → CLOSED) — solo admin */}
+                    {status === 'CLOSING' && isAdmin && (
+                        <button
+                            id="btn-lock-periodo"
+                            onClick={lockPeriod}
+                            disabled={loadingAction}
+                            style={{
+                                padding: '12px 22px', background: '#ef4444', border: 'none', borderRadius: 8,
+                                color: 'white', fontWeight: 700, cursor: 'pointer', fontSize: '0.9rem'
+                            }}
+                        >
+                            {loadingAction ? '⏳ Bloqueando...' : '🔒 Bloquear período (IRREVERSIBLE)'}
+                        </button>
+                    )}
+                </div>
+            )}
+
+            {/* Estado CLOSED — link a Libros */}
+            {status === 'CLOSED' && (
+                <div style={{
+                    padding: '16px 18px', borderRadius: 10, background: 'rgba(16,185,129,0.08)',
+                    border: '1px solid #10b981', textAlign: 'center'
+                }}>
+                    <div style={{ fontSize: '1.4rem', marginBottom: 6 }}>🔒</div>
+                    <div style={{ fontWeight: 700, color: '#10b981', marginBottom: 4 }}>Período Cerrado</div>
+                    <div style={{ fontSize: '0.82rem', color: 'var(--text-muted)', marginBottom: 12 }}>
+                        Los libros digitales (Diario, Mayor, Inventarios y Balances) están listos.
                     </div>
-                    <a
-                        href="/diario"
-                        style={{ display: 'inline-block', marginTop: 12, padding: '8px 18px', background: '#7c3aed', borderRadius: 7, color: 'white', fontSize: '0.85rem', fontWeight: 700, textDecoration: 'none' }}
-                    >
-                        → Ir al Libro Diario para aprobarlo
+                    <a href="/libros-digitales"
+                        style={{
+                            display: 'inline-block', padding: '8px 20px', background: '#7c3aed', color: 'white',
+                            borderRadius: 8, fontWeight: 700, fontSize: '0.88rem', textDecoration: 'none'
+                        }}>
+                        📚 Ir a Libros Digitales →
                     </a>
                 </div>
             )}
 
-            {/* Botón de cierre */}
-            {canClose && !result && (
-                <button
-                    id="btn-generar-cierre"
-                    onClick={handleClose}
-                    disabled={!readyToClose || closing}
-                    style={{
-                        width: '100%',
-                        padding: '14px',
-                        background: readyToClose && !closing ? '#7c3aed' : 'rgba(124,58,237,0.3)',
-                        border: 'none', borderRadius: 10,
-                        color: 'white', fontSize: '1rem', fontWeight: 700,
-                        cursor: readyToClose && !closing ? 'pointer' : 'not-allowed',
-                        transition: 'all 0.2s'
-                    }}
-                >
-                    {closing ? '⏳ Generando cierre...' : '🔒 Generar asiento de cierre DRAFT'}
-                </button>
-            )}
-
-            {!canClose && (
-                <div style={{ textAlign: 'center', padding: 20, color: 'var(--text-muted)', fontSize: '0.85rem' }}>
-                    🔒 Solo el contador o administrador puede ejecutar el cierre de período.
+            {!isContador && (
+                <div style={{
+                    padding: 14, background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)',
+                    borderRadius: 8, color: '#ef4444', fontSize: '0.82rem'
+                }}>
+                    Solo el contador o administrador puede ejecutar el cierre de período.
                 </div>
             )}
 
             {/* Nota legal */}
-            <div style={{ marginTop: 24, padding: '12px 16px', background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.25)', borderRadius: 8, fontSize: '0.8rem', color: 'var(--text-muted)', lineHeight: 1.6 }}>
-                <strong style={{ color: '#f59e0b' }}>📌 NIIF PYMES — Sección 22</strong><br />
-                El cierre de período transfiere el saldo neto de cuentas de Ingresos (4xxx) y Gastos (5xxx)
-                a la cuenta de Utilidades Retenidas (3303) o Pérdida del Ejercicio (3302).
-                El asiento generado queda en <strong>DRAFT</strong> y requiere aprobación formal del contador.
+            <div style={{
+                marginTop: 20, padding: '10px 16px', borderRadius: 8,
+                background: 'rgba(139,92,246,0.06)', border: '1px solid rgba(139,92,246,0.2)',
+                fontSize: '0.77rem', color: 'var(--text-secondary)'
+            }}>
+                <strong style={{ color: '#8b5cf6' }}>⚖️ Marco legal:</strong>{' '}
+                Art. 51 Ley del Impuesto sobre la Renta · Código de Comercio CR · Ley 8454 (Firma Digital).
+                Una vez en CLOSED, el período es inalterado y los libros tienen validez legal equivalente a los físicos.
             </div>
         </div>
     )
