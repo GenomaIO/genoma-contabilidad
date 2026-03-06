@@ -28,11 +28,13 @@ export default function Catalogo() {
     const [expanded, setExpanded] = useState({})
     const [showForm, setShowForm] = useState(false)
     const [toggling, setToggling] = useState(null)
+    const [seeding, setSeeding] = useState(false)
     const [error, setError] = useState(null)
 
     const apiUrl = import.meta.env.VITE_API_URL || ''
     const token = localStorage.getItem('gc_token')
     const role = state.user?.role
+    const catalogMode = state.catalogMode   // G3: leer modo del contexto
     const canWrite = role === 'admin' || role === 'contador'
 
     useEffect(() => {
@@ -76,6 +78,27 @@ export default function Catalogo() {
             }
         } finally {
             setToggling(null)
+        }
+    }
+
+    // G2: Carga el catálogo según el modo (idempotente, no duplica)
+    async function handleSeed() {
+        setSeeding(true)
+        setError(null)
+        try {
+            const res = await fetch(`${apiUrl}/catalog/seed`, {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${token}` }
+            })
+            if (!res.ok) {
+                const err = await res.json()
+                throw new Error(err.detail || 'Error al cargar el catálogo')
+            }
+            await fetchAccounts()
+        } catch (e) {
+            setError(e.message)
+        } finally {
+            setSeeding(false)
         }
     }
 
@@ -282,13 +305,54 @@ export default function Catalogo() {
                 )
             })}
 
-            {/* Estado vacío */}
+            {/* Estado vacío — G2+G3: inteligente según catalogMode */}
             {!loading && filtered.length === 0 && (
                 <div style={{ textAlign: 'center', padding: 48, color: 'var(--text-secondary)' }}>
-                    <div style={{ fontSize: '2.5rem', marginBottom: 12 }}>🔍</div>
-                    <p>No se encontraron cuentas{q ? ` para "${q}"` : ''}.</p>
-                    {canWrite && !q && (
-                        <button onClick={() => setShowForm(true)} style={{ marginTop: 12, padding: '8px 20px', background: '#7c3aed', border: 'none', borderRadius: 8, color: 'white', cursor: 'pointer' }}>
+                    <div style={{ fontSize: '2.5rem', marginBottom: 12 }}>
+                        {q ? '🔍' : catalogMode === 'NONE' ? '⚙️' : catalogMode === 'STANDARD' ? '📋' : '📂'}
+                    </div>
+                    <p style={{ marginBottom: 16 }}>
+                        {q
+                            ? `No se encontraron cuentas para "${q}".`
+                            : '¡Todavía no hay cuentas en el catálogo!'}
+                    </p>
+
+                    {/* Boton seed — solo si no hay busqueda activa y el rol lo permite */}
+                    {canWrite && !q && catalogMode === 'STANDARD' && (
+                        <button
+                            id="btn-cargar-catalogo-standard"
+                            onClick={handleSeed}
+                            disabled={seeding}
+                            style={{ padding: '10px 22px', background: '#7c3aed', border: 'none', borderRadius: 8, color: 'white', fontWeight: 700, cursor: seeding ? 'not-allowed' : 'pointer', fontSize: '0.9rem', marginBottom: 10 }}
+                        >
+                            {seeding ? '⏳ Cargando...' : '📋 Cargar catálogo NIIF CR estándar (~70 cuentas)'}
+                        </button>
+                    )}
+                    {canWrite && !q && catalogMode === 'NONE' && (
+                        <button
+                            id="btn-cargar-catalogo-generico"
+                            onClick={handleSeed}
+                            disabled={seeding}
+                            style={{ padding: '10px 22px', background: '#10b981', border: 'none', borderRadius: 8, color: 'white', fontWeight: 700, cursor: seeding ? 'not-allowed' : 'pointer', fontSize: '0.9rem', marginBottom: 10 }}
+                        >
+                            {seeding ? '⏳ Cargando...' : '⚙️ Cargar cuentas genéricas'}
+                        </button>
+                    )}
+                    {canWrite && !q && catalogMode === 'CUSTOM' && (
+                        <div>
+                            <button
+                                id="btn-crear-primera-cuenta"
+                                onClick={() => setShowForm(true)}
+                                style={{ padding: '10px 22px', background: '#f59e0b', border: 'none', borderRadius: 8, color: 'white', fontWeight: 700, cursor: 'pointer', fontSize: '0.9rem', marginBottom: 8 }}
+                            >
+                                📂 + Crear primera cuenta
+                            </button>
+                            <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: 4 }}>o importá un CSV desde Configuración</p>
+                        </div>
+                    )}
+                    {/* Fallback si catalogMode no está seteado */}
+                    {canWrite && !q && !catalogMode && (
+                        <button onClick={() => setShowForm(true)} style={{ padding: '8px 20px', background: '#7c3aed', border: 'none', borderRadius: 8, color: 'white', cursor: 'pointer' }}>
                             + Crear primera cuenta
                         </button>
                     )}
