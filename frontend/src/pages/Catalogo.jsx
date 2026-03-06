@@ -10,11 +10,11 @@ import { useState, useEffect, useMemo } from 'react'
 import { useApp } from '../context/AppContext'
 
 const TYPE_CONFIG = {
-    ACTIVO: { label: 'Activos (1xxx)', icon: '🏦', color: '#3b82f6' },
-    PASIVO: { label: 'Pasivos (2xxx)', icon: '📄', color: '#ef4444' },
-    PATRIMONIO: { label: 'Patrimonio (3xxx)', icon: '🏛️', color: '#8b5cf6' },
-    INGRESO: { label: 'Ingresos (4xxx)', icon: '📈', color: '#10b981' },
-    GASTO: { label: 'Gastos (5xxx)', icon: '📉', color: '#f59e0b' },
+    ACTIVO: { label: 'ACTIVOS', icon: '🏦', color: '#3b82f6' },
+    PASIVO: { label: 'PASIVOS', icon: '📄', color: '#ef4444' },
+    PATRIMONIO: { label: 'PATRIMONIO', icon: '🏛️', color: '#8b5cf6' },
+    INGRESO: { label: 'INGRESOS', icon: '📈', color: '#10b981' },
+    GASTO: { label: 'GASTOS Y COSTOS', icon: '📉', color: '#f59e0b' },
 }
 
 const TYPE_ORDER = ['ACTIVO', 'PASIVO', 'PATRIMONIO', 'INGRESO', 'GASTO']
@@ -56,6 +56,9 @@ export default function Catalogo() {
     const [toggling, setToggling] = useState(null)
     const [seeding, setSeeding] = useState(false)
     const [error, setError] = useState(null)
+    // Botón ⊕ inline
+    const [inlineForm, setInlineForm] = useState({ parentCode: null, name: '', saving: false })
+    const [hoveredRow, setHoveredRow] = useState(null)
 
     const apiUrl = import.meta.env.VITE_API_URL || ''
     const token = localStorage.getItem('gc_token')
@@ -151,6 +154,58 @@ export default function Catalogo() {
             setError(e.message)
         } finally {
             setSeeding(false)
+        }
+    }
+
+    // ─── Funciones form inline ⊕ ─────────────────────────────────────────────
+    function nextChildCode(parentCode) {
+        const prefix = parentCode + '.'
+        const children = accounts
+            .map(a => a.code)
+            .filter(c => c.startsWith(prefix) && !c.slice(prefix.length).includes('.'))
+        if (!children.length) return `${parentCode}.01`
+        const nums = children.map(c => {
+            const n = parseInt(c.slice(prefix.length), 10)
+            return isNaN(n) ? 0 : n
+        })
+        return `${parentCode}.${String(Math.max(...nums) + 1).padStart(2, '0')}`
+    }
+
+    function openInline(parentCode) {
+        setInlineForm({ parentCode, name: '', saving: false })
+    }
+
+    function closeInline() {
+        setInlineForm({ parentCode: null, name: '', saving: false })
+    }
+
+    async function handleAddChild(parentAcc) {
+        const name = inlineForm.name.trim()
+        if (name.length < 2) return
+        const suggestedCode = nextChildCode(parentAcc.code)
+        setInlineForm(f => ({ ...f, saving: true }))
+        try {
+            const res = await fetch(`${apiUrl}/catalog/accounts`, {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    code: suggestedCode,
+                    name,
+                    account_type: parentAcc.account_type,
+                    account_sub_type: parentAcc.account_sub_type || null,
+                    parent_code: parentAcc.code,
+                    allow_entries: true,
+                }),
+            })
+            if (!res.ok) {
+                const err = await res.json()
+                alert(err.detail || 'Error al crear cuenta')
+            } else {
+                closeInline()
+                await fetchAccounts()
+            }
+        } catch { alert('Error de red') } finally {
+            setInlineForm(f => ({ ...f, saving: false }))
         }
     }
 
@@ -284,87 +339,163 @@ export default function Catalogo() {
                         {expanded[type] && (
                             <div>
                                 {items.map((acc, i) => (
-                                    <div
-                                        key={acc.code}
-                                        id={`account-row-${acc.code}`}
-                                        style={{
-                                            display: 'flex',
-                                            justifyContent: 'space-between',
-                                            alignItems: 'center',
-                                            padding: `${getLevel(acc.code) === 4 ? 7 : 9}px 16px`,
-                                            paddingLeft: `${(getLevel(acc.code) - 1) * 20 + 16}px`,
-                                            background: i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.02)',
-                                            borderTop: '1px solid var(--border-color)',
-                                            opacity: acc.is_active ? 1 : 0.45,
-                                            borderLeft: getLevel(acc.code) >= 4
-                                                ? `2px solid ${cfg.color}40`
-                                                : getLevel(acc.code) === 3
-                                                    ? `2px solid ${cfg.color}22`
-                                                    : 'none',
-                                        }}
-                                    >
-                                        {/* Código punteado + nombre */}
-                                        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                                            {/* Código en notación académica */}
-                                            <span style={{
-                                                fontFamily: 'monospace',
-                                                fontSize: getLevel(acc.code) <= 2 ? '0.88rem' : '0.78rem',
-                                                color: getLevel(acc.code) <= 2 ? cfg.color : cfg.color + 'bb',
-                                                fontWeight: getLevel(acc.code) <= 2 ? 700 : 500,
-                                                minWidth: getLevel(acc.code) >= 4 ? 90 : 70,
-                                                letterSpacing: '-0.01em',
-                                            }}>
-                                                {getDisplayCode(acc.code)}
-                                            </span>
-                                            {/* Nombre */}
-                                            <span style={{
-                                                fontSize: getLevel(acc.code) <= 1 ? '0.95rem'
-                                                    : getLevel(acc.code) === 2 ? '0.88rem'
-                                                        : getLevel(acc.code) === 3 ? '0.85rem' : '0.8rem',
-                                                fontWeight: getLevel(acc.code) <= 2 ? 600 : 400,
-                                                color: getLevel(acc.code) <= 2 ? 'var(--text-primary)' : 'var(--text-secondary)',
-                                            }}>
-                                                {acc.name}
-                                            </span>
-                                            {!acc.allow_entries && (
-                                                <span style={{ fontSize: '0.7rem', padding: '1px 7px', background: 'rgba(156,163,175,0.2)', borderRadius: 10, color: 'var(--text-muted)' }}>
-                                                    grupo
+                                    <div key={acc.code} style={{ borderTop: '1px solid var(--border-color)' }}>
+                                        {/* Fila principal */}
+                                        <div
+                                            id={`account-row-${acc.code}`}
+                                            onMouseEnter={() => setHoveredRow(acc.code)}
+                                            onMouseLeave={() => setHoveredRow(null)}
+                                            style={{
+                                                display: 'flex',
+                                                justifyContent: 'space-between',
+                                                alignItems: 'center',
+                                                padding: `${getLevel(acc.code) >= 4 ? 7 : 9}px 16px`,
+                                                paddingLeft: `${(getLevel(acc.code) - 1) * 20 + 16}px`,
+                                                background: hoveredRow === acc.code ? 'rgba(255,255,255,0.03)' : i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.02)',
+                                                opacity: acc.is_active ? 1 : 0.45,
+                                                borderLeft: getLevel(acc.code) >= 4
+                                                    ? `2px solid ${cfg.color}40`
+                                                    : getLevel(acc.code) === 3
+                                                        ? `2px solid ${cfg.color}22`
+                                                        : 'none',
+                                                transition: 'background 0.15s',
+                                            }}
+                                        >
+                                            {/* Código punteado + nombre */}
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1, minWidth: 0 }}>
+                                                <span style={{
+                                                    fontFamily: 'monospace',
+                                                    fontSize: getLevel(acc.code) <= 2 ? '0.88rem' : '0.78rem',
+                                                    color: getLevel(acc.code) <= 2 ? cfg.color : cfg.color + 'bb',
+                                                    fontWeight: getLevel(acc.code) <= 2 ? 700 : 500,
+                                                    minWidth: getLevel(acc.code) >= 4 ? 90 : 70,
+                                                    flexShrink: 0,
+                                                }}>
+                                                    {getDisplayCode(acc.code)}
                                                 </span>
-                                            )}
-                                            {acc.is_generic && (
-                                                <span style={{ fontSize: '0.7rem', padding: '1px 7px', background: 'rgba(124,58,237,0.2)', borderRadius: 10, color: '#7c3aed' }}>
-                                                    genérica
+                                                <span style={{
+                                                    fontSize: getLevel(acc.code) <= 1 ? '0.95rem'
+                                                        : getLevel(acc.code) === 2 ? '0.88rem'
+                                                            : getLevel(acc.code) === 3 ? '0.85rem' : '0.8rem',
+                                                    fontWeight: getLevel(acc.code) <= 2 ? 600 : 400,
+                                                    color: getLevel(acc.code) <= 2 ? 'var(--text-primary)' : 'var(--text-secondary)',
+                                                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                                                }}>
+                                                    {acc.name}
                                                 </span>
-                                            )}
-                                            {!acc.is_active && (
-                                                <span style={{ fontSize: '0.7rem', padding: '1px 7px', background: 'rgba(239,68,68,0.15)', borderRadius: 10, color: '#ef4444' }}>
-                                                    inactiva
-                                                </span>
+                                                {!acc.allow_entries && (
+                                                    <span style={{ fontSize: '0.7rem', padding: '1px 7px', background: 'rgba(156,163,175,0.15)', borderRadius: 10, color: 'var(--text-muted)', flexShrink: 0 }}>grupo</span>
+                                                )}
+                                                {acc.is_generic && (
+                                                    <span style={{ fontSize: '0.7rem', padding: '1px 7px', background: 'rgba(124,58,237,0.15)', borderRadius: 10, color: '#7c3aed', flexShrink: 0 }}>genérica</span>
+                                                )}
+                                                {!acc.is_active && (
+                                                    <span style={{ fontSize: '0.7rem', padding: '1px 7px', background: 'rgba(239,68,68,0.15)', borderRadius: 10, color: '#ef4444', flexShrink: 0 }}>inactiva</span>
+                                                )}
+                                            </div>
+
+                                            {/* Acciones */}
+                                            {canWrite && !acc.is_generic && (
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+                                                    {/* ⊕ Agregar sub-cuenta — solo en cuentas grupo, visible al hover */}
+                                                    {!acc.allow_entries && acc.is_active && (
+                                                        <button
+                                                            id={`add-child-${acc.code}`}
+                                                            title="Agregar subcuenta"
+                                                            onClick={() => inlineForm.parentCode === acc.code ? closeInline() : openInline(acc.code)}
+                                                            style={{
+                                                                width: 26, height: 26,
+                                                                borderRadius: '50%',
+                                                                border: `1px solid ${inlineForm.parentCode === acc.code ? cfg.color : cfg.color + '60'}`,
+                                                                background: inlineForm.parentCode === acc.code ? cfg.color + '25' : 'transparent',
+                                                                color: inlineForm.parentCode === acc.code ? cfg.color : cfg.color + '80',
+                                                                cursor: 'pointer',
+                                                                fontSize: '1rem',
+                                                                lineHeight: 1,
+                                                                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                                                opacity: hoveredRow === acc.code || inlineForm.parentCode === acc.code ? 1 : 0,
+                                                                transition: 'opacity 0.2s, background 0.15s, color 0.15s',
+                                                                padding: 0,
+                                                            }}
+                                                        >⊕</button>
+                                                    )}
+                                                    {/* Desactivar / Reactivar */}
+                                                    <button
+                                                        id={`toggle-${acc.code}`}
+                                                        onClick={() => handleToggle(acc.code, acc.is_active)}
+                                                        disabled={toggling === acc.code}
+                                                        style={{
+                                                            padding: '4px 10px',
+                                                            fontSize: '0.75rem',
+                                                            background: acc.is_active ? 'rgba(239,68,68,0.1)' : 'rgba(16,185,129,0.1)',
+                                                            color: acc.is_active ? '#ef4444' : '#10b981',
+                                                            border: `1px solid ${acc.is_active ? 'rgba(239,68,68,0.3)' : 'rgba(16,185,129,0.3)'}`,
+                                                            borderRadius: 6, cursor: 'pointer', whiteSpace: 'nowrap',
+                                                        }}
+                                                    >
+                                                        {toggling === acc.code ? '...' : acc.is_active ? 'Desactivar' : 'Reactivar'}
+                                                    </button>
+                                                </div>
                                             )}
                                         </div>
 
-                                        {/* Acciones — solo admin/contador */}
-                                        {canWrite && !acc.is_generic && (
-                                            <button
-                                                id={`toggle-${acc.code}`}
-                                                onClick={() => handleToggle(acc.code, acc.is_active)}
-                                                disabled={toggling === acc.code}
-                                                style={{
-                                                    padding: '4px 10px',
-                                                    fontSize: '0.75rem',
-                                                    background: acc.is_active ? 'rgba(239,68,68,0.1)' : 'rgba(16,185,129,0.1)',
-                                                    color: acc.is_active ? '#ef4444' : '#10b981',
-                                                    border: `1px solid ${acc.is_active ? 'rgba(239,68,68,0.3)' : 'rgba(16,185,129,0.3)'}`,
-                                                    borderRadius: 6,
-                                                    cursor: 'pointer',
-                                                    whiteSpace: 'nowrap'
-                                                }}
-                                            >
-                                                {toggling === acc.code ? '...' : acc.is_active ? 'Desactivar' : 'Reactivar'}
-                                            </button>
+                                        {/* Formulario inline ⊕ — se expande bajo la cuenta padre */}
+                                        {canWrite && inlineForm.parentCode === acc.code && (
+                                            <div style={{
+                                                display: 'flex', alignItems: 'center', gap: 8,
+                                                padding: '8px 16px',
+                                                paddingLeft: `${(getLevel(acc.code)) * 20 + 16}px`,
+                                                background: `${cfg.color}08`,
+                                                borderLeft: `2px solid ${cfg.color}`,
+                                                borderTop: `1px dashed ${cfg.color}40`,
+                                                flexWrap: 'wrap',
+                                            }}>
+                                                <span style={{ fontSize: '0.72rem', color: cfg.color, fontWeight: 600, flexShrink: 0 }}>
+                                                    ↳ {getDisplayCode(nextChildCode(acc.code))}
+                                                </span>
+                                                <input
+                                                    id={`inline-name-${acc.code}`}
+                                                    autoFocus
+                                                    placeholder="Nombre de la cuenta..."
+                                                    value={inlineForm.name}
+                                                    onChange={e => setInlineForm(f => ({ ...f, name: e.target.value }))}
+                                                    onKeyDown={e => { if (e.key === 'Enter') handleAddChild(acc); if (e.key === 'Escape') closeInline() }}
+                                                    style={{
+                                                        flex: 1, minWidth: 160,
+                                                        padding: '5px 9px',
+                                                        fontSize: '0.82rem',
+                                                        border: `1px solid ${cfg.color}50`,
+                                                        borderRadius: 6,
+                                                        background: 'var(--bg-card)',
+                                                        color: 'var(--text-primary)',
+                                                        outline: 'none',
+                                                    }}
+                                                />
+                                                <button
+                                                    id={`inline-save-${acc.code}`}
+                                                    onClick={() => handleAddChild(acc)}
+                                                    disabled={inlineForm.name.trim().length < 2 || inlineForm.saving}
+                                                    style={{
+                                                        padding: '5px 12px', fontSize: '0.78rem', flexShrink: 0,
+                                                        background: cfg.color, color: '#fff',
+                                                        border: 'none', borderRadius: 6, cursor: 'pointer',
+                                                        opacity: inlineForm.name.trim().length < 2 ? 0.45 : 1,
+                                                    }}
+                                                >
+                                                    {inlineForm.saving ? '...' : '💾 Guardar'}
+                                                </button>
+                                                <button
+                                                    onClick={closeInline}
+                                                    style={{
+                                                        padding: '5px 8px', fontSize: '0.78rem', flexShrink: 0,
+                                                        background: 'transparent', color: 'var(--text-muted)',
+                                                        border: '1px solid var(--border-color)', borderRadius: 6, cursor: 'pointer',
+                                                    }}
+                                                >✕</button>
+                                            </div>
                                         )}
                                     </div>
-                                ))}
+                                ))
                             </div>
                         )}
                     </div>
