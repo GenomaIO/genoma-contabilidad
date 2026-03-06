@@ -45,7 +45,7 @@
     "type": "ACTIVO",
     "sub_type": "CIRCULANTE",
     "parent_code": "1100",
-    "allow_entries": true
+    "allow_entries": false
   },
   {
     "code": "1105",
@@ -69,7 +69,7 @@
     "type": "ACTIVO",
     "sub_type": "CIRCULANTE",
     "parent_code": "1100",
-    "allow_entries": true
+    "allow_entries": false
   },
   {
     "code": "1200",
@@ -269,7 +269,7 @@
     "type": "ACTIVO",
     "sub_type": "NO_CIRCULANTE",
     "parent_code": "1200",
-    "allow_entries": true
+    "allow_entries": false
   },
   {
     "code": "2000",
@@ -301,7 +301,7 @@
     "type": "PASIVO",
     "sub_type": "CIRCULANTE",
     "parent_code": "2100",
-    "allow_entries": true
+    "allow_entries": false
   },
   {
     "code": "2103",
@@ -325,7 +325,7 @@
     "type": "PASIVO",
     "sub_type": "CIRCULANTE",
     "parent_code": "2100",
-    "allow_entries": true
+    "allow_entries": false
   },
   {
     "code": "2106",
@@ -341,7 +341,7 @@
     "type": "PASIVO",
     "sub_type": "CIRCULANTE",
     "parent_code": "2100",
-    "allow_entries": true
+    "allow_entries": false
   },
   {
     "code": "2108",
@@ -349,7 +349,7 @@
     "type": "PASIVO",
     "sub_type": "CIRCULANTE",
     "parent_code": "2100",
-    "allow_entries": true
+    "allow_entries": false
   },
   {
     "code": "2200",
@@ -397,7 +397,7 @@
     "type": "PATRIMONIO",
     "sub_type": null,
     "parent_code": "3100",
-    "allow_entries": true
+    "allow_entries": false
   },
   {
     "code": "3102",
@@ -405,7 +405,7 @@
     "type": "PATRIMONIO",
     "sub_type": null,
     "parent_code": "3100",
-    "allow_entries": true
+    "allow_entries": false
   },
   {
     "code": "3200",
@@ -421,7 +421,7 @@
     "type": "PATRIMONIO",
     "sub_type": null,
     "parent_code": "3200",
-    "allow_entries": true
+    "allow_entries": false
   },
   {
     "code": "3202",
@@ -429,7 +429,7 @@
     "type": "PATRIMONIO",
     "sub_type": null,
     "parent_code": "3200",
-    "allow_entries": true
+    "allow_entries": false
   },
   {
     "code": "3300",
@@ -445,7 +445,7 @@
     "type": "PATRIMONIO",
     "sub_type": null,
     "parent_code": "3300",
-    "allow_entries": true
+    "allow_entries": false
   },
   {
     "code": "3302",
@@ -453,7 +453,7 @@
     "type": "PATRIMONIO",
     "sub_type": null,
     "parent_code": "3300",
-    "allow_entries": true
+    "allow_entries": false
   },
   {
     "code": "3303",
@@ -461,7 +461,7 @@
     "type": "PATRIMONIO",
     "sub_type": null,
     "parent_code": "3300",
-    "allow_entries": true
+    "allow_entries": false
   },
   {
     "code": "4000",
@@ -501,7 +501,7 @@
     "type": "INGRESO",
     "sub_type": null,
     "parent_code": "4100",
-    "allow_entries": true
+    "allow_entries": false
   },
   {
     "code": "4104",
@@ -509,7 +509,7 @@
     "type": "INGRESO",
     "sub_type": null,
     "parent_code": "4100",
-    "allow_entries": true
+    "allow_entries": false
   },
   {
     "code": "4200",
@@ -533,7 +533,7 @@
     "type": "INGRESO",
     "sub_type": null,
     "parent_code": "4200",
-    "allow_entries": true
+    "allow_entries": false
   },
   {
     "code": "4203",
@@ -541,7 +541,7 @@
     "type": "INGRESO",
     "sub_type": null,
     "parent_code": "4200",
-    "allow_entries": true
+    "allow_entries": false
   },
   {
     "code": "5000",
@@ -565,7 +565,7 @@
     "type": "GASTO",
     "sub_type": null,
     "parent_code": "5100",
-    "allow_entries": true
+    "allow_entries": false
   },
   {
     "code": "5102",
@@ -573,7 +573,7 @@
     "type": "GASTO",
     "sub_type": null,
     "parent_code": "5100",
-    "allow_entries": true
+    "allow_entries": false
   },
   {
     "code": "5200",
@@ -621,7 +621,7 @@
     "type": "GASTO",
     "sub_type": null,
     "parent_code": "5200",
-    "allow_entries": true
+    "allow_entries": false
   },
   {
     "code": "5206",
@@ -749,7 +749,7 @@
     "type": "GASTO",
     "sub_type": null,
     "parent_code": "5200",
-    "allow_entries": true
+    "allow_entries": false
   },
   {
     "code": "5214",
@@ -757,7 +757,7 @@
     "type": "GASTO",
     "sub_type": null,
     "parent_code": "5200",
-    "allow_entries": true
+    "allow_entries": false
   },
   {
     "code": "5300",
@@ -773,7 +773,7 @@
     "type": "GASTO",
     "sub_type": null,
     "parent_code": "5300",
-    "allow_entries": true
+    "allow_entries": false
   },
   {
     "code": "5302",
@@ -781,7 +781,7 @@
     "type": "GASTO",
     "sub_type": null,
     "parent_code": "5300",
-    "allow_entries": true
+    "allow_entries": false
   },
   {
     "code": "5303",
@@ -789,7 +789,7 @@
     "type": "GASTO",
     "sub_type": null,
     "parent_code": "5300",
-    "allow_entries": true
+    "allow_entries": false
   },
   {
     "code": "5400",
@@ -805,7 +805,7 @@
     "type": "GASTO",
     "sub_type": null,
     "parent_code": "5400",
-    "allow_entries": true
+    "allow_entries": false
   },
   {
     "code": "5402",
@@ -813,7 +813,7 @@
     "type": "GASTO",
     "sub_type": null,
     "parent_code": "5400",
-    "allow_entries": true
+    "allow_entries": false
   },
   {
     "code": "1101.01",
@@ -1509,6 +1509,526 @@
     "type": "GASTO",
     "sub_type": null,
     "parent_code": "5212",
+    "allow_entries": true
+  },
+  {
+    "code": "1104.01",
+    "name": "IVA Acreditable por Compras de Bienes",
+    "type": "ACTIVO",
+    "sub_type": null,
+    "parent_code": "1104",
+    "allow_entries": true
+  },
+  {
+    "code": "1104.02",
+    "name": "IVA Acreditable por Compras de Servicios",
+    "type": "ACTIVO",
+    "sub_type": null,
+    "parent_code": "1104",
+    "allow_entries": true
+  },
+  {
+    "code": "1104.03",
+    "name": "IVA Acreditable por Importaciones",
+    "type": "ACTIVO",
+    "sub_type": null,
+    "parent_code": "1104",
+    "allow_entries": true
+  },
+  {
+    "code": "1107.01",
+    "name": "Documentos por Cobrar Clientes CP",
+    "type": "ACTIVO",
+    "sub_type": null,
+    "parent_code": "1107",
+    "allow_entries": true
+  },
+  {
+    "code": "1107.02",
+    "name": "Efectos por Cobrar Varios CP",
+    "type": "ACTIVO",
+    "sub_type": null,
+    "parent_code": "1107",
+    "allow_entries": true
+  },
+  {
+    "code": "1205.01",
+    "name": "Documentos por Cobrar Clientes LP",
+    "type": "ACTIVO",
+    "sub_type": null,
+    "parent_code": "1205",
+    "allow_entries": true
+  },
+  {
+    "code": "1205.02",
+    "name": "Efectos por Cobrar Varios LP",
+    "type": "ACTIVO",
+    "sub_type": null,
+    "parent_code": "1205",
+    "allow_entries": true
+  },
+  {
+    "code": "2102.01",
+    "name": "IVA Débito Fiscal por Ventas 13%",
+    "type": "PASIVO",
+    "sub_type": null,
+    "parent_code": "2102",
+    "allow_entries": true
+  },
+  {
+    "code": "2102.02",
+    "name": "IVA Débito Fiscal Condición de Venta",
+    "type": "PASIVO",
+    "sub_type": null,
+    "parent_code": "2102",
+    "allow_entries": true
+  },
+  {
+    "code": "2102.03",
+    "name": "IVA Débito Servicios",
+    "type": "PASIVO",
+    "sub_type": null,
+    "parent_code": "2102",
+    "allow_entries": true
+  },
+  {
+    "code": "2105.01",
+    "name": "Préstamos Bancarios Corto Plazo Colones",
+    "type": "PASIVO",
+    "sub_type": null,
+    "parent_code": "2105",
+    "allow_entries": true
+  },
+  {
+    "code": "2105.02",
+    "name": "Préstamos Bancarios Corto Plazo Dólares",
+    "type": "PASIVO",
+    "sub_type": null,
+    "parent_code": "2105",
+    "allow_entries": true
+  },
+  {
+    "code": "2107.01",
+    "name": "Dividendos por Pagar Ordinarios",
+    "type": "PASIVO",
+    "sub_type": null,
+    "parent_code": "2107",
+    "allow_entries": true
+  },
+  {
+    "code": "2107.02",
+    "name": "Dividendos por Pagar Preferentes",
+    "type": "PASIVO",
+    "sub_type": null,
+    "parent_code": "2107",
+    "allow_entries": true
+  },
+  {
+    "code": "2108.01",
+    "name": "IVA Diferido FE Condición de Venta",
+    "type": "PASIVO",
+    "sub_type": null,
+    "parent_code": "2108",
+    "allow_entries": true
+  },
+  {
+    "code": "2108.02",
+    "name": "IVA Diferido TE Condición de Venta",
+    "type": "PASIVO",
+    "sub_type": null,
+    "parent_code": "2108",
+    "allow_entries": true
+  },
+  {
+    "code": "3101.01",
+    "name": "Capital Ordinario",
+    "type": "PATRIMONIO",
+    "sub_type": null,
+    "parent_code": "3101",
+    "allow_entries": true
+  },
+  {
+    "code": "3101.02",
+    "name": "Capital Preferente",
+    "type": "PATRIMONIO",
+    "sub_type": null,
+    "parent_code": "3101",
+    "allow_entries": true
+  },
+  {
+    "code": "3101.03",
+    "name": "Aportes Pendientes de Formalizar",
+    "type": "PATRIMONIO",
+    "sub_type": null,
+    "parent_code": "3101",
+    "allow_entries": true
+  },
+  {
+    "code": "3102.01",
+    "name": "Prima en Emisión de Acciones",
+    "type": "PATRIMONIO",
+    "sub_type": null,
+    "parent_code": "3102",
+    "allow_entries": true
+  },
+  {
+    "code": "3102.02",
+    "name": "Aportes Adicionales de Socios",
+    "type": "PATRIMONIO",
+    "sub_type": null,
+    "parent_code": "3102",
+    "allow_entries": true
+  },
+  {
+    "code": "3201.01",
+    "name": "Reserva Legal 5% Utilidades",
+    "type": "PATRIMONIO",
+    "sub_type": null,
+    "parent_code": "3201",
+    "allow_entries": true
+  },
+  {
+    "code": "3202.01",
+    "name": "Reservas Voluntarias Acordadas",
+    "type": "PATRIMONIO",
+    "sub_type": null,
+    "parent_code": "3202",
+    "allow_entries": true
+  },
+  {
+    "code": "3202.02",
+    "name": "Reservas para Contingencias",
+    "type": "PATRIMONIO",
+    "sub_type": null,
+    "parent_code": "3202",
+    "allow_entries": true
+  },
+  {
+    "code": "3301.01",
+    "name": "Utilidades de Ejercicios Anteriores",
+    "type": "PATRIMONIO",
+    "sub_type": null,
+    "parent_code": "3301",
+    "allow_entries": true
+  },
+  {
+    "code": "3301.02",
+    "name": "Utilidades del Ejercicio Distribuidas",
+    "type": "PATRIMONIO",
+    "sub_type": null,
+    "parent_code": "3301",
+    "allow_entries": true
+  },
+  {
+    "code": "3302.01",
+    "name": "Pérdidas de Ejercicios Anteriores",
+    "type": "PATRIMONIO",
+    "sub_type": null,
+    "parent_code": "3302",
+    "allow_entries": true
+  },
+  {
+    "code": "3302.02",
+    "name": "Pérdidas del Ejercicio en Curso",
+    "type": "PATRIMONIO",
+    "sub_type": null,
+    "parent_code": "3302",
+    "allow_entries": true
+  },
+  {
+    "code": "3303.01",
+    "name": "Resultado Neto del Período",
+    "type": "PATRIMONIO",
+    "sub_type": null,
+    "parent_code": "3303",
+    "allow_entries": true
+  },
+  {
+    "code": "4103.01",
+    "name": "Ventas Exentas Canasta Básica",
+    "type": "INGRESO",
+    "sub_type": null,
+    "parent_code": "4103",
+    "allow_entries": true
+  },
+  {
+    "code": "4103.02",
+    "name": "Ventas Exentas Medicamentos",
+    "type": "INGRESO",
+    "sub_type": null,
+    "parent_code": "4103",
+    "allow_entries": true
+  },
+  {
+    "code": "4103.03",
+    "name": "Ventas Exentas Exportaciones",
+    "type": "INGRESO",
+    "sub_type": null,
+    "parent_code": "4103",
+    "allow_entries": true
+  },
+  {
+    "code": "4104.01",
+    "name": "Descuentos por Pronto Pago",
+    "type": "INGRESO",
+    "sub_type": null,
+    "parent_code": "4104",
+    "allow_entries": true
+  },
+  {
+    "code": "4104.02",
+    "name": "Descuentos Comerciales",
+    "type": "INGRESO",
+    "sub_type": null,
+    "parent_code": "4104",
+    "allow_entries": true
+  },
+  {
+    "code": "4202.01",
+    "name": "Ganancia Cambiaria Realizada",
+    "type": "INGRESO",
+    "sub_type": null,
+    "parent_code": "4202",
+    "allow_entries": true
+  },
+  {
+    "code": "4202.02",
+    "name": "Ganancia Cambiaria No Realizada",
+    "type": "INGRESO",
+    "sub_type": null,
+    "parent_code": "4202",
+    "allow_entries": true
+  },
+  {
+    "code": "4203.01",
+    "name": "Alquileres Percibidos",
+    "type": "INGRESO",
+    "sub_type": null,
+    "parent_code": "4203",
+    "allow_entries": true
+  },
+  {
+    "code": "4203.02",
+    "name": "Comisiones Percibidas",
+    "type": "INGRESO",
+    "sub_type": null,
+    "parent_code": "4203",
+    "allow_entries": true
+  },
+  {
+    "code": "4203.03",
+    "name": "Otros Ingresos Varios",
+    "type": "INGRESO",
+    "sub_type": null,
+    "parent_code": "4203",
+    "allow_entries": true
+  },
+  {
+    "code": "5101.01",
+    "name": "Costo de Mercadería Vendida Local",
+    "type": "GASTO",
+    "sub_type": null,
+    "parent_code": "5101",
+    "allow_entries": true
+  },
+  {
+    "code": "5101.02",
+    "name": "Costo de Mercadería Importada",
+    "type": "GASTO",
+    "sub_type": null,
+    "parent_code": "5101",
+    "allow_entries": true
+  },
+  {
+    "code": "5101.03",
+    "name": "Ajustes de Inventario",
+    "type": "GASTO",
+    "sub_type": null,
+    "parent_code": "5101",
+    "allow_entries": true
+  },
+  {
+    "code": "5102.01",
+    "name": "Costo de Servicios Profesionales Externos",
+    "type": "GASTO",
+    "sub_type": null,
+    "parent_code": "5102",
+    "allow_entries": true
+  },
+  {
+    "code": "5102.02",
+    "name": "Costo de Mano de Obra Directa",
+    "type": "GASTO",
+    "sub_type": null,
+    "parent_code": "5102",
+    "allow_entries": true
+  },
+  {
+    "code": "5102.03",
+    "name": "Costos Indirectos de Servicios",
+    "type": "GASTO",
+    "sub_type": null,
+    "parent_code": "5102",
+    "allow_entries": true
+  },
+  {
+    "code": "5205.01",
+    "name": "Combustibles Vehículos",
+    "type": "GASTO",
+    "sub_type": null,
+    "parent_code": "5205",
+    "allow_entries": true
+  },
+  {
+    "code": "5205.02",
+    "name": "Lubricantes y Mantenimiento",
+    "type": "GASTO",
+    "sub_type": null,
+    "parent_code": "5205",
+    "allow_entries": true
+  },
+  {
+    "code": "5205.03",
+    "name": "Combustibles Planta",
+    "type": "GASTO",
+    "sub_type": null,
+    "parent_code": "5205",
+    "allow_entries": true
+  },
+  {
+    "code": "5213.01",
+    "name": "Materiales de Oficina",
+    "type": "GASTO",
+    "sub_type": null,
+    "parent_code": "5213",
+    "allow_entries": true
+  },
+  {
+    "code": "5213.02",
+    "name": "Materiales de Limpieza",
+    "type": "GASTO",
+    "sub_type": null,
+    "parent_code": "5213",
+    "allow_entries": true
+  },
+  {
+    "code": "5213.03",
+    "name": "Suministros de Cómputo",
+    "type": "GASTO",
+    "sub_type": null,
+    "parent_code": "5213",
+    "allow_entries": true
+  },
+  {
+    "code": "5214.01",
+    "name": "Servicios Cloud y Hosting",
+    "type": "GASTO",
+    "sub_type": null,
+    "parent_code": "5214",
+    "allow_entries": true
+  },
+  {
+    "code": "5214.02",
+    "name": "Licencias de Software",
+    "type": "GASTO",
+    "sub_type": null,
+    "parent_code": "5214",
+    "allow_entries": true
+  },
+  {
+    "code": "5214.03",
+    "name": "Soporte Técnico Externo",
+    "type": "GASTO",
+    "sub_type": null,
+    "parent_code": "5214",
+    "allow_entries": true
+  },
+  {
+    "code": "5301.01",
+    "name": "Intereses Préstamos Bancarios",
+    "type": "GASTO",
+    "sub_type": null,
+    "parent_code": "5301",
+    "allow_entries": true
+  },
+  {
+    "code": "5301.02",
+    "name": "Intereses Tarjetas Empresariales",
+    "type": "GASTO",
+    "sub_type": null,
+    "parent_code": "5301",
+    "allow_entries": true
+  },
+  {
+    "code": "5301.03",
+    "name": "Intereses Sobregiros Bancarios",
+    "type": "GASTO",
+    "sub_type": null,
+    "parent_code": "5301",
+    "allow_entries": true
+  },
+  {
+    "code": "5302.01",
+    "name": "Comisiones por Transferencias",
+    "type": "GASTO",
+    "sub_type": null,
+    "parent_code": "5302",
+    "allow_entries": true
+  },
+  {
+    "code": "5302.02",
+    "name": "Comisiones Tarjetas Bancarias",
+    "type": "GASTO",
+    "sub_type": null,
+    "parent_code": "5302",
+    "allow_entries": true
+  },
+  {
+    "code": "5302.03",
+    "name": "Mantenimiento Cuentas Bancarias",
+    "type": "GASTO",
+    "sub_type": null,
+    "parent_code": "5302",
+    "allow_entries": true
+  },
+  {
+    "code": "5303.01",
+    "name": "Pérdida Cambiaria Realizada",
+    "type": "GASTO",
+    "sub_type": null,
+    "parent_code": "5303",
+    "allow_entries": true
+  },
+  {
+    "code": "5303.02",
+    "name": "Pérdida Cambiaria No Realizada",
+    "type": "GASTO",
+    "sub_type": null,
+    "parent_code": "5303",
+    "allow_entries": true
+  },
+  {
+    "code": "5401.01",
+    "name": "ISR Corriente del Período",
+    "type": "GASTO",
+    "sub_type": null,
+    "parent_code": "5401",
+    "allow_entries": true
+  },
+  {
+    "code": "5402.01",
+    "name": "ISR Diferido Activo",
+    "type": "GASTO",
+    "sub_type": null,
+    "parent_code": "5402",
+    "allow_entries": true
+  },
+  {
+    "code": "5402.02",
+    "name": "ISR Diferido Pasivo",
+    "type": "GASTO",
+    "sub_type": null,
+    "parent_code": "5402",
     "allow_entries": true
   }
 ]
