@@ -50,6 +50,7 @@ class EntrySource(str, enum.Enum):
     """
     Origen del asiento — trazabilidad para auditoría Hacienda.
     """
+    APERTURA = "APERTURA"  # Asiento de apertura de ejercicio — fuente especial, POSTED directo
     MANUAL   = "MANUAL"    # Ingresado a mano por el contador/asistente
     FE       = "FE"        # Factura Electrónica (tipo 01)
     TE       = "TE"        # Tiquete Electrónico (tipo 04)

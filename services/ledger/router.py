@@ -670,3 +670,224 @@ def close_period(
         "message":         "Asiento de cierre creado en DRAFT. El contador debe aprobarlo.",
         "next_action":     f"PATCH /ledger/entries/{entry_id}/approve",
     }
+
+
+# ─────────────────────────────────────────────────────────────────
+# GET /ledger/opening-entry — Consultar apertura del ejercicio
+# ─────────────────────────────────────────────────────────────────
+
+@router.get("/opening-entry")
+def get_opening_entry(
+    year:         Optional[str] = Query(None, description="Año fiscal YYYY (default: año actual)"),
+    current_user: dict    = Depends(get_current_user),
+    db:           Session = Depends(get_session),
+):
+    """
+    Retorna el asiento de apertura POSTED del año indicado (o del año actual).
+    Si no existe → {'exists': False}.
+    """
+    _require_role(current_user["role"], ["admin", "contador", "asistente"])
+    tenant_id = current_user["tenant_id"]
+    fiscal_year = year or str(datetime.now(timezone.utc).year)
+
+    entry = (
+        db.query(JournalEntry)
+        .filter(
+            JournalEntry.tenant_id == tenant_id,
+            JournalEntry.source    == EntrySource.APERTURA,
+            JournalEntry.period.like(f"{fiscal_year}%"),
+        )
+        .order_by(JournalEntry.created_at.asc())
+        .first()
+    )
+
+    if not entry:
+        return {"exists": False, "year": fiscal_year}
+
+    return {
+        "exists":      True,
+        "year":        fiscal_year,
+        "entry_id":    entry.id,
+        "date":        entry.date,
+        "description": entry.description,
+        "status":      entry.status.value,
+        "created_by":  entry.created_by,
+        "approved_at": str(entry.approved_at) if entry.approved_at else None,
+        "lines": [
+            {
+                "account_code": l.account_code,
+                "description":  l.description,
+                "debit":        float(l.debit),
+                "credit":       float(l.credit),
+            }
+            for l in entry.lines
+        ],
+    }
+
+
+# ─────────────────────────────────────────────────────────────────
+# POST /ledger/opening-entry — Crear asiento de apertura
+# ─────────────────────────────────────────────────────────────────
+
+# Tipos de cuenta permitidos en un asiento de apertura (NIIF)
+_BALANCE_TYPES = {"ACTIVO", "PASIVO", "PATRIMONIO"}
+
+
+class OpeningLineIn(BaseModel):
+    account_code: str
+    description:  Optional[str] = None
+    debit:        float = 0.0
+    credit:       float = 0.0
+
+
+class OpeningEntryCreate(BaseModel):
+    date:        str             # 'YYYY-MM-DD' — primer día del ejercicio
+    description: str = "Asiento de Apertura de Ejercicio"
+    lines:       List[OpeningLineIn]
+
+
+@router.post("/opening-entry", status_code=201)
+def create_opening_entry(
+    req:          OpeningEntryCreate,
+    current_user: dict    = Depends(get_current_user),
+    db:           Session = Depends(get_session),
+):
+    """
+    Crea el asiento de apertura del ejercicio fiscal.
+
+    Reglas NIIF / principio contable:
+    1. Solo cuentas de Balance (ACTIVO, PASIVO, PATRIMONIO) — nunca INGRESO/GASTO
+    2. Partida doble perfecta (Débito = Crédito)
+    3. ÚNICO por año fiscal y tenant — no pueden existir dos aperturas del mismo año
+    4. Se aprueba (POSTED) directamente — no pasa por DRAFT
+    5. Solo contador o admin puede crear la apertura
+    """
+    _require_role(current_user["role"], ["admin", "contador"])
+    tenant_id = current_user["tenant_id"]
+
+    if not req.lines or len(req.lines) < 2:
+        raise HTTPException(400, "El asiento de apertura debe tener al menos 2 líneas.")
+
+    # Extraer año del campo date
+    try:
+        fiscal_year = req.date[:4]
+        int(fiscal_year)
+    except (ValueError, IndexError):
+        raise HTTPException(400, f"Fecha inválida: '{req.date}'. Use formato YYYY-MM-DD.")
+
+    # ── Guard 1: unicidad — no puede existir otra apertura del mismo año ──
+    existing = (
+        db.query(JournalEntry)
+        .filter(
+            JournalEntry.tenant_id == tenant_id,
+            JournalEntry.source    == EntrySource.APERTURA,
+            JournalEntry.period.like(f"{fiscal_year}%"),
+        )
+        .first()
+    )
+    if existing:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Ya existe un asiento de apertura para el año {fiscal_year} "
+                f"(ID: {existing.id}). Solo se permite una apertura por ejercicio fiscal."
+            )
+        )
+
+    # ── Guard 2: validar que las cuentas existen y son de balance ──
+    account_codes = [l.account_code for l in req.lines]
+    rows = db.execute(
+        text("SELECT code, account_type FROM accounts WHERE tenant_id = :tid AND code IN :codes"),
+        {"tid": tenant_id, "codes": tuple(account_codes)}
+    ).fetchall()
+    catalog_map = {r[0]: r[1] for r in rows}
+
+    errors = []
+    for l in req.lines:
+        if l.account_code not in catalog_map:
+            errors.append(f"Cuenta '{l.account_code}' no existe en el catálogo.")
+            continue
+        acc_type = catalog_map[l.account_code]
+        if acc_type not in _BALANCE_TYPES:
+            errors.append(
+                f"Cuenta '{l.account_code}' es de tipo {acc_type}. "
+                f"Solo ACTIVO, PASIVO y PATRIMONIO pueden incluirse en el asiento de apertura (NIIF)."
+            )
+        if l.debit <= 0 and l.credit <= 0:
+            errors.append(f"Cuenta '{l.account_code}' no tiene saldo (débito y crédito son 0).")
+        if l.debit > 0 and l.credit > 0:
+            errors.append(f"Cuenta '{l.account_code}' tiene débito Y crédito. Use una sola columna por línea.")
+
+    if errors:
+        raise HTTPException(status_code=422, detail={"errors": errors})
+
+    # ── Guard 3: partida doble ──
+    total_dr = sum(round(float(l.debit),  5) for l in req.lines)
+    total_cr = sum(round(float(l.credit), 5) for l in req.lines)
+    if abs(total_dr - total_cr) > 0.00001:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Asiento desbalanceado: Debe={total_dr:,.2f} ≠ Haber={total_cr:,.2f}. El asiento de apertura exige partida doble perfecta."
+        )
+
+    # ── Crear la cabecera POSTED directamente (no pasa por DRAFT) ──
+    period   = f"{fiscal_year}-01"
+    entry_id = str(uuid.uuid4())
+    now      = datetime.now(timezone.utc)
+
+    entry = JournalEntry(
+        id          = entry_id,
+        tenant_id   = tenant_id,
+        period      = period,
+        date        = req.date,
+        description = req.description,
+        status      = EntryStatus.POSTED,   # POSTED directo — apertura es definitiva
+        source      = EntrySource.APERTURA,
+        created_by  = current_user["user_id"],
+        approved_by = current_user["user_id"],
+        approved_at = now,
+    )
+    db.add(entry)
+
+    # ── Crear las líneas ──
+    for l in req.lines:
+        db.add(JournalLine(
+            id           = str(uuid.uuid4()),
+            entry_id     = entry_id,
+            tenant_id    = tenant_id,
+            account_code = l.account_code,
+            description  = l.description,
+            debit        = round(float(l.debit),  5),
+            credit       = round(float(l.credit), 5),
+        ))
+
+    log_action(
+        db, tenant_id, current_user, AuditAction.ENTRY_POSTED,
+        entity_type="journal_entry", entity_id=entry_id,
+        before={},
+        after={
+            "source":   "APERTURA",
+            "status":   "POSTED",
+            "period":   period,
+            "year":     fiscal_year,
+            "lines":    len(req.lines),
+            "total_dr": round(total_dr, 2),
+            "total_cr": round(total_cr, 2),
+        },
+        note=f"Asiento de apertura {fiscal_year} — {len(req.lines)} líneas · Total ₡{total_dr:,.2f}"
+    )
+    db.commit()
+
+    return {
+        "ok":          True,
+        "entry_id":    entry_id,
+        "period":      period,
+        "year":        fiscal_year,
+        "status":      "POSTED",
+        "source":      "APERTURA",
+        "lines":       len(req.lines),
+        "total_debe":  round(total_dr, 2),
+        "total_haber": round(total_cr, 2),
+        "message":     f"Asiento de apertura {fiscal_year} creado y aprobado. El libro queda abierto.",
+    }
+
