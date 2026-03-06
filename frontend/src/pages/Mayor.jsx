@@ -35,8 +35,8 @@ function getSaldoColor(saldo, accountType) {
 // ─── Componente principal ─────────────────────────────────────────
 export default function Mayor() {
     const { state } = useApp()
-    const token = state?.user?.token || state?.token
     const apiUrl = import.meta.env.VITE_API_URL || ''
+    const token = localStorage.getItem('gc_token')
 
     // ── Estado ────────────────────────────────────────────────────
     const [searchQ, setSearchQ] = useState('')
