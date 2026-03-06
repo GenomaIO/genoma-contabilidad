@@ -114,7 +114,8 @@ function TasasCRTooltip() {
 
 export default function ActivosFijos() {
     const { state } = useApp()
-    const { apiUrl, token } = state
+    const apiUrl = import.meta.env.VITE_API_URL || ''
+    const token = localStorage.getItem('gc_token')
 
     const [assets, setAssets] = useState([])
     const [loading, setLoading] = useState(false)
