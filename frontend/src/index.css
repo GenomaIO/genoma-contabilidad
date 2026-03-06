@@ -71,6 +71,11 @@
     --input-bg: rgba(255, 255, 255, 0.05);
     --input-border: rgba(255, 255, 255, 0.12);
     --input-focus-border: #6366f1;
+
+    /* Aliases de compatibilidad (usados en JSX inline styles) */
+    --bg-card: #12121a;           /* = --bg-2 */
+    --bg-secondary: #1a1a25;      /* = --bg-3 */
+    --border-color: rgba(255, 255, 255, 0.08);  /* = --border */
 }
 
 /* --- Tokens: Light Mode --- */
@@ -122,6 +127,11 @@
     --input-bg: #ffffff;
     --input-border: #d1d5db;
     --input-focus-border: #4f46e5;
+
+    /* Aliases de compatibilidad (usados en JSX inline styles) */
+    --bg-card: #ffffff;           /* = --bg-2 */
+    --bg-secondary: #f1f5f9;      /* = --bg-3 */
+    --border-color: #e2e8f0;      /* = --border */
 }
 
 /* --- Reset & Base --- */

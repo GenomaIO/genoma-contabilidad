@@ -216,18 +216,37 @@ def login(req: LoginRequest, db: Session = Depends(get_session)):
 
 
 @router.get("/me")
-def me(current_user: dict = Depends(get_current_user)):
+def me(
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_session)
+):
     """
-    Retorna la identidad del usuario autenticado desde el JWT.
-    No requiere DB — todo viene del token.
+    Retorna la identidad del usuario autenticado.
+    Combina JWT (identidad) + DB (catalog_mode real del tenant).
+    El JWT no incluye catalog_mode por diseño (TTL corto), pero la DB siempre
+    tiene el valor actualizado → RO#227 (State Hydration Guard).
     """
+    tenant_id = current_user.get("tenant_id")
+
+    # Obtener catalog_mode actualizado desde la DB
+    catalog_mode = None
+    if tenant_id:
+        tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
+        if tenant and tenant.catalog_mode:
+            catalog_mode = (
+                tenant.catalog_mode.value
+                if hasattr(tenant.catalog_mode, "value")
+                else str(tenant.catalog_mode)
+            )
+
     return {
-        "user_id":     current_user.get("sub"),
-        "nombre":      current_user.get("nombre"),
-        "tenant_id":   current_user.get("tenant_id"),
-        "tenant_type": current_user.get("tenant_type"),
-        "role":        current_user.get("role"),
-        "partner_id":  current_user.get("partner_id"),
+        "user_id":      current_user.get("sub"),
+        "nombre":       current_user.get("nombre"),
+        "tenant_id":    tenant_id,
+        "tenant_type":  current_user.get("tenant_type"),
+        "role":         current_user.get("role"),
+        "partner_id":   current_user.get("partner_id"),
+        "catalog_mode": catalog_mode,   # RO#227: fuente de verdad = DB, no JWT
     }
 
 

@@ -106,7 +106,7 @@ export function AppProvider({ children }) {
                         partner_id: payload.partner_id || null,
                     }
                 })
-                // Hidratar catalog_mode desde el JWT si viene embebido
+                // Hidratar catalog_mode inicial desde JWT si viene embebido (legacy)
                 if (payload.catalog_mode) {
                     dispatch({ type: 'SET_CATALOG_MODE', payload: payload.catalog_mode })
                 }
@@ -117,6 +117,32 @@ export function AppProvider({ children }) {
 
         // Siempre liberar el guard — con o sin usuario
         dispatch({ type: 'AUTH_READY' })
+    }, [])
+
+    // ── RO#227 — State Hydration Guard: catalog_mode desde DB ──────────
+    // El JWT no incluye catalog_mode por diseño (TTL corto).
+    // Llamamos GET /auth/me para obtener el valor real desde la BD.
+    // Se ejecuta después de AUTH_READY, no bloquea la app.
+    useEffect(() => {
+        const token = localStorage.getItem('gc_token')
+        if (!token) return
+        const payload = parseJwtPayload(token)
+        if (!payload || payload.exp * 1000 <= Date.now()) return
+
+        const apiUrl = import.meta.env.VITE_API_URL || ''
+        fetch(`${apiUrl}/auth/me`, {
+            headers: { Authorization: `Bearer ${token}` }
+        })
+            .then(r => r.ok ? r.json() : null)
+            .then(data => {
+                if (data?.catalog_mode) {
+                    dispatch({ type: 'SET_CATALOG_MODE', payload: data.catalog_mode })
+                }
+            })
+            .catch(() => {
+                // No-critico: si falla, el contexto queda en null
+                // → el Catalogo muestra el fallback correcto
+            })
     }, [])
 
     useEffect(() => {
