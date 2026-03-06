@@ -26,7 +26,7 @@ from services.assets.models import (
     FixedAsset, AssetCategoria, AssetMetodo, AssetEstado
 )
 
-router = APIRouter(prefix="/assets", tags=["assets"])
+router = APIRouter(prefix="/api/assets", tags=["assets"])
 
 
 def _uid(u: dict) -> str:

@@ -134,7 +134,7 @@ export default function ActivosFijos() {
         if (!token) return
         setLoading(true)
         try {
-            const r = await fetch(`${apiUrl}/assets`, { headers: { Authorization: `Bearer ${token}` } })
+            const r = await fetch(`${apiUrl}/api/assets`, { headers: { Authorization: `Bearer ${token}` } })
             if (r.ok) setAssets((await r.json()).assets || [])
         } finally { setLoading(false) }
     }, [apiUrl, token])
@@ -144,7 +144,7 @@ export default function ActivosFijos() {
         if (!token || aperturaData) return
         setAperturaLoading(true)
         try {
-            const r = await fetch(`${apiUrl}/assets/from-apertura`, {
+            const r = await fetch(`${apiUrl}/api/assets/from-apertura`, {
                 headers: { Authorization: `Bearer ${token}` }
             })
             if (r.ok) setAperturaData(await r.json())
@@ -228,7 +228,7 @@ export default function ActivosFijos() {
                     : { vida_util_meses: parseInt(form.vida_util_meses), meses_usados_apertura: parseInt(form.meses_usados_apertura) || 0 }
                 )
             }
-            const r = await fetch(`${apiUrl}/assets`, {
+            const r = await fetch(`${apiUrl}/api/assets`, {
                 method: 'POST',
                 headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
                 body: JSON.stringify(body),
@@ -244,7 +244,7 @@ export default function ActivosFijos() {
     const depreciate = async (assetId) => {
         setDepLoading(assetId)
         try {
-            const r = await fetch(`${apiUrl}/assets/${assetId}/depreciate?period=${depPeriod}`, {
+            const r = await fetch(`${apiUrl}/api/assets/${assetId}/depreciate?period=${depPeriod}`, {
                 method: 'POST', headers: { Authorization: `Bearer ${token}` }
             })
             const data = await r.json()
