@@ -137,6 +137,44 @@ def create_entry(
     _validate_balance(req.lines)
 
     tenant_id = current_user["tenant_id"]
+
+    # ── Validación NIIF: solo cuentas de movimiento (hojas) aceptan asientos ──
+    # Obtener códigos que son padres de otras cuentas en este tenant
+    _parent_rows = db.execute(
+        text("SELECT DISTINCT parent_code FROM accounts WHERE tenant_id = :tid AND parent_code IS NOT NULL"),
+        {"tid": tenant_id},
+    ).fetchall()
+    _parent_set = {r[0] for r in _parent_rows}
+
+    # Obtener todas las hojas válidas (allow_entries=True AND not in parent_set)
+    _all_active_codes = db.execute(
+        text("SELECT code, name, allow_entries FROM accounts WHERE tenant_id = :tid AND is_active = true"),
+        {"tid": tenant_id},
+    ).fetchall()
+    _accounts_map = {r[0]: {"name": r[1], "allow_entries": r[2]} for r in _all_active_codes}
+
+    for l in req.lines:
+        _code = l.account_code.strip().upper()
+        if _code not in _accounts_map:
+            raise HTTPException(
+                422,
+                f"Cuenta '{_code}' no existe en el catálogo de este tenant."
+            )
+        if _code in _parent_set:
+            _name = _accounts_map[_code]["name"]
+            raise HTTPException(
+                422,
+                f"'{_code} – {_name}' es una cuenta de agrupación y no acepta asientos. "
+                f"Use una subcuenta de detalle (nivel 4)."
+            )
+        if not _accounts_map[_code].get("allow_entries", True):
+            raise HTTPException(
+                422,
+                f"La cuenta '{_code}' no está habilitada para recibir movimientos."
+            )
+    # ── Fin validación ─────────────────────────────────────────────
+
+
     period    = req.date[:7]  # 'YYYY-MM'
     entry_id  = str(uuid.uuid4())
     now       = datetime.now(timezone.utc)
