@@ -168,72 +168,30 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning(f"⚠️  Migración B2 omitida: {e}")
 
-    # ── Auto-reseed: aplica cuentas nuevas del seed estándar a todos los
-    # tenants STANDARD. Idempotente — ON CONFLICT / existing_codes check.
-    # Resuelve el problema de tenants creados antes de que se agreguen
-    # nuevas cuentas al catálogo estándar. Sin intervención manual.
+    # ── Auto-reseed: al arrancar, aplica cuentas nuevas del seed a TODOS
+    # los tenants con cuentas existentes. Usa seed_standard_catalog()
+    # con raw SQL / ON CONFLICT DO NOTHING — igual que el boton Sembrar.
     if _engine:
         try:
-            import json, uuid
-            from pathlib import Path
+            from services.catalog.seeder import seed_standard_catalog as _seed_fn
             from sqlalchemy.orm import Session as _Session
-            from services.catalog.models import Account as _Account
-            from services.auth.models import Tenant as _Tenant, CatalogMode as _CatalogMode
 
-            seed_path = Path(__file__).parents[1] / "catalog" / "seeds" / "standard_cr.json"
-            if seed_path.exists():
-                with open(seed_path, encoding="utf-8") as _f:
-                    _seed = json.load(_f)
+            with _Session(_engine) as _sess:
+                _rows = _sess.execute(
+                    text("SELECT DISTINCT tenant_id FROM accounts")
+                ).fetchall()
+                _tenant_ids = [r[0] for r in _rows]
 
-                with _Session(_engine) as _sess:
-                    # Obtener todos los tenants con catalog_mode STANDARD
-                    try:
-                        _tenants = _sess.query(_Tenant).filter(
-                            _Tenant.catalog_mode == _CatalogMode.STANDARD
-                        ).all()
-                        _tenant_ids = [t.id for t in _tenants]
-                    except Exception:
-                        # Fallback: obtener tenant_ids únicos desde la tabla accounts
-                        _rows = _sess.execute(
-                            text("SELECT DISTINCT tenant_id FROM accounts")
-                        ).fetchall()
-                        _tenant_ids = [r[0] for r in _rows]
+            total_inserted = 0
+            for _tid in _tenant_ids:
+                with _Session(_engine) as _s2:
+                    _n = _seed_fn(_tid, _s2)
+                    total_inserted += _n
 
-                    total_inserted = 0
-                    for _tid in _tenant_ids:
-                        _existing = {
-                            row[0]
-                            for row in _sess.query(_Account.code)
-                            .filter(_Account.tenant_id == _tid)
-                            .all()
-                        }
-                        for _a in _seed:
-                            _code = _a["code"].strip().upper()
-                            if _code in _existing:
-                                continue
-                            try:
-                                _sess.add(_Account(
-                                    id=str(uuid.uuid4()),
-                                    tenant_id=_tid,
-                                    code=_code,
-                                    name=_a["name"].strip(),
-                                    description=_a.get("description"),
-                                    account_type=_a["type"],
-                                    account_sub_type=_a.get("sub_type") or None,
-                                    parent_code=_a.get("parent_code") or None,
-                                    allow_entries=_a.get("allow_entries", True),
-                                    is_generic=False,
-                                ))
-                                _sess.flush()
-                                _existing.add(_code)
-                                total_inserted += 1
-                            except Exception:
-                                _sess.rollback()
-                    _sess.commit()
-                    if total_inserted:
-                        logger.info(f"✅ Auto-reseed: {total_inserted} cuentas nuevas en {len(_tenant_ids)} tenants")
-                    else:
-                        logger.info("✅ Auto-reseed: catálogo ya actualizado en todos los tenants")
+            if total_inserted:
+                logger.info(f"✅ Auto-reseed: {total_inserted} cuentas nuevas en {len(_tenant_ids)} tenants")
+            else:
+                logger.info("✅ Auto-reseed: catalogo al dia en todos los tenants")
         except Exception as _e:
             logger.warning(f"⚠️  Auto-reseed omitido: {_e}")
 
