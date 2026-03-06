@@ -9,6 +9,7 @@ import Catalogo from './pages/Catalogo'
 import AsientosPendientes from './pages/AsientosPendientes'
 import BalanceComprobacion from './pages/BalanceComprobacion'
 import CierrePeriodo from './pages/CierrePeriodo'
+import Apertura from './pages/Apertura'
 import { useApp } from './context/AppContext'
 
 // Guard de ruta — espera hidratación antes de decidir
@@ -77,7 +78,8 @@ function AppLayout() {
                     <Route path="/prorrata" element={<ComingSoon name="Prorrata IVA" />} />
                     <Route path="/reportes" element={<ComingSoon name="Estados Financieros" />} />
                     <Route path="/cierre" element={<CierrePeriodo />} />
-                    <Route path="/config" element={<ComingSoon name="Configuración" />} />
+                    <Route path="/config" element={<Navigate to="/config/apertura" replace />} />
+                    <Route path="/config/apertura" element={<Apertura />} />
                     <Route path="*" element={<ComingSoon name="Página no encontrada" />} />
                 </Routes>
             </main>
