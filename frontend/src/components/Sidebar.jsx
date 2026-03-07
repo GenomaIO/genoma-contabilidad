@@ -65,6 +65,7 @@ const NAV_ITEMS = [
                 children: [
                     { icon: '📂', label: 'Apertura', path: '/config/apertura' },
                     { icon: '📁', label: 'Catálogo', path: '/catalogo' },
+                    { icon: '🧾', label: 'Perfil Fiscal', path: '/config/perfil-fiscal' },
                     { icon: '🗂️', label: 'Dimensiones', path: '/config/dimensiones', coming: true },
                 ]
             },

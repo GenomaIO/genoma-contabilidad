@@ -19,6 +19,7 @@ from services.catalog.router import router as catalog_router
 from services.ledger.router import router as ledger_router
 from services.integration.webhook_receiver import router as integration_router
 from services.assets.router import router as assets_router
+from services.tax.router import router as tax_router
 import services.catalog.models  # noqa: F401 — registra Account en Base para create_all
 import services.ledger.models   # noqa: F401 — registra JournalEntry/JournalLine en Base
 import services.ledger.audit_log  # noqa: F401 — registra AuditLog en Base
@@ -236,6 +237,52 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning(f"⚠️  Migración M_ASSETS omitida: {e}")
 
+        # ── Migración M_FISCAL_PROFILE: perfil fiscal por tenant ───────────
+        # Almacena tipo de contribuyente (PJ/PF), gran contribuyente, mes de cierre.
+        try:
+            with _engine.begin() as conn:
+                conn.execute(text("""
+                    CREATE TABLE IF NOT EXISTS fiscal_profiles (
+                        id                    TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+                        tenant_id             TEXT UNIQUE NOT NULL,
+                        taxpayer_type         TEXT NOT NULL DEFAULT 'PJ',
+                        is_large_taxpayer     BOOLEAN NOT NULL DEFAULT FALSE,
+                        fiscal_year_end_month INTEGER NOT NULL DEFAULT 9,
+                        created_at            TIMESTAMPTZ DEFAULT NOW(),
+                        updated_at            TIMESTAMPTZ DEFAULT NOW()
+                    )
+                """))
+                conn.execute(text(
+                    "CREATE INDEX IF NOT EXISTS idx_fp_tenant ON fiscal_profiles(tenant_id)"
+                ))
+            logger.info("✅ Migración M_FISCAL_PROFILE: tabla fiscal_profiles creada/verificada")
+        except Exception as e:
+            logger.warning(f"⚠️  Migración M_FISCAL_PROFILE omitida: {e}")
+
+        # ── Migración M_TAX_BRACKETS: tramos de renta por año/tipo ────────
+        # El usuario gestiona estos datos desde la UI. Sin hardcode.
+        # Los tramos 2026 se insertan bajo demanda via POST /tax/tax-brackets/prefill-2026.
+        try:
+            with _engine.begin() as conn:
+                conn.execute(text("""
+                    CREATE TABLE IF NOT EXISTS tax_brackets (
+                        id            TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+                        tenant_id     TEXT NOT NULL,
+                        fiscal_year   INTEGER NOT NULL,
+                        taxpayer_type TEXT NOT NULL,
+                        income_from   NUMERIC(18,5) NOT NULL,
+                        income_to     NUMERIC(18,5),
+                        rate          NUMERIC(6,5) NOT NULL,
+                        UNIQUE (tenant_id, fiscal_year, taxpayer_type, income_from)
+                    )
+                """))
+                conn.execute(text(
+                    "CREATE INDEX IF NOT EXISTS idx_tb_tenant_year ON tax_brackets(tenant_id, fiscal_year)"
+                ))
+            logger.info("✅ Migración M_TAX_BRACKETS: tabla tax_brackets creada/verificada")
+        except Exception as e:
+            logger.warning(f"⚠️  Migración M_TAX_BRACKETS omitida: {e}")
+
         # ── Migración M_ASSETS_V2: columna tasa_anual ─────────────
         # Modo Tasa Fiscal (Decreto 18455-H) — cuota constante.
         # ALTER ... IF NOT EXISTS es idempotente en Postgres 9.6+.
@@ -430,6 +477,7 @@ app.include_router(catalog_router)
 app.include_router(ledger_router)
 app.include_router(integration_router)
 app.include_router(assets_router)
+app.include_router(tax_router)
 
 # ── Endpoints API ──────────────────────────────────────────────
 

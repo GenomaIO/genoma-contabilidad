@@ -59,6 +59,20 @@ export default function Dashboard() {
     const [activePeriodStatus, setActivePeriodStatus] = useState(null)
     const [loading, setLoading] = useState(true)
 
+    // ── Proyección de Renta ──────────────────────────────────────
+    const [rentaProj, setRentaProj] = useState(null)
+    const [rentaLoading, setRentaLoading] = useState(false)
+
+    useEffect(() => {
+        if (!token) return
+        setRentaLoading(true)
+        fetch(`${apiUrl}/tax/renta-projection`, { headers: { Authorization: `Bearer ${token}` } })
+            .then(r => r.ok ? r.json() : null)
+            .then(d => setRentaProj(d))
+            .catch(() => setRentaProj(null))
+            .finally(() => setRentaLoading(false))
+    }, [token]) // eslint-disable-line
+
     const h = { Authorization: `Bearer ${token}` }
 
     // ── Paso 1: Descubrir el último período cerrado ─────────────
@@ -454,6 +468,154 @@ export default function Dashboard() {
                     </div>
                 </div>
             </div>
+            {/* ── Widget Proyección de Renta ── */}
+            {(rentaLoading || rentaProj) && (
+                <div style={{
+                    background: 'var(--bg-card)', borderRadius: 14,
+                    border: '1px solid var(--border-color)', marginBottom: 14, overflow: 'hidden',
+                }}>
+                    {/* Header */}
+                    <div style={{
+                        padding: '12px 18px', background: 'var(--bg-secondary)',
+                        borderBottom: '1px solid var(--border-color)',
+                        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    }}>
+                        <span style={{ fontWeight: 700, fontSize: '0.9rem' }}>
+                            📈 Proyección Impuesto sobre la Renta {rentaProj?.fiscal_year || ''}
+                        </span>
+                        <button
+                            onClick={() => navigate('/config/perfil-fiscal')}
+                            style={{
+                                background: 'none', border: 'none', color: 'var(--accent)',
+                                fontSize: '0.75rem', cursor: 'pointer', padding: '2px 6px',
+                            }}
+                        >
+                            ⚙️ Configurar →
+                        </button>
+                    </div>
+
+                    {rentaLoading ? (
+                        <div style={{ padding: 18, color: 'var(--text-muted)', fontSize: '0.83rem' }}>
+                            ⏳ Calculando proyección...
+                        </div>
+                    ) : rentaProj && (
+                        <div style={{ padding: '14px 18px' }}>
+                            {/* Métrica principal */}
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 14, marginBottom: 14 }}>
+                                {[
+                                    {
+                                        label: 'Utilidad proyectada anual',
+                                        value: `¢${(rentaProj.utilidad_proyectada_anual || 0).toLocaleString('es-CR', { maximumFractionDigits: 0 })}`,
+                                        color: '#3b82f6', bg: 'rgba(59,130,246,0.1)',
+                                    },
+                                    {
+                                        label: 'Renta estimada anual',
+                                        value: `¢${(rentaProj.renta_estimada_anual || 0).toLocaleString('es-CR', { maximumFractionDigits: 0 })}`,
+                                        color: '#f59e0b', bg: 'rgba(245,158,11,0.1)',
+                                    },
+                                    {
+                                        label: '💡 Provisión mensual sugerida',
+                                        value: `¢${(rentaProj.provision_mensual_sugerida || 0).toLocaleString('es-CR', { maximumFractionDigits: 0 })}`,
+                                        color: '#10b981', bg: 'rgba(16,185,129,0.12)',
+                                        highlight: true,
+                                    },
+                                    {
+                                        label: 'Tasa efectiva',
+                                        value: `${(rentaProj.tasa_efectiva_pct || 0).toFixed(1)}%`,
+                                        color: '#8b5cf6', bg: 'rgba(139,92,246,0.1)',
+                                    },
+                                ].map(m => (
+                                    <div key={m.label} style={{
+                                        background: m.bg,
+                                        borderRadius: 10,
+                                        padding: '12px 14px',
+                                        border: m.highlight ? `1.5px solid ${m.color}44` : '1px solid transparent',
+                                    }}>
+                                        <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginBottom: 4, fontWeight: 500 }}>
+                                            {m.label}
+                                        </div>
+                                        <div style={{ fontSize: m.highlight ? '1.15rem' : '1rem', fontWeight: 700, color: m.color, fontVariantNumeric: 'tabular-nums' }}>
+                                            {m.value}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+
+                            {/* Desglose de tramos */}
+                            {rentaProj.desglose_tramos?.length > 0 && (
+                                <details style={{ cursor: 'pointer' }}>
+                                    <summary style={{ fontSize: '0.78rem', color: 'var(--text-muted)', userSelect: 'none' }}>
+                                        Ver desglose por tramos ({rentaProj.desglose_tramos.length} tramos aplicados)
+                                    </summary>
+                                    <div style={{ overflowX: 'auto', marginTop: 8 }}>
+                                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.78rem' }}>
+                                            <thead>
+                                                <tr style={{ color: 'var(--text-muted)', borderBottom: '1px solid var(--border-color)' }}>
+                                                    <th style={{ padding: '4px 8px', textAlign: 'left' }}>Desde</th>
+                                                    <th style={{ padding: '4px 8px', textAlign: 'left' }}>Hasta</th>
+                                                    <th style={{ padding: '4px 8px', textAlign: 'left' }}>Tasa</th>
+                                                    <th style={{ padding: '4px 8px', textAlign: 'right' }}>Base gravable</th>
+                                                    <th style={{ padding: '4px 8px', textAlign: 'right' }}>Impuesto</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {rentaProj.desglose_tramos.map((t, i) => (
+                                                    <tr key={i} style={{ borderBottom: '1px solid var(--border-color)', opacity: 0.85 }}>
+                                                        <td style={{ padding: '4px 8px' }}>¢{t.desde.toLocaleString('es-CR')}</td>
+                                                        <td style={{ padding: '4px 8px' }}>{t.hasta ? `¢${t.hasta.toLocaleString('es-CR')}` : '∞'}</td>
+                                                        <td style={{ padding: '4px 8px' }}>{t.tasa_pct}%</td>
+                                                        <td style={{ padding: '4px 8px', textAlign: 'right' }}>¢{t.base_gravable.toLocaleString('es-CR')}</td>
+                                                        <td style={{ padding: '4px 8px', textAlign: 'right', fontWeight: 600 }}>¢{t.impuesto.toLocaleString('es-CR')}</td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </details>
+                            )}
+
+                            {/* Nota */}
+                            {rentaProj.nota && (
+                                <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: 10, fontStyle: 'italic' }}>
+                                    ℹ️ {rentaProj.nota}
+                                </div>
+                            )}
+                        </div>
+                    )}
+                </div>
+            )}
+
+            {/* Si no hay perfil configured, mostrar prompt */}
+            {!rentaLoading && !rentaProj && (
+                <div style={{
+                    background: 'var(--bg-card)', borderRadius: 14,
+                    border: '1px dashed var(--border-color)', marginBottom: 14,
+                    padding: '18px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                        <span style={{ fontSize: '1.8rem' }}>📊</span>
+                        <div>
+                            <div style={{ fontWeight: 700, fontSize: '0.88rem', color: 'var(--text-primary)' }}>
+                                Proyección de Impuesto sobre la Renta
+                            </div>
+                            <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: 3 }}>
+                                Configura tu perfil fiscal y los tramos de renta para ver la estimación aquí
+                            </div>
+                        </div>
+                    </div>
+                    <button
+                        onClick={() => navigate('/config/perfil-fiscal')}
+                        style={{
+                            background: 'var(--accent)', color: '#fff', border: 'none',
+                            borderRadius: 8, padding: '8px 16px', fontSize: '0.82rem',
+                            fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap',
+                        }}
+                    >
+                        ⚡ Configurar →
+                    </button>
+                </div>
+            )}
+
             {/* Barra API eliminada — ya existe en el footer del Sidebar */}
         </div>
     )
