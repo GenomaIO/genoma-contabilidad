@@ -58,6 +58,7 @@ export default function CierrePeriodo() {
     const [actionMsg, setActionMsg] = useState(null)
     const [actionErr, setActionErr] = useState(null)
     const [closing, setClosing] = useState(false)
+    const [confirmLock, setConfirmLock] = useState(false)
 
     // ── Cargar estado del período ────────────────────────────────
     const loadStatus = useCallback(async () => {
@@ -149,8 +150,8 @@ export default function CierrePeriodo() {
 
     // ── Bloquear CLOSING → CLOSED ───────────────────────────────
     async function lockPeriod() {
-        if (!window.confirm(`¿CONFIRMAR bloqueo del período ${period}?\n\nEsta acción es IRREVERSIBLE. Ningún asiento podrá agregarse o modificarse. Los libros digitales quedarán disponibles para exportar.`)) return
         setLoadingAction(true); setActionMsg(null); setActionErr(null)
+        setConfirmLock(false)
         try {
             const r = await fetch(`${apiUrl}/ledger/period/${period}/lock`, {
                 method: 'POST',
@@ -313,18 +314,55 @@ export default function CierrePeriodo() {
                     )}
 
                     {/* Botón 3: Bloquear (CLOSING → CLOSED) — solo admin */}
-                    {status === 'CLOSING' && isAdmin && (
+                    {status === 'CLOSING' && isAdmin && !confirmLock && (
                         <button
                             id="btn-lock-periodo"
-                            onClick={lockPeriod}
+                            onClick={() => setConfirmLock(true)}
                             disabled={loadingAction}
                             style={{
                                 padding: '12px 22px', background: '#ef4444', border: 'none', borderRadius: 8,
                                 color: 'white', fontWeight: 700, cursor: 'pointer', fontSize: '0.9rem'
                             }}
                         >
-                            {loadingAction ? '⏳ Bloqueando...' : '🔒 Bloquear período (IRREVERSIBLE)'}
+                            🔒 Bloquear período (IRREVERSIBLE)
                         </button>
+                    )}
+                    {/* Confirmación inline — reemplaza window.confirm() */}
+                    {status === 'CLOSING' && isAdmin && confirmLock && (
+                        <div style={{
+                            padding: '14px 18px', borderRadius: 10, background: 'rgba(239,68,68,0.1)',
+                            border: '2px solid #ef4444'
+                        }}>
+                            <div style={{ fontWeight: 700, color: '#ef4444', marginBottom: 6, fontSize: '0.9rem' }}>
+                                ⚠️ ¿Confirmar bloqueo de {period}?
+                            </div>
+                            <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: 14 }}>
+                                Esta acción es <strong>IRREVERSIBLE</strong>. El período quedará cerrado y los libros digitales disponibles.
+                            </div>
+                            <div style={{ display: 'flex', gap: 10 }}>
+                                <button
+                                    id="btn-lock-cancelar"
+                                    onClick={() => setConfirmLock(false)}
+                                    style={{
+                                        padding: '8px 18px', background: 'var(--bg-card)', border: '1px solid var(--border-color)',
+                                        borderRadius: 7, color: 'var(--text-primary)', cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem'
+                                    }}
+                                >
+                                    Cancelar
+                                </button>
+                                <button
+                                    id="btn-lock-confirmar"
+                                    onClick={lockPeriod}
+                                    disabled={loadingAction}
+                                    style={{
+                                        padding: '8px 18px', background: '#ef4444', border: 'none',
+                                        borderRadius: 7, color: 'white', cursor: 'pointer', fontWeight: 700, fontSize: '0.85rem'
+                                    }}
+                                >
+                                    {loadingAction ? '⏳ Bloqueando...' : '🔒 Sí, bloquear definitivamente'}
+                                </button>
+                            </div>
+                        </div>
                     )}
                 </div>
             )}
