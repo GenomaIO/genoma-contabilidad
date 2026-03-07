@@ -58,6 +58,9 @@ export default function AsientosPendientes() {
         description: '',
         lines: [EMPTY_LINE(), EMPTY_LINE()],
     })
+    // Period Lock — verifica si la fecha del asiento cae en un período CERRADO
+    const [periodLocked, setPeriodLocked] = useState(false)
+    const [periodLockChecking, setPeriodLockChecking] = useState(false)
     // AccountPicker: estado por línea {open, query, highlighted}
     const [pickers, setPickers] = useState({})
 
@@ -221,6 +224,22 @@ export default function AsientosPendientes() {
     const isBalanced = Math.abs(totalDebit - totalCredit) < 0.0001 && totalDebit > 0
     const canSave = isBalanced && form.lines.length >= 2 && form.date && form.description.trim().length >= 3
         && !form.lines.some(l => (parseFloat(l.debit) || 0) > 0 && (parseFloat(l.credit) || 0) > 0)
+        && !periodLocked && !periodLockChecking
+
+    // Period Lock check: cada vez que cambie la fecha, consulta el estado del período
+    useEffect(() => {
+        if (!form.date || !token || !showForm) return
+        const ym = form.date.slice(0, 7) // 'YYYY-MM'
+        setPeriodLockChecking(true)
+        setPeriodLocked(false)
+        fetch(`${apiUrl}/ledger/period/${ym}/status`, {
+            headers: { Authorization: `Bearer ${token}` }
+        })
+            .then(r => r.ok ? r.json() : { status: 'OPEN' })
+            .then(d => { setPeriodLocked(d.status === 'CLOSED') })
+            .catch(() => setPeriodLocked(false))
+            .finally(() => setPeriodLockChecking(false))
+    }, [form.date, showForm])
 
     function updateLine(i, field, value) {
         setForm(f => {
@@ -491,13 +510,34 @@ export default function AsientosPendientes() {
                             <button onClick={closeForm} style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', fontSize: '1.4rem', cursor: 'pointer', lineHeight: 1 }}>✕</button>
                         </div>
 
+                        {/* Period Lock Banner — aparece cuando la fecha está en un período CERRADO */}
+                        {periodLocked && (
+                            <div style={{
+                                display: 'flex', alignItems: 'center', gap: 10,
+                                padding: '10px 14px', borderRadius: 8, marginBottom: 14,
+                                background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.4)',
+                                color: '#ef4444', fontSize: '0.82rem'
+                            }}>
+                                <span style={{ fontSize: '1.1rem' }}>🔒</span>
+                                <div>
+                                    <strong>Período cerrado</strong> — el mes <code>{form.date?.slice(0, 7)}</code> está CERRADO.
+                                    No se pueden agregar asientos en períodos cerrados (Art. 51 Ley Renta CR).
+                                </div>
+                            </div>
+                        )}
+                        {periodLockChecking && (
+                            <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: 10 }}>
+                                ⏳ Verificando estado del período...
+                            </div>
+                        )}
+
                         {/* Fecha + descripción */}
                         <div style={{ display: 'grid', gridTemplateColumns: '160px 1fr', gap: 12, marginBottom: 16 }}>
                             <div>
                                 <label style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>Fecha *</label>
                                 <input id="entry-date" type="date" value={form.date}
                                     onChange={e => setForm(f => ({ ...f, date: e.target.value }))}
-                                    style={inputStyle} />
+                                    style={{ ...inputStyle, borderColor: periodLocked ? '#ef4444' : undefined }} />
                             </div>
                             <div>
                                 <label style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>Descripción *</label>
