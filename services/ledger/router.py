@@ -347,19 +347,17 @@ def void_entry(
     now        = datetime.now(timezone.utc)
     reversal_id = str(uuid.uuid4())
 
-    # Crear asiento de reversión (partidas invertidas)
+    # Crear asiento de reversión en DRAFT (el contador debe revisarlo antes de aprobar)
     reversal = JournalEntry(
         id          = reversal_id,
         tenant_id   = tenant_id,
         period      = entry.period,
         date        = now.strftime("%Y-%m-%d"),
         description = f"[REVERSIÓN] {entry.description[:150]}",
-        status      = EntryStatus.POSTED,   # La reversión ya se aprueba automáticamente
+        status      = EntryStatus.DRAFT,   # ⚠️ DRAFT — el contador revisa antes de aprobar
         source      = entry.source,
         source_ref  = entry.source_ref,
         created_by  = _uid(current_user),
-        approved_by = _uid(current_user),
-        approved_at = now,
         created_at  = now,
     )
     db.add(reversal)
@@ -400,10 +398,88 @@ def void_entry(
 
     return {
         "ok": True,
-        "entry_id":   entry_id,
-        "status":     "VOIDED",
+        "entry_id":    entry_id,
+        "status":      "VOIDED",
         "reversal_id": reversal_id,
-        "voided_at":  str(now),
+        "reversal_status": "DRAFT",
+        "voided_at":   str(now),
+        "note": "Asiento de reversión creado como BORRADOR — revísalo en el Diario antes de aprobar.",
+    }
+
+
+# ─────────────────────────────────────────────────────────────────
+# PATCH /ledger/entries/{entry_id}/revert-to-draft — POSTED → DRAFT
+# ─────────────────────────────────────────────────────────────────
+
+@router.patch("/entries/{entry_id}/revert-to-draft")
+def revert_to_draft(
+    entry_id: str,
+    reason:   str = Query(..., description="Motivo del reverso a borrador (requerido)"),
+    current_user: dict = Depends(get_current_user),
+    db:           Session = Depends(get_session),
+):
+    """
+    Regresa un asiento POSTED → DRAFT para corrección, siempre que el período
+    NO esté cerrado (status CLOSED).
+
+    Regla:
+      - Solo aplica a asientos POSTED (no VOIDED, no DRAFT ya).
+      - El período del asiento debe estar en OPEN o CLOSING (no CLOSED).
+      - Limpia approved_by / approved_at para forzar revisión.
+      - Deja audit trail completo.
+    """
+    _require_role(current_user["role"], ["admin", "contador"])
+    tenant_id = current_user["tenant_id"]
+
+    entry = db.query(JournalEntry).filter(
+        JournalEntry.id == entry_id,
+        JournalEntry.tenant_id == tenant_id
+    ).first()
+
+    if not entry:
+        raise HTTPException(404, "Asiento no encontrado")
+    if entry.status != EntryStatus.POSTED:
+        raise HTTPException(400,
+            f"Solo asientos APROBADOS pueden revertirse a borrador. "
+            f"Estado actual: {entry.status.value}")
+
+    # Verificar que el período NO esté cerrado
+    period_row = db.execute(text("""
+        SELECT status FROM period_status
+        WHERE tenant_id = :tid AND year_month = :ym
+    """), {"tid": tenant_id, "ym": entry.period}).fetchone()
+
+    period_status = period_row.status if period_row else "OPEN"
+    if period_status == "CLOSED":
+        raise HTTPException(409,
+            f"El período {entry.period} ya está CERRADO. "
+            f"No se puede revertir un asiento de un período cerrado. "
+            f"Usa un asiento de ajuste en el período actual en su lugar.")
+
+    now = datetime.now(timezone.utc)
+    old_approved_by = entry.approved_by
+    old_approved_at = str(entry.approved_at) if entry.approved_at else None
+
+    # Revertir a DRAFT
+    entry.status      = EntryStatus.DRAFT
+    entry.approved_by = None
+    entry.approved_at = None
+
+    log_action(
+        db, tenant_id, current_user, AuditAction.ENTRY_UPDATED,
+        entity_type="journal_entry", entity_id=entry_id,
+        before={"status": "POSTED", "approved_by": old_approved_by, "approved_at": old_approved_at},
+        after={"status": "DRAFT",   "approved_by": None,            "approved_at": None},
+        note=f"[REVERT-TO-DRAFT] {reason}"
+    )
+    db.commit()
+
+    return {
+        "ok":      True,
+        "entry_id": entry_id,
+        "period":   entry.period,
+        "status":   "DRAFT",
+        "note":     f"Asiento revertido a BORRADOR. Período {entry.period}: {period_status}. Razón: {reason}",
     }
 
 

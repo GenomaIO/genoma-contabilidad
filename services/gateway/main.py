@@ -351,6 +351,36 @@ async def lifespan(app: FastAPI):
         except Exception as _fix_err:
             logger.warning(f"⚠️  Auto-Fix Dep. omitido: {_fix_err}")
 
+    # ── Migración B0: Revertir [REVERSIÓN] POSTED en períodos abiertos ──
+    # Las reversiones generadas automáticamente por void_entry fueron
+    # creadas como POSTED (bug corregido ahora). Este paso las restablece
+    # a DRAFT para que el contador las revise antes de aprobarlas.
+    # Idempotente: solo afecta a [REVERSIÓN] que NO han pasado por el cierre.
+    if _engine:
+        try:
+            with _engine.begin() as _rev_conn:
+                _rev_result = _rev_conn.execute(text("""
+                    UPDATE journal_entries
+                    SET status      = 'DRAFT',
+                        approved_by = NULL,
+                        approved_at = NULL
+                    WHERE description LIKE '[REVERSIÓN]%'
+                      AND status = 'POSTED'
+                      AND period NOT IN (
+                          SELECT year_month FROM period_status WHERE status = 'CLOSED'
+                      )
+                """))
+                reverted_count = _rev_result.rowcount or 0
+            if reverted_count > 0:
+                logger.info(
+                    f"🔄 Migración B0: {reverted_count} asiento(s) [REVERSIÓN] "
+                    f"revertido(s) a DRAFT (períodos abiertos)"
+                )
+            else:
+                logger.info("✅ Migración B0: sin asientos [REVERSIÓN] para revertir")
+        except Exception as _rev_err:
+            logger.warning(f"⚠️  Migración B0 omitida: {_rev_err}")
+
     # ── Auto-Depreciación: Startup Recovery ─────────────────────
     # Al arrancar, genera los asientos DRAFT de depreciación para
     # todos los meses sin cobertura (desde apertura hasta mes anterior).

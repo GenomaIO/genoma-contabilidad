@@ -44,6 +44,8 @@ export default function AsientosPendientes() {
     const [acting, setActing] = useState(null)
     const [voidReason, setVoidReason] = useState('')
     const [voidTarget, setVoidTarget] = useState(null)
+    const [revertTarget, setRevertTarget] = useState(null)  // para revert-to-draft
+    const [revertReason, setRevertReason] = useState('')
     const [error, setError] = useState(null)
     const [openingMonth, setOpeningMonth] = useState(null) // '2026-01' — del API /ledger/opening-entry
 
@@ -213,7 +215,29 @@ export default function AsientosPendientes() {
                 { method: 'PATCH', headers: { Authorization: `Bearer ${token}` } }
             )
             if (!res.ok) { const e = await res.json(); alert(e.detail || 'Error') }
-            else { setVoidTarget(null); setVoidReason(''); fetchEntries() }
+            else {
+                setVoidTarget(null); setVoidReason('')
+                alert('⚠️ Asiento anulado. El asiento de reversión fue creado como BORRADOR — revísalo antes de aprobar.')
+                fetchEntries()
+            }
+        } finally { setActing(null) }
+    }
+
+    async function handleRevertToDraft(entryId) {
+        if (!revertReason.trim()) { alert('Debes indicar el motivo del regreso a borrador'); return }
+        setActing(entryId)
+        try {
+            const res = await fetch(
+                `${apiUrl}/ledger/entries/${entryId}/revert-to-draft?reason=${encodeURIComponent(revertReason)}`,
+                { method: 'PATCH', headers: { Authorization: `Bearer ${token}` } }
+            )
+            if (!res.ok) {
+                const e = await res.json()
+                alert(e.detail || 'Error al revertir')
+            } else {
+                setRevertTarget(null); setRevertReason('')
+                fetchEntries()
+            }
         } finally { setActing(null) }
     }
 
@@ -439,6 +463,20 @@ export default function AsientosPendientes() {
                                         </button>
                                         <button id={`void-${entry.id}`} onClick={() => setVoidTarget(entry.id)}
                                             style={{ padding: '4px 10px', background: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 6, color: '#ef4444', fontSize: '0.75rem', cursor: 'pointer' }}>
+                                            Anular
+                                        </button>
+                                    </div>
+                                )}
+                                {canWrite && entry.status === 'POSTED' && (
+                                    <div style={{ display: 'flex', gap: 6 }} onClick={e => e.stopPropagation()}>
+                                        <button id={`revert-${entry.id}`}
+                                            onClick={() => { setRevertTarget(entry.id); setRevertReason('') }}
+                                            title="Revertir a Borrador (solo períodos abiertos)"
+                                            style={{ padding: '4px 10px', background: 'rgba(245,158,11,0.15)', border: '1px solid rgba(245,158,11,0.4)', borderRadius: 6, color: '#f59e0b', fontSize: '0.72rem', cursor: 'pointer', fontWeight: 600 }}>
+                                            ⏪ Revertir
+                                        </button>
+                                        <button id={`void-posted-${entry.id}`} onClick={() => setVoidTarget(entry.id)}
+                                            style={{ padding: '4px 10px', background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.25)', borderRadius: 6, color: '#ef4444', fontSize: '0.72rem', cursor: 'pointer' }}>
                                             Anular
                                         </button>
                                     </div>
@@ -784,7 +822,7 @@ export default function AsientosPendientes() {
                     <div style={{ background: 'var(--bg-secondary)', borderRadius: 14, padding: 28, maxWidth: 440, width: '100%', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
                         <h2 style={{ margin: '0 0 12px', fontSize: '1.1rem', color: '#ef4444' }}>⚠️ Anular asiento</h2>
                         <p style={{ margin: '0 0 16px', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                            Se generará un asiento de reversión automático. Esta acción no puede deshacerse.
+                            Se generará un asiento de reversión como <strong>BORRADOR</strong> para que lo revises antes de aprobar.
                         </p>
                         <textarea
                             id="void-reason-input"
@@ -803,6 +841,40 @@ export default function AsientosPendientes() {
                     </div>
                 </div>
             )}
+
+            {/* ── Modal revertir a BORRADOR ── */}
+            {revertTarget && (
+                <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+                    <div style={{ background: 'var(--bg-secondary)', borderRadius: 14, padding: 28, maxWidth: 440, width: '100%', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
+                        <h2 style={{ margin: '0 0 8px', fontSize: '1.1rem', color: '#f59e0b' }}>⏪ Revertir a Borrador</h2>
+                        <p style={{ margin: '0 0 6px', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                            El asiento regresará a <strong>BORRADOR</strong> para corrección.
+                            Solo es posible si el período aún no está cerrado.
+                        </p>
+                        <p style={{ margin: '0 0 16px', fontSize: '0.8rem', color: '#f59e0b' }}>
+                            ⚠️ Una vez en borrador, el asiento ya no afecta el balance hasta que lo vuelvas a aprobar.
+                        </p>
+                        <textarea
+                            id="revert-reason-input"
+                            placeholder="Motivo del reverso a borrador *"
+                            value={revertReason}
+                            onChange={e => setRevertReason(e.target.value)}
+                            style={{ width: '100%', padding: '10px 12px', border: '1px solid var(--border-color)', borderRadius: 7, background: 'var(--bg-card)', color: 'var(--text-primary)', fontSize: '0.88rem', resize: 'vertical', minHeight: 80, boxSizing: 'border-box', marginBottom: 16 }}
+                        />
+                        <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+                            <button onClick={() => { setRevertTarget(null); setRevertReason('') }}
+                                style={{ padding: '8px 16px', background: 'transparent', border: '1px solid var(--border-color)', borderRadius: 7, color: 'var(--text-secondary)', cursor: 'pointer' }}>
+                                Cancelar
+                            </button>
+                            <button id="confirm-revert-btn" onClick={() => handleRevertToDraft(revertTarget)} disabled={acting === revertTarget}
+                                style={{ padding: '8px 20px', background: '#f59e0b', border: 'none', borderRadius: 7, color: '#1a1a1a', fontWeight: 700, cursor: 'pointer' }}>
+                                {acting === revertTarget ? 'Revirtiendo...' : '⏪ Confirmar reverso'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     )
 }
+
