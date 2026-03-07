@@ -45,6 +45,7 @@ export default function AsientosPendientes() {
     const [voidReason, setVoidReason] = useState('')
     const [voidTarget, setVoidTarget] = useState(null)
     const [error, setError] = useState(null)
+    const [openingMonth, setOpeningMonth] = useState(null) // '2026-01' — del API /ledger/opening-entry
 
     // ── E1: estado del formulario nuevo asiento ──
     const [showForm, setShowForm] = useState(false)
@@ -87,6 +88,25 @@ export default function AsientosPendientes() {
             .then(data => setAccounts(Array.isArray(data) ? data : []))
             .catch(() => { })
     }, [canWrite])
+
+    // Fecha de apertura → define el límite inferior del selector de período
+    useEffect(() => {
+        if (!token) return
+        fetch(`${apiUrl}/ledger/opening-entry`, {
+            headers: { Authorization: `Bearer ${token}` }
+        })
+            .then(r => r.ok ? r.json() : null)
+            .then(data => {
+                if (data?.date) {
+                    // '2026-01-01' → '2026-01'
+                    const ymd = data.date.slice(0, 7)
+                    setOpeningMonth(ymd)
+                    // Si el período actual es anterior a la apertura, redirigir al mes de apertura
+                    setPeriod(p => p < ymd ? ymd : p)
+                }
+            })
+            .catch(() => { })
+    }, [token])
 
     // Colores + abreviaciones por tipo de cuenta
     const TYPE_COLOR = {
@@ -274,14 +294,26 @@ export default function AsientosPendientes() {
         setForm({ date: todayStr(), description: '', lines: [EMPTY_LINE(), EMPTY_LINE()] })
     }
 
-    // ── Opciones de período ──────────────────────────────────────
-    const periodOptions = []
-    const base = new Date()
-    for (let i = 0; i < 24; i++) {
-        const d = new Date(base.getFullYear(), base.getMonth() - i, 1)
-        const val = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
-        periodOptions.push({ val, label: `${MONTHS[d.getMonth()]} ${d.getFullYear()}` })
-    }
+    // ── Opciones de período — dinámicas desde la fecha de apertura ─────────────
+    // Muestra desde el mes de apertura hasta el mes actual + 3 (planificación).
+    // Si no hay apertura (empresa nueva), solo muestra el año en curso.
+    const periodOptions = useMemo(() => {
+        const now = new Date()
+        // Límite inferior: mes de apertura o Enero del año en curso
+        const startStr = openingMonth || `${now.getFullYear()}-01`
+        const start = new Date(startStr + '-01T00:00:00')
+        // Límite superior: 3 meses adelante (planificación anticipada)
+        const end = new Date(now.getFullYear(), now.getMonth() + 3, 1)
+        const opts = []
+        let d = new Date(end)
+        while (d >= start) {
+            const y = d.getFullYear()
+            const m = String(d.getMonth() + 1).padStart(2, '0')
+            opts.push({ val: `${y}-${m}`, label: `${MONTHS[d.getMonth()]} ${y}` })
+            d = new Date(y, d.getMonth() - 1, 1)
+        }
+        return opts
+    }, [openingMonth])
 
     const selStyle = {
         padding: '7px 12px', borderRadius: 7, border: '1px solid var(--border-color)',
