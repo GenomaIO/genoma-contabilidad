@@ -11,6 +11,7 @@
  * Estados: OPEN → CLOSING → CLOSED
  */
 import { useState, useEffect, useCallback } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useApp } from '../context/AppContext'
 
 const MESES = ['', 'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
@@ -38,6 +39,7 @@ export default function CierrePeriodo() {
     const role = state.user?.role
     const isAdmin = role === 'admin'
     const isContador = role === 'contador' || isAdmin
+    const navigate = useNavigate()
 
     const opts = periodOptions()
     const [period, setPeriod] = useState(opts[1]?.ym || opts[0]?.ym)
@@ -378,13 +380,15 @@ export default function CierrePeriodo() {
                     <div style={{ fontSize: '0.82rem', color: 'var(--text-muted)', marginBottom: 12 }}>
                         Los libros digitales (Diario, Mayor, Inventarios y Balances) están listos.
                     </div>
-                    <a href="/libros-digitales"
+                    <button
+                        onClick={() => navigate('/libros-digitales')}
                         style={{
                             display: 'inline-block', padding: '8px 20px', background: '#7c3aed', color: 'white',
-                            borderRadius: 8, fontWeight: 700, fontSize: '0.88rem', textDecoration: 'none'
-                        }}>
+                            borderRadius: 8, fontWeight: 700, fontSize: '0.88rem', border: 'none', cursor: 'pointer'
+                        }}
+                    >
                         📚 Ir a Libros Digitales →
-                    </a>
+                    </button>
                 </div>
             )}
 
