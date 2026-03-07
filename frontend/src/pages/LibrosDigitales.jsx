@@ -142,17 +142,48 @@ export default function LibrosDigitales() {
     async function exportMayorPDF(ym) {
         try {
             const d = await getLibro(ym, 'mayor')
-            const rows = d.cuentas.map(c =>
-                `<tr><td>${c.cuenta}</td><td>${c.nombre || ''}</td><td>${c.tipo || ''}</td>
-                 <td class="num">${formatMoney(c.saldo_inicial)}</td>
-                 <td class="num">${formatMoney(c.debe)}</td>
-                 <td class="num">${formatMoney(c.haber)}</td>
-                 <td class="num"><strong>${formatMoney(c.saldo_cierre)}</strong></td></tr>`
-            ).join('')
+            // Orden contable estándar CR: Activo → Pasivo → Patrimonio → Ingreso → Gasto
+            const TIPO_ORDER = ['ACTIVO', 'PASIVO', 'PATRIMONIO', 'EQUITY', 'INGRESO', 'INCOME', 'GASTO', 'EXPENSE']
+            const TIPO_LABEL = {
+                ACTIVO: 'ACTIVOS', PASIVO: 'PASIVOS', PATRIMONIO: 'PATRIMONIO',
+                EQUITY: 'PATRIMONIO', INGRESO: 'INGRESOS', INCOME: 'INGRESOS',
+                GASTO: 'GASTOS', EXPENSE: 'GASTOS'
+            }
+            // Agrupar por tipo normalizado
+            const grupos = {}
+            TIPO_ORDER.forEach(t => { grupos[t] = [] })
+            d.cuentas.forEach(c => {
+                const tipoKey = (c.tipo || '').toUpperCase()
+                if (grupos[tipoKey]) grupos[tipoKey].push(c)
+                else grupos['GASTO'] = [...(grupos['GASTO'] || []), c]
+            })
+            // Generar filas con encabezados de sección
+            let rowsHtml = ''
+            const seccionesVistas = new Set()
+            TIPO_ORDER.forEach(tipo => {
+                const cuentas = grupos[tipo] || []
+                if (cuentas.length === 0) return
+                const label = TIPO_LABEL[tipo] || tipo
+                if (seccionesVistas.has(label)) return
+                seccionesVistas.add(label)
+                // Encabezado de sección
+                rowsHtml += `<tr style="background:#e8e8e8"><td colspan="7" style="font-weight:700;font-size:10px;padding:5px 8px;border-top:2px solid #999">${label}</td></tr>`
+                // Filas de la sección ordenadas por código
+                const sorted = [...cuentas].sort((a, b) => (a.cuenta || '').localeCompare(b.cuenta || ''))
+                sorted.forEach(c => {
+                    rowsHtml += `<tr>
+                        <td>${c.cuenta}</td><td>${c.nombre || ''}</td><td>${c.tipo || ''}</td>
+                        <td class="num">${formatMoney(c.saldo_inicial)}</td>
+                        <td class="num">${formatMoney(c.debe)}</td>
+                        <td class="num">${formatMoney(c.haber)}</td>
+                        <td class="num"><strong>${formatMoney(c.saldo_cierre)}</strong></td>
+                    </tr>`
+                })
+            })
             printBook('LIBRO MAYOR', tenant, ym,
                 `<table><thead><tr><th>CUENTA</th><th>NOMBRE</th><th>TIPO</th>
                  <th>SALDO INICIAL</th><th>DEBE</th><th>HABER</th><th>SALDO CIERRE</th></tr></thead>
-                 <tbody>${rows}</tbody></table>`)
+                 <tbody>${rowsHtml}</tbody></table>`)
         } catch (e) { alert(`Error: ${e.message}`) }
     }
 
