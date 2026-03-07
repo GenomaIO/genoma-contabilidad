@@ -251,8 +251,124 @@ def create_entry(
 
 
 # ─────────────────────────────────────────────────────────────────
-# PATCH /ledger/entries/{entry_id}/approve — DRAFT → POSTED
+# DELETE /ledger/entries/{entry_id} — Eliminar DRAFT (no POSTED)
 # ─────────────────────────────────────────────────────────────────
+
+@router.delete("/entries/{entry_id}", status_code=200)
+def delete_draft_entry(
+    entry_id: str,
+    current_user: dict = Depends(get_current_user),
+    db:           Session = Depends(get_session),
+):
+    """
+    Elimina permanentemente un asiento DRAFT.
+    Solo DRAFTs pueden eliminarse — POSTED y VOIDED son inmutables (audit trail).
+    """
+    _require_role(current_user["role"], ["admin", "contador"])
+    tenant_id = current_user["tenant_id"]
+
+    entry = db.query(JournalEntry).filter(
+        JournalEntry.id == entry_id,
+        JournalEntry.tenant_id == tenant_id
+    ).first()
+
+    if not entry:
+        raise HTTPException(404, "Asiento no encontrado")
+    if entry.status != EntryStatus.DRAFT:
+        raise HTTPException(400,
+            f"Solo se pueden eliminar asientos BORRADOR. "
+            f"Estado actual: {entry.status.value}. "
+            f"Para asientos Aprobados usa 'Anular' (genera reversión auditada).")
+
+    # Eliminar líneas y asiento
+    db.query(JournalLine).filter(JournalLine.entry_id == entry_id).delete()
+    log_action(
+        db, tenant_id, current_user, AuditAction.ENTRY_VOIDED,
+        entity_type="journal_entry", entity_id=entry_id,
+        before={"status": "DRAFT", "description": entry.description},
+        after={"status": "DELETED"},
+        note="Borrador eliminado por el usuario"
+    )
+    db.delete(entry)
+    db.commit()
+
+    return {"ok": True, "deleted": entry_id}
+
+
+# ─────────────────────────────────────────────────────────────────
+# PATCH /ledger/entries/{entry_id} — Editar DRAFT
+# ─────────────────────────────────────────────────────────────────
+
+@router.patch("/entries/{entry_id}")
+def update_draft_entry(
+    entry_id: str,
+    req:      JournalEntryCreate,
+    current_user: dict = Depends(get_current_user),
+    db:           Session = Depends(get_session),
+):
+    """
+    Edita un asiento DRAFT (fecha, descripción, líneas).
+    Reemplaza las líneas existentes por las nuevas.
+    Solo aplica a DRAFTs — los POSTED son inmutables.
+    """
+    _require_role(current_user["role"], ["admin", "contador"])
+    tenant_id = current_user["tenant_id"]
+
+    entry = db.query(JournalEntry).filter(
+        JournalEntry.id == entry_id,
+        JournalEntry.tenant_id == tenant_id
+    ).first()
+
+    if not entry:
+        raise HTTPException(404, "Asiento no encontrado")
+    if entry.status != EntryStatus.DRAFT:
+        raise HTTPException(400,
+            f"Solo se pueden editar asientos BORRADOR. "
+            f"Estado actual: {entry.status.value}.")
+
+    if not req.lines or len(req.lines) < 2:
+        raise HTTPException(400, "El asiento debe tener al menos 2 líneas")
+    _validate_balance(req.lines)
+
+    now = datetime.now(timezone.utc)
+    old_desc = entry.description
+
+    # Actualizar cabecera
+    entry.date        = req.date
+    entry.description = req.description
+    entry.period      = req.date[:7]
+
+    # Reemplazar líneas
+    db.query(JournalLine).filter(JournalLine.entry_id == entry_id).delete()
+    for l in req.lines:
+        db.add(JournalLine(
+            id           = str(uuid.uuid4()),
+            entry_id     = entry_id,
+            tenant_id    = tenant_id,
+            account_code = l.account_code.upper(),
+            description  = l.description,
+            debit        = round(float(l.debit),  5),
+            credit       = round(float(l.credit), 5),
+            deductible_status = l.deductible_status,
+            legal_basis  = l.legal_basis,
+            dim_segment  = l.dim_segment,
+            dim_branch   = l.dim_branch,
+            dim_project  = l.dim_project,
+            created_at   = now,
+        ))
+
+    log_action(
+        db, tenant_id, current_user, AuditAction.ENTRY_UPDATED,
+        entity_type="journal_entry", entity_id=entry_id,
+        before={"description": old_desc},
+        after={"description": req.description, "lines": len(req.lines)},
+        note=f"[EDIT-DRAFT] {req.description}"
+    )
+    db.commit()
+
+    return {"ok": True, "entry_id": entry_id, "status": "DRAFT", "period": entry.period}
+
+
 
 @router.patch("/entries/{entry_id}/approve")
 def approve_entry(

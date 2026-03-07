@@ -44,8 +44,10 @@ export default function AsientosPendientes() {
     const [acting, setActing] = useState(null)
     const [voidReason, setVoidReason] = useState('')
     const [voidTarget, setVoidTarget] = useState(null)
-    const [revertTarget, setRevertTarget] = useState(null)  // para revert-to-draft
+    const [revertTarget, setRevertTarget] = useState(null)
     const [revertReason, setRevertReason] = useState('')
+    const [deleteTarget, setDeleteTarget] = useState(null)   // para eliminar DRAFT
+    const [editEntryId, setEditEntryId] = useState(null)     // null=crear, id=editar
     const [error, setError] = useState(null)
     const [openingMonth, setOpeningMonth] = useState(null) // '2026-01' — del API /ledger/opening-entry
 
@@ -240,8 +242,40 @@ export default function AsientosPendientes() {
             }
         } finally { setActing(null) }
     }
+    async function handleDelete(entryId) {
+        setActing(entryId)
+        try {
+            const res = await fetch(`${apiUrl}/ledger/entries/${entryId}`, {
+                method: 'DELETE',
+                headers: { Authorization: `Bearer ${token}` }
+            })
+            if (!res.ok) { const e = await res.json(); alert(e.detail || 'Error al eliminar') }
+            else { setDeleteTarget(null); fetchEntries() }
+        } finally { setActing(null) }
+    }
 
-    // ── E1: Lógica del formulario de nuevo asiento ───────────────
+    function handleEditDraft(entry) {
+        // Pre-rellenar el formulario con los datos del asiento existente
+        const prefilled = {
+            date: entry.date || todayStr(),
+            description: entry.description || '',
+            lines: (entry.lines || []).map(l => ({
+                account_code: l.account_code || '',
+                display_code: l.account_code || '',   // se actualiza si el usuario busca
+                description: l.description || '',
+                debit: l.debit ? String(l.debit) : '',
+                credit: l.credit ? String(l.credit) : '',
+                _accName: l.description || '',
+            }))
+        }
+        if (prefilled.lines.length < 2) prefilled.lines.push(EMPTY_LINE())
+        setEditEntryId(entry.id)
+        setForm(prefilled)
+        setFormError(null)
+        setShowForm(true)
+        setTimeout(() => document.getElementById('entry-description')?.focus(), 60)
+    }
+
 
     const totalDebit = useMemo(() => form.lines.reduce((s, l) => s + (parseFloat(l.debit) || 0), 0), [form.lines])
     const totalCredit = useMemo(() => form.lines.reduce((s, l) => s + (parseFloat(l.credit) || 0), 0), [form.lines])
@@ -310,8 +344,13 @@ export default function AsientosPendientes() {
                         deductible_status: 'PENDING',
                     })),
             }
-            const res = await fetch(`${apiUrl}/ledger/entries`, {
-                method: 'POST',
+            // Si editEntryId: PATCH (editar); si no: POST (crear)
+            const url = editEntryId
+                ? `${apiUrl}/ledger/entries/${editEntryId}`
+                : `${apiUrl}/ledger/entries`
+            const method = editEntryId ? 'PATCH' : 'POST'
+            const res = await fetch(url, {
+                method,
                 headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload),
             })
@@ -319,9 +358,7 @@ export default function AsientosPendientes() {
                 const err = await res.json()
                 throw new Error(err.detail || 'Error al guardar el asiento')
             }
-            // Reset form + cerrar modal + refrescar lista mostrando DRAFTs
-            setForm({ date: todayStr(), description: '', lines: [EMPTY_LINE(), EMPTY_LINE()] })
-            setShowForm(false)
+            closeForm()
             setStatus('DRAFT')
             await fetchEntries()
         } catch (e) {
@@ -334,6 +371,7 @@ export default function AsientosPendientes() {
     function closeForm() {
         setShowForm(false)
         setFormError(null)
+        setEditEntryId(null)
         setForm({ date: todayStr(), description: '', lines: [EMPTY_LINE(), EMPTY_LINE()] })
     }
 
@@ -455,33 +493,82 @@ export default function AsientosPendientes() {
                                 <span style={{ fontSize: '0.75rem', padding: '3px 10px', background: sc.color + '22', color: sc.color, borderRadius: 12, fontWeight: 600 }}>
                                     {sc.label}
                                 </span>
+                                {/*
+                      * ── BOTONES DE ACCIÓN ──────────────────────────────────
+                      * DRAFT:  [✎ Editar]  [✓ Aprobar]  [🗑 Eliminar]
+                      * POSTED: [⏪ Revertir]  [Anular]
+                      * Jerarquía: Primaria = Aprobar/Revertir | Secundaria = Editar | Peligro = Eliminar/Anular
+                      * ──────────────────────────────────────────────────
+                      */}
                                 {canWrite && entry.status === 'DRAFT' && (
-                                    <div style={{ display: 'flex', gap: 6 }} onClick={e => e.stopPropagation()}>
-                                        <button id={`approve-${entry.id}`} onClick={() => handleApprove(entry.id)} disabled={acting === entry.id}
-                                            style={{ padding: '4px 12px', background: '#10b981', border: 'none', borderRadius: 6, color: 'white', fontSize: '0.75rem', fontWeight: 700, cursor: 'pointer' }}>
+                                    <div style={{ display: 'flex', gap: 5, alignItems: 'center' }} onClick={e => e.stopPropagation()}>
+                                        {/* Editar — acento suave */}
+                                        <button id={`edit-${entry.id}`}
+                                            onClick={() => handleEditDraft(entry)}
+                                            title="Editar borrador"
+                                            style={{
+                                                display: 'flex', alignItems: 'center', gap: 4,
+                                                padding: '4px 11px', border: '1px solid rgba(124,58,237,0.4)',
+                                                borderRadius: 6, background: 'rgba(124,58,237,0.1)',
+                                                color: '#a78bfa', fontSize: '0.72rem', cursor: 'pointer', fontWeight: 600
+                                            }}>
+                                            ✎ Editar
+                                        </button>
+                                        {/* Aprobar — primario */}
+                                        <button id={`approve-${entry.id}`}
+                                            onClick={() => handleApprove(entry.id)}
+                                            disabled={acting === entry.id}
+                                            style={{
+                                                display: 'flex', alignItems: 'center', gap: 4,
+                                                padding: '4px 12px', border: 'none',
+                                                borderRadius: 6, background: '#10b981',
+                                                color: 'white', fontSize: '0.72rem', cursor: 'pointer', fontWeight: 700
+                                            }}>
                                             {acting === entry.id ? '...' : '✓ Aprobar'}
                                         </button>
-                                        <button id={`void-${entry.id}`} onClick={() => setVoidTarget(entry.id)}
-                                            style={{ padding: '4px 10px', background: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 6, color: '#ef4444', fontSize: '0.75rem', cursor: 'pointer' }}>
-                                            Anular
+                                        {/* Separador visual */}
+                                        <span style={{ width: 1, height: 18, background: 'rgba(255,255,255,0.1)' }} />
+                                        {/* Eliminar — peligro ghost */}
+                                        <button id={`delete-${entry.id}`}
+                                            onClick={() => setDeleteTarget(entry.id)}
+                                            title="Eliminar borrador (sin audit trail)"
+                                            style={{
+                                                display: 'flex', alignItems: 'center',
+                                                padding: '4px 9px', border: '1px solid rgba(239,68,68,0.3)',
+                                                borderRadius: 6, background: 'transparent',
+                                                color: '#f87171', fontSize: '0.72rem', cursor: 'pointer'
+                                            }}>
+                                            🗑
                                         </button>
                                     </div>
                                 )}
                                 {canWrite && entry.status === 'POSTED' && (
-                                    <div style={{ display: 'flex', gap: 6 }} onClick={e => e.stopPropagation()}>
+                                    <div style={{ display: 'flex', gap: 5, alignItems: 'center' }} onClick={e => e.stopPropagation()}>
+                                        {/* Revertir a Borrador */}
                                         <button id={`revert-${entry.id}`}
                                             onClick={() => { setRevertTarget(entry.id); setRevertReason('') }}
-                                            title="Revertir a Borrador (solo períodos abiertos)"
-                                            style={{ padding: '4px 10px', background: 'rgba(245,158,11,0.15)', border: '1px solid rgba(245,158,11,0.4)', borderRadius: 6, color: '#f59e0b', fontSize: '0.72rem', cursor: 'pointer', fontWeight: 600 }}>
+                                            title="Revertir a Borrador (período abierto)"
+                                            style={{
+                                                display: 'flex', alignItems: 'center', gap: 4,
+                                                padding: '4px 10px', border: '1px solid rgba(245,158,11,0.4)',
+                                                borderRadius: 6, background: 'rgba(245,158,11,0.1)',
+                                                color: '#fbbf24', fontSize: '0.72rem', cursor: 'pointer', fontWeight: 600
+                                            }}>
                                             ⏪ Revertir
                                         </button>
-                                        <button id={`void-posted-${entry.id}`} onClick={() => setVoidTarget(entry.id)}
-                                            style={{ padding: '4px 10px', background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.25)', borderRadius: 6, color: '#ef4444', fontSize: '0.72rem', cursor: 'pointer' }}>
+                                        {/* Anular POSTED — genera reversión DRAFT */}
+                                        <button id={`void-posted-${entry.id}`}
+                                            onClick={() => setVoidTarget(entry.id)}
+                                            style={{
+                                                display: 'flex', alignItems: 'center', gap: 4,
+                                                padding: '4px 10px', border: '1px solid rgba(239,68,68,0.3)',
+                                                borderRadius: 6, background: 'transparent',
+                                                color: '#f87171', fontSize: '0.72rem', cursor: 'pointer'
+                                            }}>
                                             Anular
                                         </button>
                                     </div>
                                 )}
-                                <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>{isExpanded ? '▲' : '▼'}</span>
                             </div>
                         </div>
 
@@ -543,7 +630,7 @@ export default function AsientosPendientes() {
 
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
                             <h2 style={{ margin: 0, fontSize: '1.15rem', color: 'var(--text-primary)', fontWeight: 700 }}>
-                                ✦ Nuevo asiento manual
+                                {editEntryId ? '✎ Editar borrador' : '✦ Nuevo asiento manual'}
                             </h2>
                             <button onClick={closeForm} style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', fontSize: '1.4rem', cursor: 'pointer', lineHeight: 1 }}>✕</button>
                         </div>
@@ -809,7 +896,7 @@ export default function AsientosPendientes() {
                             </button>
                             <button id="btn-save-entry" onClick={handleSaveEntry} disabled={!canSave || saving}
                                 style={{ padding: '9px 22px', background: canSave ? '#7c3aed' : 'var(--bg-card)', border: 'none', borderRadius: 8, color: canSave ? 'white' : 'var(--text-muted)', fontWeight: 700, cursor: canSave ? 'pointer' : 'not-allowed', fontSize: '0.88rem', transition: 'all 0.15s' }}>
-                                {saving ? '⏳ Guardando...' : '💾 Guardar DRAFT'}
+                                {saving ? '⏳ Guardando...' : editEntryId ? '✎ Guardar cambios' : '💾 Guardar DRAFT'}
                             </button>
                         </div>
                     </div>
@@ -869,6 +956,30 @@ export default function AsientosPendientes() {
                             <button id="confirm-revert-btn" onClick={() => handleRevertToDraft(revertTarget)} disabled={acting === revertTarget}
                                 style={{ padding: '8px 20px', background: '#f59e0b', border: 'none', borderRadius: 7, color: '#1a1a1a', fontWeight: 700, cursor: 'pointer' }}>
                                 {acting === revertTarget ? 'Revirtiendo...' : '⏪ Confirmar reverso'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* ── Modal: Confirmar eliminar DRAFT ── */}
+            {deleteTarget && (
+                <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+                    <div style={{ background: 'var(--bg-secondary)', borderRadius: 14, padding: 28, maxWidth: 400, width: '100%', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
+                        <h2 style={{ margin: '0 0 10px', fontSize: '1.1rem', color: '#f87171' }}>🗑 Eliminar borrador</h2>
+                        <p style={{ margin: '0 0 20px', fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                            Este borrador se eliminará permanentemente.
+                            <br />
+                            <span style={{ color: '#6b7280', fontSize: '0.78rem' }}>Solo los borradores pueden eliminarse. Los asientos aprobados se anulan (generan reversión).</span>
+                        </p>
+                        <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+                            <button onClick={() => setDeleteTarget(null)}
+                                style={{ padding: '8px 18px', background: 'transparent', border: '1px solid var(--border-color)', borderRadius: 7, color: 'var(--text-secondary)', cursor: 'pointer' }}>
+                                Cancelar
+                            </button>
+                            <button id="confirm-delete-btn" onClick={() => handleDelete(deleteTarget)} disabled={acting === deleteTarget}
+                                style={{ padding: '8px 20px', background: '#ef4444', border: 'none', borderRadius: 7, color: 'white', fontWeight: 700, cursor: 'pointer' }}>
+                                {acting === deleteTarget ? 'Eliminando...' : '🗑 Sí, eliminar'}
                             </button>
                         </div>
                     </div>

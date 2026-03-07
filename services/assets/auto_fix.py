@@ -52,8 +52,14 @@ KNOWN_BAD_ACCOUNT_PAIRS: list[tuple] = [
         "1202.03",  # → Dep. Acum. — Vehículos y Medios de Transporte (no-dotted)
         "Vehículos: 5301.01/1202.04 → 5210.03/1202.03",
     ),
-    # ── Agrega aquí nuevas correcciones si se descubren más casos ────
-    # ("old_gasto", "old_acum", "new_gasto", "new_acum", "descripcion"),
+    # ── Gasto dotted de escr. anterior + activo bruto como dep.acum → corrección ──
+    (
+        "5.2.10.03",  # ← Gasto dotted (formato incorrecto para la BD)
+        "1.2.1.04",   # ← Activo bruto en dotted (1.2.1.04 = Vehículos, NO dep. acumulada)
+        "5210.03",    # → Gasto Dep. — Vehículos y Medios de Transporte
+        "1202.03",    # → Dep. Acum. — Vehículos y Medios de Transporte
+        "Vehículos dotted 5.2.10.03/1.2.1.04 → 5210.03/1202.03",
+    ),
 ]
 
 
