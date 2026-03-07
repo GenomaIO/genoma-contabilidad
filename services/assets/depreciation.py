@@ -169,14 +169,41 @@ def auto_depreciate_period(db: Session, period: str) -> dict:
     logger.info(f"🔄 Auto-Depreciación periodo {period}...")
 
     # Activos ACTIVOS con cuota > 0 de todos los tenants
+    # cuota_mensual es @property Python — se recalcula aquí en SQL con CASE WHEN
+    # para replicar exactamente la lógica del modelo:
+    #   MODO TASA FISCAL (tasa_anual > 0):
+    #     cuota = costo_historico × tasa_anual / 100 / 12
+    #   MODO NIIF DETALLADO (tasa_anual = 0):
+    #     cuota = (costo_historico − valor_residual − dep_acum_apertura)
+    #             / (vida_util_meses − meses_usados_apertura)
     rows = db.execute(text("""
         SELECT
-            id, tenant_id, nombre,
-            dep_gasto_code, dep_acum_code,
-            cuota_mensual
+            id,
+            tenant_id,
+            nombre,
+            dep_gasto_code,
+            dep_acum_code,
+            CASE
+                WHEN tasa_anual IS NOT NULL AND tasa_anual > 0
+                    THEN ROUND(
+                        CAST(costo_historico AS NUMERIC) * CAST(tasa_anual AS NUMERIC)
+                        / 100.0 / 12.0,
+                        5
+                    )
+                WHEN (vida_util_meses - meses_usados_apertura) > 0
+                    THEN ROUND(
+                        (
+                            CAST(costo_historico AS NUMERIC)
+                            - CAST(valor_residual AS NUMERIC)
+                            - CAST(dep_acum_apertura AS NUMERIC)
+                        ) / NULLIF(vida_util_meses - meses_usados_apertura, 0),
+                        5
+                    )
+                ELSE 0
+            END AS cuota_mensual
         FROM fixed_assets
         WHERE estado = 'ACTIVO'
-          AND cuota_mensual > 0
+          AND metodo_depreciacion = 'LINEA_RECTA'
         ORDER BY tenant_id, nombre
     """)).fetchall()
 
