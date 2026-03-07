@@ -25,6 +25,11 @@ from services.auth.security import get_current_user
 from services.assets.models import (
     FixedAsset, AssetCategoria, AssetMetodo, AssetEstado
 )
+from services.ledger.semantic_guard import (
+    validate_depreciation_account_pair,
+    load_accounts_map,
+    SemanticViolationError,
+)
 
 router = APIRouter(prefix="/api/assets", tags=["assets"])
 
@@ -95,6 +100,14 @@ TASAS_CR: Dict[str, float] = {
 class BajaIn(BaseModel):
     motivo: str
     fecha:  str   # 'YYYY-MM-DD'
+
+
+class FixDepreciationBody(BaseModel):
+    """Cuerpo para corregir las cuentas de depreciación de un activo."""
+    new_dep_gasto_code: str        # Cuenta correcta de Gasto Dep. (5.x.x.xx)
+    new_dep_acum_code:  str        # Cuenta correcta de Dep. Acumulada (1.x.x.xx)
+    correction_period:  str        # Período donde se crea el asiento correctivo (YYYY-MM)
+    cuota_override:     Optional[float] = None  # Si quieres forzar monto; None = usa cuota_mensual del activo
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -273,6 +286,17 @@ def create_asset(
         raise HTTPException(400, "valor_residual no puede ser >= costo_historico")
     if body.dep_acum_apertura < 0:
         raise HTTPException(400, "dep_acum_apertura no puede ser negativo")
+
+    # ── Seguro Semántico: validar cuentas antes de guardar ────────────
+    try:
+        accounts_map = load_accounts_map(db, tenant_id)
+        validate_depreciation_account_pair(
+            dep_gasto_code=body.dep_gasto_code,
+            dep_acum_code=body.dep_acum_code,
+            accounts_map=accounts_map,
+        )
+    except SemanticViolationError as e:
+        raise HTTPException(422, str(e))
 
     asset = FixedAsset(
         id                   = _gen_uuid(),
@@ -457,3 +481,196 @@ def dar_de_baja(
     a.baja_motivo = body.motivo
     db.commit()
     return {"message": f"Activo '{a.nombre}' dado de baja", "id": a.id, "estado": "BAJA"}
+
+
+@router.post("/{asset_id}/fix-depreciation-accounts")
+def fix_depreciation_accounts(
+    asset_id: str,
+    body: FixDepreciationBody,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_session),
+):
+    """
+    Corrige las cuentas de depreciación de un activo (cuando se registraron
+    con cuentas incorrectas).
+
+    Flujo (todo en una transacción):
+      1. Valida las cuentas correctas con el seguro semántico.
+      2. Void de todos los DRAFTs de depreciación de este activo.
+      3. Identifica el asiento POSTED incorrecto más reciente.
+      4. Crea asiento correctivo NIIF en correction_period (4 líneas):
+             DR wrong_acum   | CR wrong_gasto   (reversal)
+             DR correct_gasto | CR correct_acum  (registro correcto)
+      5. Actualiza dep_gasto_code y dep_acum_code en fixed_assets.
+      6. Crea nuevo DRAFT con las cuentas correctas.
+
+    HTTP 422 si las cuentas correctas son inválidas semánticamente.
+    """
+    import calendar as _calendar
+    tenant_id = current_user["tenant_id"]
+    user_id   = _uid(current_user)
+
+    # ── 1. Obtener el activo ─────────────────────────────────────────
+    a = db.query(FixedAsset).filter(
+        FixedAsset.id == asset_id,
+        FixedAsset.tenant_id == tenant_id,
+    ).first()
+    if not a:
+        raise HTTPException(404, "Activo no encontrado")
+
+    old_gasto_code = a.dep_gasto_code
+    old_acum_code  = a.dep_acum_code
+    new_gasto_code = body.new_dep_gasto_code
+    new_acum_code  = body.new_dep_acum_code
+    corr_period    = body.correction_period
+
+    # ── 2. Seguro Semántico ─────────────────────────────────────────
+    try:
+        accounts_map = load_accounts_map(db, tenant_id)
+        validate_depreciation_account_pair(
+            dep_gasto_code=new_gasto_code,
+            dep_acum_code=new_acum_code,
+            accounts_map=accounts_map,
+        )
+    except SemanticViolationError as e:
+        raise HTTPException(422, str(e))
+
+    # ── 3. Void todos los DRAFTs de depreciación del activo ─────────
+    draft_entries = db.execute(text("""
+        SELECT je.id FROM journal_entries je
+        WHERE je.tenant_id = :tid
+          AND je.source     = 'DEPRECIACION'
+          AND je.status     = 'DRAFT'
+          AND EXISTS (
+            SELECT 1 FROM journal_lines jl
+            WHERE jl.entry_id     = je.id
+              AND jl.tenant_id   = :tid
+              AND jl.account_code = :old_gasto
+          )
+    """), {"tid": tenant_id, "old_gasto": old_gasto_code}).fetchall()
+
+    voided_ids = []
+    for row in draft_entries:
+        db.execute(text("""
+            UPDATE journal_entries SET status = 'VOIDED'
+            WHERE id = :eid AND tenant_id = :tid
+        """), {"eid": row.id, "tid": tenant_id})
+        voided_ids.append(row.id)
+
+    # ── 4. Encontrar el asiento POSTED incorrecto más reciente ──────
+    posted = db.execute(text("""
+        SELECT je.id, je.period,
+               jl_g.debit  AS wrong_gasto_debit,
+               jl_a.credit AS wrong_acum_credit
+        FROM journal_entries je
+        JOIN journal_lines jl_g ON jl_g.entry_id = je.id
+            AND jl_g.account_code = :old_gasto AND jl_g.debit > 0
+        JOIN journal_lines jl_a ON jl_a.entry_id = je.id
+            AND jl_a.account_code = :old_acum  AND jl_a.credit > 0
+        WHERE je.tenant_id = :tid
+          AND je.source     = 'DEPRECIACION'
+          AND je.status     = 'POSTED'
+        ORDER BY je.period DESC
+        LIMIT 1
+    """), {"tid": tenant_id, "old_gasto": old_gasto_code, "old_acum": old_acum_code}).first()
+
+    corrective_entry_id = None
+    corrective_period   = None
+
+    if posted:
+        cuota = float(body.cuota_override or posted.wrong_gasto_debit or a.cuota_mensual or 0)
+        y, m  = map(int, corr_period.split("-"))
+        last_day = _calendar.monthrange(y, m)[1]
+        corr_date = f"{corr_period}-{last_day:02d}"
+
+        corrective_entry_id = _gen_uuid()
+        desc_corr = f"Corrección dep. {a.nombre} — {posted.period} (cuentas incorrectas)"
+        db.execute(text("""
+            INSERT INTO journal_entries
+                (id, tenant_id, period, date, description, status, source, created_by, created_at)
+            VALUES
+                (:id, :tid, :period, :date, :desc, 'DRAFT', 'MANUAL', :uid, NOW())
+        """), {
+            "id": corrective_entry_id, "tid": tenant_id, "period": corr_period,
+            "date": corr_date, "desc": desc_corr, "uid": user_id,
+        })
+
+        # Línea 1: DR wrong_acum (reversa el Haber incorrecto)
+        db.execute(text("""
+            INSERT INTO journal_lines (id, entry_id, tenant_id, account_code, description, debit, credit, created_at)
+            VALUES (:id, :eid, :tid, :code, :desc, :amt, 0, NOW())
+        """), {"id": _gen_uuid(), "eid": corrective_entry_id, "tid": tenant_id,
+               "code": old_acum_code,  "desc": f"Reversal Dep. Acum. incorrecta — {posted.period}", "amt": cuota})
+
+        # Línea 2: CR wrong_gasto (reversa el Débito incorrecto)
+        db.execute(text("""
+            INSERT INTO journal_lines (id, entry_id, tenant_id, account_code, description, debit, credit, created_at)
+            VALUES (:id, :eid, :tid, :code, :desc, 0, :amt, NOW())
+        """), {"id": _gen_uuid(), "eid": corrective_entry_id, "tid": tenant_id,
+               "code": old_gasto_code, "desc": f"Reversal Gasto Dep. incorrecto — {posted.period}", "amt": cuota})
+
+        # Línea 3: DR correct_gasto (gasto correcto)
+        db.execute(text("""
+            INSERT INTO journal_lines (id, entry_id, tenant_id, account_code, description, debit, credit, created_at)
+            VALUES (:id, :eid, :tid, :code, :desc, :amt, 0, NOW())
+        """), {"id": _gen_uuid(), "eid": corrective_entry_id, "tid": tenant_id,
+               "code": new_gasto_code, "desc": f"Dep. correcta {a.nombre} — {posted.period}", "amt": cuota})
+
+        # Línea 4: CR correct_acum (dep. acumulada correcta)
+        db.execute(text("""
+            INSERT INTO journal_lines (id, entry_id, tenant_id, account_code, description, debit, credit, created_at)
+            VALUES (:id, :eid, :tid, :code, :desc, 0, :amt, NOW())
+        """), {"id": _gen_uuid(), "eid": corrective_entry_id, "tid": tenant_id,
+               "code": new_acum_code, "desc": f"Dep. Acum. correcta {a.nombre} — {posted.period}", "amt": cuota})
+
+        corrective_period = corr_period
+
+    # ── 5. Actualizar cuentas en fixed_assets ────────────────────────
+    a.dep_gasto_code = new_gasto_code
+    a.dep_acum_code  = new_acum_code
+    db.commit()
+
+    # ── 6. Generar nuevo DRAFT con cuentas correctas ─────────────────
+    new_draft_id = None
+    cuota_activo = a.cuota_mensual
+    if cuota_activo and cuota_activo > 0 and corrective_period:
+        new_draft_id = _gen_uuid()
+        y2, m2  = map(int, corr_period.split("-"))
+        last_day2 = _calendar.monthrange(y2, m2)[1]
+        desc_new = f"Depreciación {a.nombre} — {corr_period} (corregido)"
+        db.execute(text("""
+            INSERT INTO journal_entries
+                (id, tenant_id, period, date, description, status, source, created_by, created_at)
+            VALUES (:id, :tid, :period, :date, :desc, 'DRAFT', 'DEPRECIACION', :uid, NOW())
+        """), {"id": new_draft_id, "tid": tenant_id, "period": corr_period,
+               "date": f"{corr_period}-{last_day2:02d}", "desc": desc_new, "uid": user_id})
+        db.execute(text("""
+            INSERT INTO journal_lines (id, entry_id, tenant_id, account_code, description, debit, credit, created_at)
+            VALUES (:id, :eid, :tid, :code, :desc, :amt, 0, NOW())
+        """), {"id": _gen_uuid(), "eid": new_draft_id, "tid": tenant_id,
+               "code": new_gasto_code, "desc": desc_new, "amt": cuota_activo})
+        db.execute(text("""
+            INSERT INTO journal_lines (id, entry_id, tenant_id, account_code, description, debit, credit, created_at)
+            VALUES (:id, :eid, :tid, :code, :desc, 0, :amt, NOW())
+        """), {"id": _gen_uuid(), "eid": new_draft_id, "tid": tenant_id,
+               "code": new_acum_code, "desc": desc_new, "amt": cuota_activo})
+        db.commit()
+
+    return {
+        "asset_id":             asset_id,
+        "asset_nombre":         a.nombre,
+        "old_dep_gasto_code":   old_gasto_code,
+        "old_dep_acum_code":    old_acum_code,
+        "new_dep_gasto_code":   new_gasto_code,
+        "new_dep_acum_code":    new_acum_code,
+        "voided_drafts":        voided_ids,
+        "corrective_entry_id": corrective_entry_id,
+        "corrective_period":   corrective_period,
+        "new_draft_id":         new_draft_id,
+        "message": (
+            f"Activo actualizado. "
+            f"{len(voided_ids)} DRAFT(s) anulado(s). "
+            f"{'Asiento correctivo NIIF creado en DRAFT — revisa en el Diario.' if corrective_entry_id else 'Sin entrada POSTED para corregir.'} "
+            f"{'Nuevo DRAFT de depreciación generado.' if new_draft_id else ''}"
+        )
+    }

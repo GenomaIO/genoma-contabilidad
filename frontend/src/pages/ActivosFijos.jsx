@@ -18,6 +18,19 @@ const TASAS_CR = [
 ]
 const TASA_BY_CAT = Object.fromEntries(TASAS_CR.map(t => [t.categoria, t.tasa]))
 
+// Sugerencias de cuentas contables por categoría
+// ⚠️  Estos son SUGERENCIAS según el catálogo estándar CR — el contador debe verificar
+const CUENTAS_DEP_BY_CAT = {
+    // VEHICULO: actualizado con las cuentas reales del sistema
+    VEHICULO: { dep_acum: '1.2.1.04', dep_gasto: '5.2.10.03' },
+    // Las demás: placeholder vacío hasta que el contador confirme sus cuentas
+    EQUIPO: { dep_acum: '', dep_gasto: '' },
+    INMUEBLE: { dep_acum: '', dep_gasto: '' },
+    MOBILIARIO: { dep_acum: '', dep_gasto: '' },
+    INTANGIBLE: { dep_acum: '', dep_gasto: '' },
+    OTRO: { dep_acum: '', dep_gasto: '' },
+}
+
 const METODOS = [
     { value: 'LINEA_RECTA', label: 'Línea Recta (NIIF)' },
     { value: 'SALDO_DECRECIENTE', label: 'Saldo Decreciente' },
@@ -175,21 +188,34 @@ export default function ActivosFijos() {
         }
     }
 
-    // ── Cambiar categoría → auto-fill tasa ───────────────────────
+    // ── Cambiar categoría → auto-fill tasa + sugerir cuentas ─────────
     const handleCategoriaChange = (cat) => {
         const tasa = TASA_BY_CAT[cat] ?? 10
-        setForm(f => ({ ...f, categoria: cat, tasa_anual: String(tasa) }))
+        const cuentas = CUENTAS_DEP_BY_CAT[cat] || { dep_acum: '', dep_gasto: '' }
+        setForm(f => ({
+            ...f,
+            categoria: cat,
+            tasa_anual: String(tasa),
+            // Solo sugerir si el campo aún no fue editado manualmente
+            dep_acum_code: f.dep_acum_code || cuentas.dep_acum,
+            dep_gasto_code: f.dep_gasto_code || cuentas.dep_gasto,
+        }))
     }
 
     // ── Pre-llenar desde apertura ─────────────────────────────────
     const prefillFromLine = (line) => {
-        const cat = 'VEHICULO' // default para 1201.04 vehículos
+        // Inferir categoría desde el account_code de la apertura
+        const catMap = { '1201.01': 'INMUEBLE', '1201.02': 'EQUIPO', '1201.03': 'MOBILIARIO', '1201.04': 'VEHICULO' }
+        const cat = catMap[line.account_code] || 'VEHICULO'
+        const cuentas = CUENTAS_DEP_BY_CAT[cat] || {}
         setForm({
             ...EMPTY,
             categoria: cat,
             account_code: line.account_code,
-            dep_acum_code: line.suggested_dep_acum || '',
-            dep_gasto_code: '5301.01',
+            // Para dep_acum: usar suggested_dep_acum del backend si existe, si no, sugerir por categoría
+            dep_acum_code: line.suggested_dep_acum || cuentas.dep_acum || '',
+            // Para dep_gasto: usar sugerencia por categoría (NO hardcode 5301.01)
+            dep_gasto_code: cuentas.dep_gasto || '',
             costo_historico: String(line.debit || ''),
             apertura_line_id: line.line_id,
             fecha_adquisicion: line.entry_date?.slice(0, 10) || '',
@@ -407,9 +433,9 @@ export default function ActivosFijos() {
                         <div style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-muted)', marginBottom: 10, letterSpacing: '0.05em' }}>MAPEO CONTABLE (3 cuentas requeridas)</div>
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
                             {[
-                                { field: 'account_code', label: 'Cuenta Costo *', ph: '1201.04' },
-                                { field: 'dep_acum_code', label: 'Dep. Acumulada *', ph: '1202.03' },
-                                { field: 'dep_gasto_code', label: 'Gasto Depreciación *', ph: '5301.01' },
+                                { field: 'account_code', label: 'Cuenta Costo *', ph: '1.2.1.04 (ej. Vehículos)' },
+                                { field: 'dep_acum_code', label: 'Dep. Acumulada ⚠️ *', ph: '1.2.X.XX — verificar catálogo' },
+                                { field: 'dep_gasto_code', label: 'Gasto Depreciación ⚠️ *', ph: '5.2.X.XX — verificar catálogo' },
                             ].map(({ field, label, ph }) => (
                                 <div key={field}>
                                     <label style={{ fontSize: '0.72rem', color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>{label}</label>
