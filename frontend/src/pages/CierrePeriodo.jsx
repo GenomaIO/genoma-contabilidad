@@ -97,13 +97,13 @@ export default function CierrePeriodo() {
                 const d = await rCierre.json()
                 setHasCierre(Array.isArray(d) ? d.length > 0 : (d.total || 0) > 0)
             }
-            // Check 4: Balance cuadrado — via balance endpoint
-            const rBal = await fetch(`${apiUrl}/ledger/balance?period=${period}`, {
+            // Check 4: Balance cuadrado — via trial-balance endpoint
+            const rBal = await fetch(`${apiUrl}/ledger/trial-balance?period=${period}&acumulado=false`, {
                 headers: { Authorization: `Bearer ${token}` }
             })
             if (rBal.ok) {
                 const d = await rBal.json()
-                setBalanced(d.balanced === true || d.is_balanced === true)
+                setBalanced(d.balanced === true)
             }
         } catch { /* net error */ }
         finally { setLoadingChecks(false) }
