@@ -7,6 +7,11 @@ const NAV_ITEMS = [
         section: 'Principal',
         items: [
             { icon: '📊', label: 'Dashboard', path: '/' },
+        ]
+    },
+    {
+        section: 'Registros Contables',
+        items: [
             { icon: '📒', label: 'Diario', path: '/diario' },
             { icon: '📈', label: 'Mayor', path: '/mayor' },
             { icon: '⚖️', label: 'Balance', path: '/balance' },
