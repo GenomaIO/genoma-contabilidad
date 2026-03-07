@@ -160,11 +160,13 @@ function BracketsPanel({ token, tenantId, fiscalYear, taxpayerType, label }) {
 /* ─── Página principal ─── */
 export default function PerfilFiscal() {
     const { state } = useApp()
-    const token = state.token
+    // Misma fuente de token que Dashboard — gc_token en localStorage
+    const token = state.token || localStorage.getItem('gc_token')
 
     // Perfil fiscal
     const [profile, setProfile] = useState({ taxpayer_type: 'PJ', is_large_taxpayer: false, fiscal_year_end_month: 9 })
-    const [profileLoaded, setProfileLoaded] = useState(false)
+    // Iniciar en true: muestra el form de inmediato con defaults mientras la API responde
+    const [profileLoaded, setProfileLoaded] = useState(true)
     const [savingProfile, setSavingProfile] = useState(false)
     const [profileMsg, setProfileMsg] = useState(null)
 
