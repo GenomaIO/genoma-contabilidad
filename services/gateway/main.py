@@ -274,6 +274,25 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning(f"⚠️  Migración M_PERIOD omitida: {e}")
 
+        # ── Migración M_CLEANUP_5900_01: eliminar cuenta fantasma ────
+        # La cuenta '5900.01' fue creada accidentalmente por el bug de
+        # nextChildCode (generaba prefijo-string en lugar de parent_code).
+        # Solo se elimina si existe y NO tiene asientos → 100% seguro.
+        try:
+            with _engine.begin() as conn:
+                conn.execute(text("""
+                    DELETE FROM accounts
+                    WHERE code = '5900.01'
+                      AND NOT EXISTS (
+                          SELECT 1 FROM journal_lines jl
+                          WHERE jl.account_code = '5900.01'
+                            AND jl.tenant_id = accounts.tenant_id
+                      )
+                """))
+            logger.info("✅ Migración M_CLEANUP_5900_01: cuenta fantasma eliminada (si existía)")
+        except Exception as e:
+            logger.warning(f"⚠️  Migración M_CLEANUP_5900_01 omitida: {e}")
+
     # ── Auto-reseed: al arrancar, aplica cuentas nuevas del seed a TODOS
     # los tenants con cuentas existentes. Usa seed_standard_catalog()
     # con raw SQL / ON CONFLICT DO NOTHING — igual que el boton Sembrar.
