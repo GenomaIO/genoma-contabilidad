@@ -21,6 +21,13 @@ CÓMO AGREGAR CORRECCIONES FUTURAS:
   Agrega una tupla a KNOWN_BAD_ACCOUNT_PAIRS:
   (old_dep_gasto, old_dep_acum, new_dep_gasto, new_dep_acum, descripcion)
 ─────────────────────────────────────────────────────────────────────
+
+NOTA SOBRE FORMATO DE CÓDIGOS:
+  El catálogo y la BD almacenan los códigos en formato NO-DOTTED:
+    1202.03 = Dep. Acum. Vehículos   (display: 1.2.2.03)
+    5210.03 = Gasto Dep. Vehículos   (display: 5.2.10.03)
+  Los valores de este archivo DEBEN usar el formato no-dotted.
+─────────────────────────────────────────────────────────────────────
 """
 
 import logging
@@ -34,16 +41,16 @@ logger = logging.getLogger("genoma.assets.auto_fix")
 #
 # Formato: (old_dep_gasto, old_dep_acum, new_dep_gasto, new_dep_acum, label)
 #
-# Cada tupla representa un caso conocido de cuentas incorrectas que debe
-# corregirse automáticamente en todos los tenants afectados.
+# Usa siempre el formato NO-DOTTED (como el catálogo: 1202.03, 5210.03).
+# El display dotted (1.2.2.03, 5.2.10.03) es solo visual.
 #
 KNOWN_BAD_ACCOUNT_PAIRS: list[tuple] = [
     (
-        "5301.01",   # ← Intereses Préstamos (incorrecto como gasto dep.)
-        "1202.04",   # ← Dep. Acumulada incorrecta
-        "5.2.10.03", # → Gasto Dep. Vehículos y Medios de Transporte
-        "1.2.1.04",  # → Dep. Acum. Vehículos y Medios de Transporte
-        "Vehículos: 5301.01/1202.04 → 5.2.10.03/1.2.1.04",
+        "5301.01",  # ← Gasto incorrecto (no es cuenta de depreciación)
+        "1202.04",  # ← Dep. Acum. Mobiliario (incorrecto para Vehículos)
+        "5210.03",  # → Gasto Dep. — Vehículos y Medios de Transporte (no-dotted)
+        "1202.03",  # → Dep. Acum. — Vehículos y Medios de Transporte (no-dotted)
+        "Vehículos: 5301.01/1202.04 → 5210.03/1202.03",
     ),
     # ── Agrega aquí nuevas correcciones si se descubren más casos ────
     # ("old_gasto", "old_acum", "new_gasto", "new_acum", "descripcion"),

@@ -123,20 +123,24 @@ export default function Dashboard() {
             fetch(`${apiUrl}/ledger/period/${activePeriod}/status`, { headers: h })
                 .then(r => r.ok ? r.json() : null),
         ]).then(([tbRes, entriesRes, draftRes, statusRes]) => {
-            // KPIs
-            const tb = tbRes.status === 'fulfilled' ? (tbRes.value || []) : []
-            if (Array.isArray(tb)) {
+            // KPIs — trial_balance devuelve { period, lines:[...], ... } (no un array)
+            const tbRaw = tbRes.status === 'fulfilled' ? tbRes.value : null
+            const tb = Array.isArray(tbRaw) ? tbRaw : (tbRaw?.lines || [])
+            if (tb.length > 0) {
                 const sum = (type, sign) => {
                     const rows = tb.filter(r => r.account_type === type)
                     return rows.reduce((acc, r) => {
-                        const net = (r.debit || 0) - (r.credit || 0)
+                        // API devuelve total_debit / total_credit (no debit / credit)
+                        const td = r.total_debit ?? r.debit ?? 0
+                        const tc = r.total_credit ?? r.credit ?? 0
+                        const net = td - tc
                         return acc + (sign === 'debit' ? net : -net)
                     }, 0)
                 }
                 const ingresos = Math.abs(sum('INGRESO', 'credit'))
                 const gastos = Math.abs(sum('GASTO', 'debit'))
                 setKpis({
-                    activos: sum('ACTIVO', 'debit'),
+                    activos: sum('ACTIVO', 'debit'),      // Dep.Acum (CR > DR) resta automáticamente
                     pasivos: Math.abs(sum('PASIVO', 'credit')),
                     patrimonio: Math.abs(sum('PATRIMONIO', 'credit')),
                     resultado: ingresos - gastos,

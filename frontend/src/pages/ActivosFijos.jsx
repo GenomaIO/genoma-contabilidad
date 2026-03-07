@@ -18,16 +18,15 @@ const TASAS_CR = [
 ]
 const TASA_BY_CAT = Object.fromEntries(TASAS_CR.map(t => [t.categoria, t.tasa]))
 
-// Sugerencias de cuentas contables por categoría
-// ⚠️  Estos son SUGERENCIAS según el catálogo estándar CR — el contador debe verificar
+// Sugerencias de cuentas contables por categoría (catálogo estándar CR)
+// Códigos en formato NO-DOTTED (como la BD los almacena: 1202.03, 5210.03)
+// El display dotted (1.2.2.03, 5.2.10.03) es solo visual en el Libro Mayor
 const CUENTAS_DEP_BY_CAT = {
-    // VEHICULO: actualizado con las cuentas reales del sistema
-    VEHICULO: { dep_acum: '1.2.1.04', dep_gasto: '5.2.10.03' },
-    // Las demás: placeholder vacío hasta que el contador confirme sus cuentas
-    EQUIPO: { dep_acum: '', dep_gasto: '' },
-    INMUEBLE: { dep_acum: '', dep_gasto: '' },
-    MOBILIARIO: { dep_acum: '', dep_gasto: '' },
-    INTANGIBLE: { dep_acum: '', dep_gasto: '' },
+    VEHICULO: { dep_acum: '1202.03', dep_gasto: '5210.03' }, // Vehículos y Medios de Transporte
+    EQUIPO: { dep_acum: '1202.02', dep_gasto: '5210.02' }, // Maquinaria y Equipo Industrial
+    INMUEBLE: { dep_acum: '1202.01', dep_gasto: '5210.01' }, // Edificios y Construcciones
+    MOBILIARIO: { dep_acum: '1202.04', dep_gasto: '5210.04' }, // Mobiliario y Equipo de Oficina
+    INTANGIBLE: { dep_acum: '', dep_gasto: '' },         // sin mapeo estándar
     OTRO: { dep_acum: '', dep_gasto: '' },
 }
 
