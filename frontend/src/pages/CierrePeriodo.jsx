@@ -17,13 +17,20 @@ import { useApp } from '../context/AppContext'
 const MESES = ['', 'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
     'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
 
-function periodOptions() {
+// Genera opciones desde fromYm hasta el mes siguiente al actual
+function periodOptions(fromYm) {
+    if (!fromYm) return []
     const opts = []
     const now = new Date()
-    for (let i = 0; i <= 11; i++) {
-        const d = new Date(now.getFullYear(), now.getMonth() - i, 1)
-        const ym = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
-        opts.push({ ym, label: `${MESES[d.getMonth() + 1]} ${d.getFullYear()}` })
+    const [fy, fm] = fromYm.split('-').map(Number)
+    const fromDate = new Date(fy, fm - 1, 1)
+    // Incluir hasta el mes siguiente al actual (para el período activo)
+    let d = new Date(now.getFullYear(), now.getMonth() + 1, 1)
+    while (d >= fromDate) {
+        const y = d.getFullYear(), m = d.getMonth() + 1
+        const ym = `${y}-${String(m).padStart(2, '0')}`
+        opts.push({ ym, label: `${MESES[m]} ${y} (${ym})` })
+        d = new Date(y, d.getMonth() - 1, 1)
     }
     return opts
 }
@@ -41,8 +48,12 @@ export default function CierrePeriodo() {
     const isContador = role === 'contador' || isAdmin
     const navigate = useNavigate()
 
-    const opts = periodOptions()
-    const [period, setPeriod] = useState(opts[1]?.ym || opts[0]?.ym)
+    const [openingMonth, setOpeningMonth] = useState(null)   // primer mes de apertura
+    const [lastClosedPeriod, setLastClosedPeriod] = useState(null)  // último CLOSED
+    const [period, setPeriod] = useState(null)                // mes a trabajar (auto)
+
+    // opts dinámicos — solo desde openingMonth hasta hoy+1
+    const opts = periodOptions(openingMonth)
 
     // Estado del período
     const [status, setStatus] = useState('OPEN')
@@ -62,7 +73,52 @@ export default function CierrePeriodo() {
     const [closing, setClosing] = useState(false)
     const [confirmLock, setConfirmLock] = useState(false)
 
-    // ── Cargar estado del período ────────────────────────────────
+    // ── Descubrir openingMonth y último período CLOSED ──────────
+    useEffect(() => {
+        if (!token) return
+        const h = { Authorization: `Bearer ${token}` }
+        fetch(`${apiUrl}/ledger/opening-entry`, { headers: h })
+            .then(r => r.ok ? r.json() : null)
+            .then(data => {
+                const now = new Date()
+                const curYm = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+                const fromYm = data?.date?.slice(0, 7) || curYm
+                setOpeningMonth(fromYm)
+                // Buscar el último período CLOSED desde la apertura hacia atrás
+                const [fy, fm] = fromYm.split('-').map(Number)
+                const months = []
+                let d = new Date(now.getFullYear(), now.getMonth(), 1)
+                const fromDate = new Date(fy, fm - 1, 1)
+                while (d >= fromDate) {
+                    const y = d.getFullYear(), m = d.getMonth() + 1
+                    months.push(`${y}-${String(m).padStart(2, '0')}`)
+                    d = new Date(y, d.getMonth() - 1, 1)
+                }
+                Promise.all(months.map(ym =>
+                    fetch(`${apiUrl}/ledger/period/${ym}/status`, { headers: h })
+                        .then(r => r.ok ? r.json() : { year_month: ym, status: 'OPEN' })
+                        .catch(() => ({ year_month: ym, status: 'OPEN' }))
+                )).then(results => {
+                    const closed = results.find(r => r.status === 'CLOSED')
+                    if (closed) {
+                        setLastClosedPeriod(closed.year_month)
+                        const [cy, cm] = closed.year_month.split('-').map(Number)
+                        const nxt = cm === 12 ? `${cy + 1}-01` : `${cy}-${String(cm + 1).padStart(2, '0')}`
+                        setPeriod(nxt)
+                    } else {
+                        // Sin cierres: default al mes de apertura
+                        setPeriod(fromYm)
+                    }
+                })
+            })
+            .catch(() => {
+                const now = new Date()
+                const cur = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+                setPeriod(cur)
+            })
+    }, [token])
+
+    // ── Cargar estado del período ─────────────────────────────────
     const loadStatus = useCallback(async () => {
         if (!token || !period) return
         setLoadingStatus(true)
