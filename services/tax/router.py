@@ -32,7 +32,7 @@ class FiscalProfileIn(BaseModel):
 
 
 class TaxBracket(BaseModel):
-    taxpayer_type: str          # 'PJ' | 'PF'
+    taxpayer_type: Optional[str] = None  # redundante si viene en TaxBracketsIn; se acepta pero no es requerido
     income_from: float
     income_to: Optional[float]  # None = sin límite superior
     rate: float                 # 0.05 = 5%
