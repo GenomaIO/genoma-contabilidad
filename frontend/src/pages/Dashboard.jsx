@@ -1,22 +1,35 @@
 /**
  * Dashboard.jsx — Resumen Contable · Datos en vivo
  *
+ * Lógica de períodos (clase mundial):
+ *   · lastClosedPeriod = último mes con status CLOSED   → fuente de KPIs y últimos asientos
+ *   · activePeriod     = mes siguiente al cerrado       → fuente de "Estado del Período"
+ *
  * Conecta:
- *   · GET /ledger/trial-balance?period=YM   → KPIs (Activos/Pasivos/Patrimonio/Resultado)
- *   · GET /ledger/entries?period=YM          → Últimos 5 asientos
- *   · GET /ledger/entries?period=YM&status=DRAFT → conteo DRAFTs
- *   · GET /ledger/opening-entry              → ¿há apertura?
- *   · GET /ledger/period/{ym}/status         → estado del período
+ *   · GET /ledger/period/{ym}/status               → descubrir lastClosedPeriod
+ *   · GET /ledger/trial-balance?period=CLOSED      → KPIs (Activos/Pasivos/Patrimonio/Resultado)
+ *   · GET /ledger/entries?period=CLOSED            → Últimos 5 asientos del mes cerrado
+ *   · GET /ledger/entries?period=ACTIVE&status=DRAFT → conteo DRAFTs del mes activo
+ *   · GET /ledger/opening-entry                    → ¿hay apertura?
  */
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useApp } from '../context/AppContext'
 
-const MONTHS = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic']
+const MONTHS_FULL = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
+    'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
+const MONTHS_SHORT = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic']
 
-function getCurrentPeriod() {
-    const d = new Date()
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+function ymLabel(ym, full = false) {
+    if (!ym) return '—'
+    const [y, m] = ym.split('-')
+    return `${(full ? MONTHS_FULL : MONTHS_SHORT)[parseInt(m) - 1]} ${y}`
+}
+
+function nextYm(ym) {
+    if (!ym) return null
+    const [y, m] = ym.split('-').map(Number)
+    return m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, '0')}`
 }
 
 function fmt(n) {
@@ -33,59 +46,85 @@ export default function Dashboard() {
     const apiUrl = import.meta.env.VITE_API_URL || ''
     const token = localStorage.getItem('gc_token')
 
-    const [period, setPeriod] = useState(getCurrentPeriod())
-    const [openingMonth, setOpeningMonth] = useState(null)
+    // ── Períodos calculados automáticamente ─────────────────────
+    const [lastClosedPeriod, setLastClosedPeriod] = useState(null)  // '2026-01'
+    const [activePeriod, setActivePeriod] = useState(null)          // '2026-02'
+    const [discovering, setDiscovering] = useState(true)
 
-    // Datos
+    // ── Datos ──────────────────────────────────────────────────
     const [kpis, setKpis] = useState({ activos: null, pasivos: null, patrimonio: null, resultado: null })
     const [recentEntries, setRecentEntries] = useState([])
     const [draftCount, setDraftCount] = useState(null)
     const [hasApertura, setHasApertura] = useState(null)
-    const [periodStatus, setPeriodStatus] = useState(null)
+    const [activePeriodStatus, setActivePeriodStatus] = useState(null)
     const [loading, setLoading] = useState(true)
 
-    // ── Apertura (una sola vez) ─────────────────────────────────
+    const h = { Authorization: `Bearer ${token}` }
+
+    // ── Paso 1: Descubrir el último período cerrado ─────────────
     useEffect(() => {
         if (!token) return
-        fetch(`${apiUrl}/ledger/opening-entry`, { headers: { Authorization: `Bearer ${token}` } })
+        setDiscovering(true)
+        const now = new Date()
+        const checks = []
+        for (let i = 0; i < 13; i++) {
+            const d = new Date(now.getFullYear(), now.getMonth() - i, 1)
+            checks.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`)
+        }
+        Promise.all(checks.map(ym =>
+            fetch(`${apiUrl}/ledger/period/${ym}/status`, { headers: h })
+                .then(r => r.ok ? r.json() : { year_month: ym, status: 'OPEN' })
+                .catch(() => ({ year_month: ym, status: 'OPEN' }))
+        )).then(results => {
+            const closed = results.find(r => r.status === 'CLOSED')
+            if (closed) {
+                const lcp = closed.year_month
+                setLastClosedPeriod(lcp)
+                setActivePeriod(nextYm(lcp))
+            } else {
+                // Sin períodos cerrados: el período activo es el mes actual
+                const cur = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+                setActivePeriod(cur)
+            }
+        }).finally(() => setDiscovering(false))
+    }, [token])
+
+    // ── Paso 2: Apertura (una sola vez) ─────────────────────────
+    useEffect(() => {
+        if (!token) return
+        fetch(`${apiUrl}/ledger/opening-entry`, { headers: h })
             .then(r => r.ok ? r.json() : null)
-            .then(data => {
-                setHasApertura(!!data)
-                if (data?.date) {
-                    const ym = data.date.slice(0, 7)
-                    setOpeningMonth(ym)
-                    setPeriod(p => p < ym ? ym : p)
-                }
-            })
+            .then(data => setHasApertura(!!data))
             .catch(() => setHasApertura(false))
     }, [token])
 
-    // ── Datos dependientes del período ─────────────────────────
+    // ── Paso 3: Datos cuando se conocen los períodos ────────────
     useEffect(() => {
-        if (!token) return
-        setLoading(true)
+        if (!token || discovering) return
+        if (!activePeriod) return
 
-        const h = { Authorization: `Bearer ${token}` }
+        setLoading(true)
+        const kpiPeriod = lastClosedPeriod || activePeriod
 
         Promise.allSettled([
-            // 1. Trial balance → KPIs por tipo
-            fetch(`${apiUrl}/ledger/trial-balance?period=${period}&acumulado=true`, { headers: h })
+            // 1. Trial balance del ÚLTIMO CERRADO → KPIs
+            fetch(`${apiUrl}/ledger/trial-balance?period=${kpiPeriod}&acumulado=true`, { headers: h })
                 .then(r => r.ok ? r.json() : []),
 
-            // 2. Últimos 5 asientos del período
-            fetch(`${apiUrl}/ledger/entries?period=${period}`, { headers: h })
+            // 2. Últimos asientos del MES CERRADO
+            fetch(`${apiUrl}/ledger/entries?period=${kpiPeriod}`, { headers: h })
                 .then(r => r.ok ? r.json() : []),
 
-            // 3. DRAFTs pendientes
-            fetch(`${apiUrl}/ledger/entries?period=${period}&status=DRAFT`, { headers: h })
+            // 3. DRAFTs del MES ACTIVO (a trabajar)
+            fetch(`${apiUrl}/ledger/entries?period=${activePeriod}&status=DRAFT`, { headers: h })
                 .then(r => r.ok ? r.json() : []),
 
-            // 4. Estado del período
-            fetch(`${apiUrl}/ledger/period/${period}/status`, { headers: h })
+            // 4. Estado del MES ACTIVO
+            fetch(`${apiUrl}/ledger/period/${activePeriod}/status`, { headers: h })
                 .then(r => r.ok ? r.json() : null),
         ]).then(([tbRes, entriesRes, draftRes, statusRes]) => {
-            // KPIs del trial balance
-            const tb = tbRes.status === 'fulfilled' ? tbRes.value : []
+            // KPIs
+            const tb = tbRes.status === 'fulfilled' ? (tbRes.value || []) : []
             if (Array.isArray(tb)) {
                 const sum = (type, sign) => {
                     const rows = tb.filter(r => r.account_type === type)
@@ -103,8 +142,7 @@ export default function Dashboard() {
                     resultado: ingresos - gastos,
                 })
             }
-
-            // Últimos 5 asientos
+            // Asientos del mes cerrado
             const allEntries = entriesRes.status === 'fulfilled' ? (entriesRes.value || []) : []
             setRecentEntries(allEntries.slice(-5).reverse())
 
@@ -112,29 +150,13 @@ export default function Dashboard() {
             const drafts = draftRes.status === 'fulfilled' ? (draftRes.value || []) : []
             setDraftCount(drafts.length)
 
-            // Estado período
+            // Estado del mes activo
             const pst = statusRes.status === 'fulfilled' ? statusRes.value : null
-            setPeriodStatus(pst?.status || 'OPEN')
+            setActivePeriodStatus(pst?.status || 'OPEN')
         }).finally(() => setLoading(false))
-    }, [period, token])
+    }, [lastClosedPeriod, activePeriod, discovering, token])
 
-    // ── Opciones de período dinámicas ──────────────────────────
-    const periodOptions = useMemo(() => {
-        const now = new Date()
-        const startStr = openingMonth || `${now.getFullYear()}-01`
-        const start = new Date(startStr + '-01T00:00:00')
-        const end = new Date(now.getFullYear(), now.getMonth() + 3, 1)
-        const opts = []
-        let d = new Date(end)
-        while (d >= start) {
-            const y = d.getFullYear(), m = String(d.getMonth() + 1).padStart(2, '0')
-            opts.push({ val: `${y}-${m}`, label: `${MONTHS[d.getMonth()]} ${y}` })
-            d = new Date(y, d.getMonth() - 1, 1)
-        }
-        return opts
-    }, [openingMonth])
-
-    // ── Tareas dinámicas ────────────────────────────────────────
+    // ── Tareas del mes activo ────────────────────────────────────
     const tasks = [
         {
             label: 'Apertura del ejercicio creada',
@@ -155,62 +177,43 @@ export default function Dashboard() {
             actionLabel: 'Ver Diario',
         },
         {
-            label: periodStatus === 'CLOSED'
-                ? `Período ${period} cerrado ✓`
-                : `Período ${period}: ${PERIOD_LABELS[periodStatus] || '—'}`,
-            done: periodStatus === 'CLOSED',
-            pending: periodStatus === null,
+            label: activePeriodStatus === 'CLOSED'
+                ? `Período ${activePeriod} cerrado ✓`
+                : `Período ${activePeriod}: ${PERIOD_LABELS[activePeriodStatus] || '—'}`,
+            done: activePeriodStatus === 'CLOSED',
+            pending: activePeriodStatus === null,
             action: () => navigate('/cierre'),
             actionLabel: 'Ir a Cierre',
         },
     ]
     const pendingCount = tasks.filter(t => !t.done && !t.pending).length
 
-    // ── KPI Cards ───────────────────────────────────────────────
+    // ── KPI Cards ────────────────────────────────────────────────
     const cards = [
         {
-            label: 'Activos',
-            value: fmt(kpis.activos),
-            icon: '🏦',
-            color: '#3b82f6',
-            bg: 'rgba(59,130,246,0.12)',
-            positive: (kpis.activos || 0) > 0,
+            label: 'Activos', value: fmt(kpis.activos), icon: '🏦',
+            color: '#3b82f6', bg: 'rgba(59,130,246,0.12)',
         },
         {
-            label: 'Pasivos',
-            value: fmt(kpis.pasivos),
-            icon: '📋',
-            color: '#ef4444',
-            bg: 'rgba(239,68,68,0.10)',
-            positive: false,
+            label: 'Pasivos', value: fmt(kpis.pasivos), icon: '📋',
+            color: '#ef4444', bg: 'rgba(239,68,68,0.10)',
         },
         {
-            label: 'Patrimonio',
-            value: fmt(kpis.patrimonio),
-            icon: '💎',
-            color: '#8b5cf6',
-            bg: 'rgba(139,92,246,0.12)',
-            positive: (kpis.patrimonio || 0) > 0,
+            label: 'Patrimonio', value: fmt(kpis.patrimonio), icon: '💎',
+            color: '#8b5cf6', bg: 'rgba(139,92,246,0.12)',
         },
         {
             label: 'Resultado',
             value: kpis.resultado !== null
                 ? (kpis.resultado >= 0 ? `▲ ${fmt(kpis.resultado)}` : `▼ ${fmt(kpis.resultado)}`)
                 : '—',
-            icon: kpis.resultado >= 0 ? '📈' : '📉',
+            icon: (kpis.resultado || 0) >= 0 ? '📈' : '📉',
             color: (kpis.resultado || 0) >= 0 ? '#10b981' : '#ef4444',
             bg: (kpis.resultado || 0) >= 0 ? 'rgba(16,185,129,0.10)' : 'rgba(239,68,68,0.10)',
-            positive: (kpis.resultado || 0) >= 0,
         },
     ]
 
-    const selStyle = {
-        padding: '6px 10px', borderRadius: 7, border: '1px solid var(--border-color)',
-        background: 'var(--bg-card)', color: 'var(--text-primary)', fontSize: '0.82rem',
-        cursor: 'pointer',
-    }
-
-    const statusColor = PERIOD_COLORS[periodStatus] || '#6b7280'
+    const activeStatusColor = PERIOD_COLORS[activePeriodStatus] || '#6b7280'
 
     return (
         <div style={{ padding: '20px 0', fontFamily: 'Inter, sans-serif' }}>
@@ -220,42 +223,34 @@ export default function Dashboard() {
                 <div>
                     <h2 style={{ fontSize: '1.3rem', fontWeight: 700, margin: 0 }}>Resumen Contable</h2>
                     <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: 3 }}>
-                        Vista en tiempo real del período activo
+                        {lastClosedPeriod
+                            ? <>Balanza de comprobación al cierre de <strong>{ymLabel(lastClosedPeriod, true)}</strong></>
+                            : 'Sin períodos cerrados aún'}
                     </p>
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                    {/* Período selector */}
-                    <select value={period} onChange={e => setPeriod(e.target.value)} style={selStyle}>
-                        {periodOptions.map(o => <option key={o.val} value={o.val}>{o.label}</option>)}
-                    </select>
-                    {/* Estado del período */}
-                    {periodStatus && (
-                        <span style={{
-                            padding: '4px 10px', borderRadius: 20,
-                            fontSize: '0.75rem', fontWeight: 600,
-                            background: `${statusColor}22`, color: statusColor,
-                            border: `1px solid ${statusColor}44`,
-                        }}>
-                            {PERIOD_LABELS[periodStatus] || periodStatus}
-                        </span>
-                    )}
-                </div>
+                {/* Badge estado activo */}
+                {activePeriod && (
+                    <span style={{
+                        padding: '4px 12px', borderRadius: 20,
+                        fontSize: '0.75rem', fontWeight: 600,
+                        background: `${activeStatusColor}22`, color: activeStatusColor,
+                        border: `1px solid ${activeStatusColor}44`,
+                        alignSelf: 'center',
+                    }}>
+                        {ymLabel(activePeriod)} · {PERIOD_LABELS[activePeriodStatus] || '—'}
+                    </span>
+                )}
             </div>
 
-            {/* ── KPI Cards ── */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 14, marginBottom: 20 }}>
+            {/* ── KPI Cards — datos del último período CLOSED ── */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 14, marginBottom: 4 }}>
                 {cards.map(card => (
                     <div key={card.label} style={{
-                        background: 'var(--bg-card)',
-                        borderRadius: 14,
-                        padding: '16px 18px',
-                        border: '1px solid var(--border-color)',
+                        background: 'var(--bg-card)', borderRadius: 14,
+                        padding: '16px 18px', border: '1px solid var(--border-color)',
                         display: 'flex', alignItems: 'center', gap: 14,
-                        transition: 'transform 0.15s',
-                        cursor: 'default',
                         position: 'relative', overflow: 'hidden',
                     }}>
-                        {/* Glow accent */}
                         <div style={{
                             position: 'absolute', top: 0, right: 0,
                             width: 80, height: 80, borderRadius: '0 14px 0 80px',
@@ -275,47 +270,61 @@ export default function Dashboard() {
                             </div>
                             <div style={{
                                 fontSize: '1.05rem', fontWeight: 700, marginTop: 3,
-                                color: loading ? 'var(--text-muted)' : card.color,
+                                color: loading || discovering ? 'var(--text-muted)' : card.color,
                                 fontVariantNumeric: 'tabular-nums',
                             }}>
-                                {loading ? <span style={{ opacity: 0.4 }}>Cargando...</span> : card.value}
+                                {loading || discovering ? <span style={{ opacity: 0.4 }}>—</span> : card.value}
                             </div>
                         </div>
                     </div>
                 ))}
             </div>
+            {/* Fuente de los KPIs */}
+            <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginBottom: 18, paddingLeft: 2 }}>
+                {lastClosedPeriod
+                    ? `📊 Datos acumulados al cierre de ${ymLabel(lastClosedPeriod, true)}`
+                    : '📊 Sin período cerrado — mostrando período en curso'}
+            </div>
 
-            {/* ── Últimos Asientos + Tareas ── */}
+            {/* ── Últimos Asientos + Estado del Período ── */}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 14 }}>
 
-                {/* Últimos Asientos */}
+                {/* Últimos Asientos — del MES CERRADO */}
                 <div style={{ background: 'var(--bg-card)', borderRadius: 14, padding: 18, border: '1px solid var(--border-color)' }}>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
-                        <span style={{ fontWeight: 700, fontSize: '0.9rem' }}>📒 Últimos Asientos</span>
+                        <div>
+                            <span style={{ fontWeight: 700, fontSize: '0.9rem' }}>📒 Últimos Asientos</span>
+                            {lastClosedPeriod && (
+                                <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginLeft: 8 }}>
+                                    {ymLabel(lastClosedPeriod, true)}
+                                </span>
+                            )}
+                        </div>
                         <button
                             onClick={() => navigate('/diario')}
                             style={{
                                 background: 'none', border: 'none', color: 'var(--accent)',
-                                fontSize: '0.78rem', cursor: 'pointer', padding: '2px 6px',
-                                borderRadius: 5, transition: 'background 0.15s',
+                                fontSize: '0.78rem', cursor: 'pointer', padding: '2px 6px', borderRadius: 5,
                             }}
                         >
                             Ver todos →
                         </button>
                     </div>
 
-                    {loading ? (
+                    {loading || discovering ? (
                         <div style={{ color: 'var(--text-muted)', fontSize: '0.82rem', textAlign: 'center', padding: '20px 0', opacity: 0.6 }}>
                             ⏳ Cargando...
                         </div>
                     ) : recentEntries.length === 0 ? (
                         <div style={{ color: 'var(--text-muted)', fontSize: '0.82rem', textAlign: 'center', padding: '24px 0' }}>
-                            Sin asientos en {MONTHS[parseInt(period.split('-')[1]) - 1]} {period.split('-')[0]}
+                            {lastClosedPeriod
+                                ? `Sin asientos en ${ymLabel(lastClosedPeriod, true)}`
+                                : 'Aún no hay períodos cerrados'}
                         </div>
                     ) : (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                             {recentEntries.map(e => {
-                                const statusColor = e.status === 'POSTED' ? '#10b981' : e.status === 'DRAFT' ? '#f59e0b' : '#ef4444'
+                                const sc = e.status === 'POSTED' ? '#10b981' : e.status === 'DRAFT' ? '#f59e0b' : '#ef4444'
                                 return (
                                     <div key={e.id} style={{
                                         display: 'flex', justifyContent: 'space-between', alignItems: 'center',
@@ -333,7 +342,7 @@ export default function Dashboard() {
                                         </div>
                                         <span style={{
                                             fontSize: '0.68rem', fontWeight: 700, padding: '2px 7px',
-                                            borderRadius: 10, background: `${statusColor}22`, color: statusColor, flexShrink: 0,
+                                            borderRadius: 10, background: `${sc}22`, color: sc, flexShrink: 0,
                                         }}>
                                             {e.status}
                                         </span>
@@ -344,10 +353,17 @@ export default function Dashboard() {
                     )}
                 </div>
 
-                {/* Tareas Pendientes */}
+                {/* Estado del Período — del MES ACTIVO (siguiente al cerrado) */}
                 <div style={{ background: 'var(--bg-card)', borderRadius: 14, padding: 18, border: '1px solid var(--border-color)' }}>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
-                        <span style={{ fontWeight: 700, fontSize: '0.9rem' }}>✅ Estado del Período</span>
+                        <div>
+                            <span style={{ fontWeight: 700, fontSize: '0.9rem' }}>✅ Estado del Período</span>
+                            {activePeriod && (
+                                <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginLeft: 8 }}>
+                                    {ymLabel(activePeriod, true)}
+                                </span>
+                            )}
+                        </div>
                         {pendingCount > 0 && (
                             <span style={{
                                 padding: '2px 9px', borderRadius: 20,
@@ -357,7 +373,7 @@ export default function Dashboard() {
                                 {pendingCount} pendiente{pendingCount !== 1 ? 's' : ''}
                             </span>
                         )}
-                        {pendingCount === 0 && !loading && (
+                        {pendingCount === 0 && !loading && !discovering && (
                             <span style={{
                                 padding: '2px 9px', borderRadius: 20,
                                 fontSize: '0.72rem', fontWeight: 700,
@@ -375,9 +391,7 @@ export default function Dashboard() {
                                 padding: '10px 12px', borderRadius: 9,
                                 background: task.done
                                     ? 'rgba(16,185,129,0.06)'
-                                    : task.pending
-                                        ? 'rgba(255,255,255,0.02)'
-                                        : 'rgba(239,68,68,0.06)',
+                                    : task.pending ? 'rgba(255,255,255,0.02)' : 'rgba(239,68,68,0.06)',
                                 border: `1px solid ${task.done ? 'rgba(16,185,129,0.2)' : task.pending ? 'var(--border-color)' : 'rgba(239,68,68,0.2)'}`,
                             }}>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
@@ -417,7 +431,7 @@ export default function Dashboard() {
                                 flex: 1, padding: '8px 0', borderRadius: 8,
                                 border: '1px solid var(--border-color)', background: 'transparent',
                                 color: 'var(--text-secondary)', fontSize: '0.78rem', cursor: 'pointer',
-                                fontWeight: 600, transition: 'all 0.15s',
+                                fontWeight: 600,
                             }}
                         >
                             📆 Ir a Cierre
@@ -428,7 +442,7 @@ export default function Dashboard() {
                                 flex: 1, padding: '8px 0', borderRadius: 8,
                                 border: '1px solid var(--border-color)', background: 'transparent',
                                 color: 'var(--text-secondary)', fontSize: '0.78rem', cursor: 'pointer',
-                                fontWeight: 600, transition: 'all 0.15s',
+                                fontWeight: 600,
                             }}
                         >
                             📚 Libros Digitales
@@ -436,26 +450,7 @@ export default function Dashboard() {
                     </div>
                 </div>
             </div>
-
-            {/* ── Health Bar ── */}
-            <div style={{
-                display: 'flex', alignItems: 'center', gap: 10,
-                padding: '10px 16px', borderRadius: 10,
-                border: `1px solid ${state.apiStatus === 'ok' ? 'rgba(16,185,129,0.3)' : 'rgba(239,68,68,0.3)'}`,
-                background: state.apiStatus === 'ok' ? 'rgba(16,185,129,0.06)' : 'rgba(239,68,68,0.06)',
-            }}>
-                <div style={{
-                    width: 7, height: 7, borderRadius: '50%',
-                    background: state.apiStatus === 'ok' ? '#10b981' : '#ef4444',
-                    boxShadow: state.apiStatus === 'ok' ? '0 0 6px #10b981' : '0 0 6px #ef4444',
-                    flexShrink: 0,
-                }} />
-                <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-                    {state.apiStatus === 'checking' && '⏳ Verificando conexión...'}
-                    {state.apiStatus === 'ok' && '🟢 API y base de datos operativas · Datos actualizados en tiempo real'}
-                    {state.apiStatus === 'error' && '🔴 Sin conexión con el servidor — Verificar Render'}
-                </span>
-            </div>
+            {/* Barra API eliminada — ya existe en el footer del Sidebar */}
         </div>
     )
 }
