@@ -60,6 +60,7 @@ class EntrySource(str, enum.Enum):
     FEC      = "FEC"       # Factura Electrónica de Compra (tipo 08 compra)
     RECIBIDO = "RECIBIDO"  # Documento recibido (lado comprador)
     CIERRE   = "CIERRE"    # Asiento de cierre de período
+    DEPRECIACION = "DEPRECIACION"  # Depreciación automática mensual de activos fijos
 
 
 class DeductibleStatus(str, enum.Enum):

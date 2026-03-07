@@ -293,6 +293,19 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning(f"⚠️  Migración M_CLEANUP_5900_01 omitida: {e}")
 
+        # ── Migración M_ENUM_DEPRECIACION: añadir valor al enum Postgres ──
+        # Postgres Enum Hazard: ALTER TYPE entrysource ADD VALUE es idempotente
+        # con IF NOT EXISTS — no falla si ya existe. Necesario porque
+        # SQLAlchemy no altera enums existentes al modificar el modelo Python.
+        try:
+            with _engine.begin() as conn:
+                conn.execute(text(
+                    "ALTER TYPE entrysource ADD VALUE IF NOT EXISTS 'DEPRECIACION'"
+                ))
+            logger.info("✅ Migración M_ENUM_DEPRECIACION: valor DEPRECIACION en entrysource")
+        except Exception as e:
+            logger.warning(f"⚠️  Migración M_ENUM_DEPRECIACION omitida: {e}")
+
     # ── Auto-reseed: al arrancar, aplica cuentas nuevas del seed a TODOS
     # los tenants con cuentas existentes. Usa seed_standard_catalog()
     # con raw SQL / ON CONFLICT DO NOTHING — igual que el boton Sembrar.
