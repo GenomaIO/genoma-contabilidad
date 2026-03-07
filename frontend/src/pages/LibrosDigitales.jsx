@@ -66,6 +66,16 @@ export default function LibrosDigitales() {
     const [loading, setLoading] = useState(true)
     const [loadingLib, setLoadingLib] = useState({})
     const [error, setError] = useState(null)
+    const [expanded, setExpanded] = useState(new Set())
+
+    function toggleMes(ym) {
+        setExpanded(prev => {
+            const next = new Set(prev)
+            if (next.has(ym)) next.delete(ym)
+            else next.add(ym)
+            return next
+        })
+    }
 
     // ── Cargar historial de períodos CLOSED ─────────────────────
     useEffect(() => {
@@ -85,7 +95,10 @@ export default function LibrosDigitales() {
             }).then(r => r.ok ? r.json() : { year_month: ym, status: 'OPEN' })
                 .catch(() => ({ year_month: ym, status: 'OPEN' }))
         )).then(results => {
-            setMeses(results.filter(r => r.status === 'CLOSED').map(r => r.year_month))
+            const closed = results.filter(r => r.status === 'CLOSED').map(r => r.year_month)
+            setMeses(closed)
+            // Expandir el primero por defecto
+            if (closed.length > 0) setExpanded(new Set([closed[0]]))
         }).finally(() => setLoading(false))
     }, [token, apiUrl])
 
@@ -294,12 +307,16 @@ export default function LibrosDigitales() {
                     border: '1px solid var(--border-color)', marginBottom: 16,
                     overflow: 'hidden'
                 }}>
-                    {/* Header del mes */}
-                    <div style={{
-                        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                        padding: '12px 18px', borderBottom: '1px solid var(--border-color)',
-                        background: 'rgba(16,185,129,0.06)'
-                    }}>
+                    {/* Header del mes — clickable para expandir/colapsar */}
+                    <div
+                        onClick={() => toggleMes(ym)}
+                        style={{
+                            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                            padding: '12px 18px', borderBottom: expanded.has(ym) ? '1px solid var(--border-color)' : 'none',
+                            background: 'rgba(16,185,129,0.06)', cursor: 'pointer',
+                            userSelect: 'none',
+                        }}
+                    >
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                             <span style={{ fontSize: '1.1rem' }}>🔒</span>
                             <div>
@@ -309,58 +326,61 @@ export default function LibrosDigitales() {
                                 <div style={{ fontSize: '0.72rem', color: '#10b981' }}>CERRADO · {ym}</div>
                             </div>
                         </div>
+                        <span style={{ fontSize: '1rem', color: 'var(--text-muted)', transition: 'transform 0.2s', display: 'inline-block', transform: expanded.has(ym) ? 'rotate(0deg)' : 'rotate(-90deg)' }}>▾</span>
                     </div>
 
-                    {/* Los 3 libros */}
-                    <div style={{ padding: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
-                        {libros.map(lib => {
-                            const keyPDF = `${ym}-${lib.key}-pdf`
-                            const keyCSV = `${ym}-${lib.key}-csv`
-                            return (
-                                <div key={lib.key} style={{
-                                    display: 'flex', alignItems: 'center',
-                                    justifyContent: 'space-between', padding: '10px 14px',
-                                    borderRadius: 8, background: 'var(--bg-header)',
-                                    border: '1px solid var(--border-color)'
-                                }}>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                                        <span style={{ fontSize: '1.1rem' }}>{lib.icon}</span>
-                                        <div>
-                                            <div style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-primary)' }}>
-                                                {lib.titulo}
+                    {/* Los 3 libros — solo si expandido */}
+                    {expanded.has(ym) && (
+                        <div style={{ padding: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                            {libros.map(lib => {
+                                const keyPDF = `${ym}-${lib.key}-pdf`
+                                const keyCSV = `${ym}-${lib.key}-csv`
+                                return (
+                                    <div key={lib.key} style={{
+                                        display: 'flex', alignItems: 'center',
+                                        justifyContent: 'space-between', padding: '10px 14px',
+                                        borderRadius: 8, background: 'var(--bg-header)',
+                                        border: '1px solid var(--border-color)'
+                                    }}>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                                            <span style={{ fontSize: '1.1rem' }}>{lib.icon}</span>
+                                            <div>
+                                                <div style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-primary)' }}>
+                                                    {lib.titulo}
+                                                </div>
+                                                <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{lib.desc}</div>
                                             </div>
-                                            <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{lib.desc}</div>
+                                        </div>
+                                        <div style={{ display: 'flex', gap: 6 }}>
+                                            <button
+                                                id={`btn-${lib.key}-pdf-${ym}`}
+                                                onClick={() => lib.onPDF(ym)}
+                                                disabled={loadingLib[`${ym}-${lib.key}`]}
+                                                style={{
+                                                    padding: '6px 12px', background: '#7c3aed', border: 'none',
+                                                    borderRadius: 6, color: 'white', cursor: 'pointer',
+                                                    fontSize: '0.78rem', fontWeight: 600
+                                                }}>
+                                                {loadingLib[`${ym}-${lib.key}`] ? '⏳' : '📥 PDF'}
+                                            </button>
+                                            <button
+                                                id={`btn-${lib.key}-csv-${ym}`}
+                                                onClick={() => lib.onCSV(ym)}
+                                                disabled={loadingLib[`${ym}-${lib.key}`]}
+                                                style={{
+                                                    padding: '6px 12px', background: 'transparent',
+                                                    border: '1px solid var(--border-color)', borderRadius: 6,
+                                                    color: 'var(--text-secondary)', cursor: 'pointer',
+                                                    fontSize: '0.78rem'
+                                                }}>
+                                                📊 CSV
+                                            </button>
                                         </div>
                                     </div>
-                                    <div style={{ display: 'flex', gap: 6 }}>
-                                        <button
-                                            id={`btn-${lib.key}-pdf-${ym}`}
-                                            onClick={() => lib.onPDF(ym)}
-                                            disabled={loadingLib[`${ym}-${lib.key}`]}
-                                            style={{
-                                                padding: '6px 12px', background: '#7c3aed', border: 'none',
-                                                borderRadius: 6, color: 'white', cursor: 'pointer',
-                                                fontSize: '0.78rem', fontWeight: 600
-                                            }}>
-                                            {loadingLib[`${ym}-${lib.key}`] ? '⏳' : '📥 PDF'}
-                                        </button>
-                                        <button
-                                            id={`btn-${lib.key}-csv-${ym}`}
-                                            onClick={() => lib.onCSV(ym)}
-                                            disabled={loadingLib[`${ym}-${lib.key}`]}
-                                            style={{
-                                                padding: '6px 12px', background: 'transparent',
-                                                border: '1px solid var(--border-color)', borderRadius: 6,
-                                                color: 'var(--text-secondary)', cursor: 'pointer',
-                                                fontSize: '0.78rem'
-                                            }}>
-                                            📊 CSV
-                                        </button>
-                                    </div>
-                                </div>
-                            )
-                        })}
-                    </div>
+                                )
+                            })}
+                        </div>
+                    )}
                 </div>
             ))}
         </div>
