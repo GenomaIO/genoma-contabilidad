@@ -60,7 +60,7 @@ export default function LibrosDigitales() {
     const { state } = useApp()
     const apiUrl = import.meta.env.VITE_API_URL || ''
     const token = localStorage.getItem('gc_token')
-    const tenant = state.user?.company || state.user?.name || 'Empresa'
+    const tenant = (state.user?.nombre || 'Empresa').toUpperCase()
 
     const [meses, setMeses] = useState([])
     const [loading, setLoading] = useState(true)
