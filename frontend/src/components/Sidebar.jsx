@@ -15,6 +15,7 @@ const NAV_ITEMS = [
             { icon: '📒', label: 'Diario', path: '/diario' },
             { icon: '📈', label: 'Mayor', path: '/mayor' },
             { icon: '⚖️', label: 'Balance', path: '/balance' },
+            { icon: '📆', label: 'Cierre', path: '/cierre' },
         ]
     },
     {
@@ -52,7 +53,6 @@ const NAV_ITEMS = [
         section: 'Reportes',
         items: [
             { icon: '📑', label: 'Estados Financieros', path: '/reportes' },
-            { icon: '📆', label: 'Cierre', path: '/cierre' },
             { icon: '📚', label: 'Libros Digitales', path: '/libros-digitales' },
             { icon: '📝', label: 'Notas EEFF', path: '/reportes/notas', coming: true },
         ]
