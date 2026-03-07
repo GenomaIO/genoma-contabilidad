@@ -333,6 +333,24 @@ async def lifespan(app: FastAPI):
         except Exception as _e:
             logger.warning(f"⚠️  Auto-reseed omitido: {_e}")
 
+    # ── Auto-Fix: Corrección de cuentas incorrectas en activos ──────
+    # Corre ANTES del recovery de depreciación para que los DRAFTs
+    # regenerados ya usen las cuentas correctas.
+    # Idempotente: si no hay cuentas incorrectas, no hace nada.
+    if _engine:
+        try:
+            from services.assets.auto_fix import fix_bad_depreciation_accounts
+            from sqlalchemy.orm import Session as _FixSession
+            with _FixSession(_engine) as _fix_sess:
+                _fix_result = fix_bad_depreciation_accounts(_fix_sess)
+            if _fix_result["fixed_assets"] > 0:
+                logger.info(
+                    f"🔧 Auto-Fix Dep.: {_fix_result['fixed_assets']} activo(s) corregido(s), "
+                    f"{_fix_result['voided_drafts']} DRAFT(s) anulado(s)"
+                )
+        except Exception as _fix_err:
+            logger.warning(f"⚠️  Auto-Fix Dep. omitido: {_fix_err}")
+
     # ── Auto-Depreciación: Startup Recovery ─────────────────────
     # Al arrancar, genera los asientos DRAFT de depreciación para
     # todos los meses sin cobertura (desde apertura hasta mes anterior).
@@ -358,6 +376,7 @@ async def lifespan(app: FastAPI):
 
     yield
     logger.info("🛑 Genoma Contabilidad cerrando...")
+
 
 
 app = FastAPI(
