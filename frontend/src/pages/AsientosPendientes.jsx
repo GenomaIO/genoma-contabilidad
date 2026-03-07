@@ -6,7 +6,7 @@
  * Asistente: solo visualiza — no puede crear ni aprobar.
  * Todo con audit trail — Reglas de Oro.
  */
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { useApp } from '../context/AppContext'
 
 const STATUS_CONFIG = {
@@ -65,7 +65,15 @@ export default function AsientosPendientes() {
     const role = state.user?.role
     const canWrite = role === 'admin' || role === 'contador'
 
-    useEffect(() => { fetchEntries() }, [period, statusFilter])
+    // ── Ref para foco post-render (en lugar de setTimeout frágil) ─────────────────
+    const pendingFocusRef = useRef(null)
+    useEffect(() => {
+        if (pendingFocusRef.current) {
+            const el = document.getElementById(pendingFocusRef.current)
+            if (el) { el.focus(); pendingFocusRef.current = null }
+        }
+    })  // sin deps: corre después de cada render — seguro por la guarda de la ref
+
 
     // Cargar SOLO cuentas de movimiento (hojas) con display_code — principio NIIF
     useEffect(() => {
@@ -208,14 +216,10 @@ export default function AsientosPendientes() {
     }
 
     function addLineAndFocus() {
-        // Crea línea nueva + pone foco en su campo de cuenta (abre picker automáticamente)
+        // Guarda el ID del campo a foquear; el useEffect lo resuelve DESPUÉS del render
+        const newIdx = form.lines.length
+        pendingFocusRef.current = `line-account-${newIdx}`
         setForm(f => ({ ...f, lines: [...f.lines, EMPTY_LINE()] }))
-        // El timeout asegura que React renderice la nueva fila antes de intentar el foco
-        setTimeout(() => {
-            const newIdx = form.lines.length  // índice de la línea que se está creando
-            const el = document.getElementById(`line-account-${newIdx}`)
-            el?.focus()
-        }, 50)
     }
 
     function removeLine(i) {
@@ -507,7 +511,13 @@ export default function AsientosPendientes() {
                                                     const hi = pickers[i]?.hi || 0
                                                     if (e.key === 'ArrowDown') { e.preventDefault(); setPickers(p => ({ ...p, [i]: { ...p[i], hi: Math.min(hi + 1, items.length - 1) } })) }
                                                     if (e.key === 'ArrowUp') { e.preventDefault(); setPickers(p => ({ ...p, [i]: { ...p[i], hi: Math.max(hi - 1, 0) } })) }
-                                                    if ((e.key === 'Enter' || e.key === 'Tab') && items[hi]) { e.preventDefault(); selectAccount(i, items[hi]); if (e.key === 'Tab') document.getElementById(`line-debit-${i}`)?.focus() }
+                                                    if (e.key === 'Enter' && items[hi]) { e.preventDefault(); selectAccount(i, items[hi]) }
+                                                    if (e.key === 'Tab' && !e.shiftKey) {
+                                                        e.preventDefault()
+                                                        if (items[hi]) selectAccount(i, items[hi])  // selecciona si hay item resaltado
+                                                        else closePicker(i)                          // cierra picker si no
+                                                        pendingFocusRef.current = `line-debit-${i}`  // foco al débito siempre
+                                                    }
                                                     if (e.key === 'Escape') closePicker(i)
                                                 }}
                                                 onBlur={() => setTimeout(() => closePicker(i), 180)}
