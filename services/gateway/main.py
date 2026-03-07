@@ -320,6 +320,29 @@ async def lifespan(app: FastAPI):
         except Exception as _e:
             logger.warning(f"⚠️  Auto-reseed omitido: {_e}")
 
+    # ── Auto-Depreciación: Startup Recovery ─────────────────────
+    # Al arrancar, genera los asientos DRAFT de depreciación para
+    # todos los meses sin cobertura (desde apertura hasta mes anterior).
+    # Idempotente: omite períodos que ya tienen asiento.
+    # En Marzo 2026 → genera Enero + Febrero automáticamente.
+    if _engine:
+        try:
+            from services.assets.depreciation import startup_depreciation_recovery
+            from sqlalchemy.orm import Session as _DepSession
+            with _DepSession(_engine) as _dep_sess:
+                _dep_results = startup_depreciation_recovery(_dep_sess)
+            if _dep_results:
+                total_dep = sum(r.get("created", 0) for r in _dep_results)
+                periods_dep = [r["period"] for r in _dep_results]
+                logger.info(
+                    f"✅ Auto-Depreciación: {total_dep} asientos DRAFT generados "
+                    f"en {len(_dep_results)} período(s): {periods_dep}"
+                )
+            else:
+                logger.info("✅ Auto-Depreciación: sin períodos pendientes")
+        except Exception as _dep_err:
+            logger.warning(f"⚠️  Auto-Depreciación omitida: {_dep_err}")
+
     yield
     logger.info("🛑 Genoma Contabilidad cerrando...")
 
@@ -386,6 +409,34 @@ def api_root():
             "document": "🔴 pending",
         },
     }
+
+
+# ── Job manual: trigger depreciación (Render Cron / emergencia) ──
+# POST /jobs/monthly-depreciation?secret=DEP_JOB_SECRET&period=2026-01
+@app.post("/jobs/monthly-depreciation")
+def trigger_monthly_depreciation(secret: str, period: str = None):
+    """Genera DRAFT de depreciación para todos los activos. Idempotente."""
+    if secret != os.getenv("DEP_JOB_SECRET", "genoma-dep-secret-2026"):
+        from fastapi import HTTPException as _HE
+        raise _HE(403, "Clave secreta inválida")
+    if not _engine:
+        from fastapi import HTTPException as _HE
+        raise _HE(503, "Base de datos no disponible")
+    if not period:
+        from datetime import date as _d
+        t = _d.today()
+        m = t.month - 1 or 12
+        y = t.year if t.month > 1 else t.year - 1
+        period = f"{y}-{m:02d}"
+    try:
+        from services.assets.depreciation import auto_depreciate_period
+        from sqlalchemy.orm import Session as _DS
+        with _DS(_engine) as _s:
+            result = auto_depreciate_period(_s, period)
+        return result
+    except Exception as exc:
+        from fastapi import HTTPException as _HE
+        raise _HE(500, str(exc))
 
 
 # ── Servir React SPA (debe ir AL FINAL) ────────────────────────
