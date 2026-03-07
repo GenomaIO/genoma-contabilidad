@@ -18,7 +18,18 @@ const STATUS_CONFIG = {
 const SOURCE_ICON = {
     MANUAL: '✍️', FE: '📄', TE: '🧾', NC: '↩️', ND: '➕',
     FEC: '🛒', REP: '💰', RECIBIDO: '📥', CIERRE: '🔒',
+    DEPRECIACION: '🏗️', APERTURA: '🔵', REVERSO: '↩️',
 }
+
+// Fuentes que son «automáticas» (generadas por el sistema, no por el contador)
+const AUTO_SOURCES = new Set(['FE', 'TE', 'NC', 'ND', 'FEC', 'REP', 'RECIBIDO', 'CIERRE', 'DEPRECIACION', 'APERTURA', 'REVERSO'])
+
+const TABS = [
+    { id: 'DRAFT', label: 'Borrador', icon: '✏️', color: '#f59e0b' },
+    { id: 'POSTED', label: 'Aprobados', icon: '✅', color: '#10b981' },
+    { id: 'VOIDED', label: 'Anulados', icon: '↩️', color: '#ef4444' },
+    { id: 'AUTO', label: 'Automáticos', icon: '🤖', color: '#3b82f6' },
+]
 
 const MONTHS = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic']
 
@@ -39,7 +50,7 @@ export default function AsientosPendientes() {
     const [entries, setEntries] = useState([])
     const [loading, setLoading] = useState(true)
     const [period, setPeriod] = useState(getCurrentPeriod())
-    const [statusFilter, setStatus] = useState('DRAFT')
+    const [activeTab, setActiveTab] = useState('DRAFT')
     const [expanded, setExpanded] = useState({})
     const [acting, setActing] = useState(null)
     const [voidReason, setVoidReason] = useState('')
@@ -82,8 +93,8 @@ export default function AsientosPendientes() {
         }
     })  // sin deps: corre después de cada render — seguro por la guarda de la ref
 
-    // ← RESTAURADO: trigger de carga al montar y al cambiar período/filtro
-    useEffect(() => { fetchEntries() }, [period, statusFilter])
+    // Carga todos los asientos del período (sin filtro de status → client-side)
+    useEffect(() => { fetchEntries() }, [period])
 
     // Cargar SOLO cuentas de movimiento (hojas) con display_code — principio NIIF
     useEffect(() => {
@@ -183,11 +194,11 @@ export default function AsientosPendientes() {
         closePicker(i)
     }
 
+    // Trae TODOS los asientos del período — el filtrado es client-side por tab
     async function fetchEntries() {
         setLoading(true); setError(null)
         try {
-            const params = new URLSearchParams({ ...(statusFilter ? { status: statusFilter } : {}) })
-            const res = await fetch(`${apiUrl}/ledger/entries?period=${period}&${params}`, {
+            const res = await fetch(`${apiUrl}/ledger/entries?period=${period}`, {
                 headers: { Authorization: `Bearer ${token}` }
             })
             if (!res.ok) throw new Error('Error al cargar asientos')
@@ -195,6 +206,20 @@ export default function AsientosPendientes() {
         } catch (e) { setError(e.message) }
         finally { setLoading(false) }
     }
+
+    // ── Filtrado client-side según la tab activa ─────────────
+    const filteredEntries = useMemo(() => {
+        if (activeTab === 'AUTO') return entries.filter(e => AUTO_SOURCES.has(e.source))
+        return entries.filter(e => e.status === activeTab)
+    }, [entries, activeTab])
+
+    // ── Badge counts para cada tab ────────────────────────────
+    const tabCounts = useMemo(() => ({
+        DRAFT: entries.filter(e => e.status === 'DRAFT').length,
+        POSTED: entries.filter(e => e.status === 'POSTED').length,
+        VOIDED: entries.filter(e => e.status === 'VOIDED').length,
+        AUTO: entries.filter(e => AUTO_SOURCES.has(e.source)).length,
+    }), [entries])
 
     async function handleApprove(entryId) {
         setActing(entryId)
@@ -359,7 +384,7 @@ export default function AsientosPendientes() {
                 throw new Error(err.detail || 'Error al guardar el asiento')
             }
             closeForm()
-            setStatus('DRAFT')
+            setActiveTab('DRAFT')
             await fetchEntries()
         } catch (e) {
             setFormError(e.message)
@@ -411,24 +436,18 @@ export default function AsientosPendientes() {
         <div style={{ padding: '24px', maxWidth: 980, margin: '0 auto', fontFamily: 'Inter, sans-serif' }}>
 
             {/* ── Header ── */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
                 <div>
                     <h1 style={{ margin: 0, fontSize: '1.35rem', fontWeight: 700, color: 'var(--text-primary)' }}>
                         📒 Libro Diario
                     </h1>
                     <p style={{ margin: '4px 0 0', fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
-                        {entries.length} asiento{entries.length !== 1 ? 's' : ''} · {statusFilter || 'Todos'}
+                        {entries.length} asiento{entries.length !== 1 ? 's' : ''} · {period}
                     </p>
                 </div>
                 <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
                     <select id="period-select" value={period} onChange={e => setPeriod(e.target.value)} style={selStyle}>
                         {periodOptions.map(o => <option key={o.val} value={o.val}>{o.label}</option>)}
-                    </select>
-                    <select id="status-select" value={statusFilter} onChange={e => setStatus(e.target.value)} style={selStyle}>
-                        <option value="">Todos</option>
-                        <option value="DRAFT">Borrador</option>
-                        <option value="POSTED">Aprobados</option>
-                        <option value="VOIDED">Anulados</option>
                     </select>
                     {/* E1: Botón nuevo asiento */}
                     {canWrite && (
@@ -448,6 +467,42 @@ export default function AsientosPendientes() {
                 </div>
             </div>
 
+            {/* ── Tabs de estado + Automáticos ── */}
+            <div style={{ display: 'flex', gap: 4, marginBottom: 20, borderBottom: '1px solid var(--border-color)', paddingBottom: 0 }}>
+                {TABS.map(tab => {
+                    const isActive = activeTab === tab.id
+                    const count = tabCounts[tab.id] ?? 0
+                    return (
+                        <button
+                            key={tab.id}
+                            id={`tab-${tab.id.toLowerCase()}`}
+                            onClick={() => setActiveTab(tab.id)}
+                            style={{
+                                display: 'flex', alignItems: 'center', gap: 6,
+                                padding: '8px 14px', border: 'none', cursor: 'pointer',
+                                background: 'transparent', fontFamily: 'Inter, sans-serif',
+                                fontSize: '0.82rem', fontWeight: isActive ? 700 : 500,
+                                color: isActive ? tab.color : 'var(--text-secondary)',
+                                borderBottom: isActive ? `2px solid ${tab.color}` : '2px solid transparent',
+                                marginBottom: -1, transition: 'all 0.15s ease',
+                                whiteSpace: 'nowrap',
+                            }}
+                        >
+                            <span>{tab.icon}</span>
+                            <span>{tab.label}</span>
+                            <span style={{
+                                padding: '1px 7px', borderRadius: 10, fontSize: '0.72rem',
+                                background: isActive ? tab.color + '22' : 'rgba(255,255,255,0.07)',
+                                color: isActive ? tab.color : 'var(--text-muted)',
+                                fontWeight: 700, minWidth: 20, textAlign: 'center',
+                            }}>
+                                {count}
+                            </span>
+                        </button>
+                    )
+                })}
+            </div>
+
             {error && (
                 <div style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 8, padding: '10px 14px', color: '#ef4444', marginBottom: 16, fontSize: '0.88rem' }}>
                     ⚠️ {error}
@@ -456,8 +511,8 @@ export default function AsientosPendientes() {
 
             {loading && <div style={{ textAlign: 'center', padding: 40, color: 'var(--text-secondary)' }}>⏳ Cargando asientos...</div>}
 
-            {/* ── Lista de asientos ── */}
-            {!loading && entries.map(entry => {
+            {/* ── Lista de asientos — filtrada por tab activa ── */}
+            {!loading && filteredEntries.map(entry => {
                 const sc = STATUS_CONFIG[entry.status] || STATUS_CONFIG.DRAFT
                 const ico = SOURCE_ICON[entry.source] || '📋'
                 const isExpanded = expanded[entry.id]
@@ -610,11 +665,22 @@ export default function AsientosPendientes() {
             })}
 
             {/* Estado vacío */}
-            {!loading && entries.length === 0 && (
+            {!loading && filteredEntries.length === 0 && (
                 <div style={{ textAlign: 'center', padding: 48, color: 'var(--text-secondary)' }}>
-                    <div style={{ fontSize: '2.5rem', marginBottom: 12 }}>📭</div>
-                    <p>No hay asientos {statusFilter === 'DRAFT' ? 'pendientes' : statusFilter?.toLowerCase() || ''} en {period}.</p>
-                    {canWrite && statusFilter === 'DRAFT' && (
+                    <div style={{ fontSize: '2.5rem', marginBottom: 12 }}>
+                        {activeTab === 'AUTO' ? '🤖' : '📭'}
+                    </div>
+                    <p style={{ marginBottom: 8 }}>
+                        {activeTab === 'AUTO'
+                            ? 'No hay asientos automáticos en ' + period + '.'
+                            : `No hay asientos en estado "${TABS.find(t => t.id === activeTab)?.label}" en ${period}.`}
+                    </p>
+                    {activeTab === 'AUTO' && (
+                        <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', maxWidth: 380, margin: '0 auto' }}>
+                            Los asientos automáticos se generan desde Activos Fijos, Cierre de Período y documentos electrónicos.
+                        </p>
+                    )}
+                    {canWrite && activeTab === 'DRAFT' && (
                         <button id="btn-nuevo-asiento-empty" onClick={() => setShowForm(true)}
                             style={{ marginTop: 16, padding: '10px 22px', background: '#7c3aed', border: 'none', borderRadius: 8, color: 'white', fontWeight: 700, cursor: 'pointer', fontSize: '0.88rem' }}>
                             ✦ Crear primer asiento
