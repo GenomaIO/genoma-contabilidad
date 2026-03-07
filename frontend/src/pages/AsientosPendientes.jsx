@@ -74,6 +74,8 @@ export default function AsientosPendientes() {
         }
     })  // sin deps: corre después de cada render — seguro por la guarda de la ref
 
+    // ← RESTAURADO: trigger de carga al montar y al cambiar período/filtro
+    useEffect(() => { fetchEntries() }, [period, statusFilter])
 
     // Cargar SOLO cuentas de movimiento (hojas) con display_code — principio NIIF
     useEffect(() => {
