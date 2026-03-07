@@ -189,17 +189,49 @@ export default function Catalogo() {
         }
     }
 
-    // ─── Funciones form inline ⊕ ─────────────────────────────────────────────
+    // ─── Funciones form inline ⊕ ──────────────────────────────────────────────
+    /**
+     * nextChildCode v3 — usa parent_code real, no prefijo de string.
+     * Soporta 3 niveles:
+     *   Root (X000)  → hijos en pasos de 100, gap-finding para el 'otros' (X9XX)
+     *   Grupo (XX00) → hijos enteros secuenciales (max+1)
+     *   Hoja (XXYZ)  → hijos en formato .NN (dotted)
+     */
     function nextChildCode(parentCode) {
-        const prefix = parentCode + '.'
-        const children = accounts
-            .map(a => a.code)
-            .filter(c => c.startsWith(prefix) && !c.slice(prefix.length).includes('.'))
-        if (!children.length) return `${parentCode}.01`
-        const nums = children.map(c => {
-            const n = parseInt(c.slice(prefix.length), 10)
-            return isNaN(n) ? 0 : n
-        })
+        // 1. Hijos directos por relación real (no prefijo de string)
+        const direct = accounts.filter(a => a.parent_code === parentCode)
+
+        if (!direct.length) {
+            // Sin hijos — primer código hijo
+            if (!parentCode.includes('.')) {
+                const base = parseInt(parentCode, 10)
+                const step = (base % 1000 === 0) ? 100 : 1   // root→+100  grupo→+1
+                return String(base + step)
+            }
+            return `${parentCode}.01`
+        }
+
+        const firstChild = direct[0].code
+
+        if (!firstChild.includes('.')) {
+            // Hijos enteros (5901, 5902...)
+            const nums = direct.map(a => parseInt(a.code, 10)).filter(n => !isNaN(n))
+            const allHundreds = nums.every(n => n % 100 === 0)
+            if (allHundreds) {
+                // Cuenta raíz: gap-finding (evita overflow cuando 9XX ya está tomado)
+                const base = parseInt(parentCode, 10)
+                const taken = new Set(nums)
+                let candidate = base + 100
+                while (taken.has(candidate) && candidate < base + 1000) candidate += 100
+                return String(candidate)
+            }
+            return String(Math.max(...nums) + 1)
+        }
+
+        // Hijos dotted (5901.01...)
+        const nums = direct
+            .map(a => parseInt(a.code.split('.').pop(), 10))
+            .filter(n => !isNaN(n))
         return `${parentCode}.${String(Math.max(...nums) + 1).padStart(2, '0')}`
     }
 
@@ -226,7 +258,9 @@ export default function Catalogo() {
                     account_type: parentAcc.account_type,
                     account_sub_type: parentAcc.account_sub_type || null,
                     parent_code: parentAcc.code,
-                    allow_entries: true,
+                    // Códigos enteros (nivel-3 grupo) → allow_entries:false
+                    // Códigos dotted (nivel-4 hoja)   → allow_entries:true
+                    allow_entries: suggestedCode.includes('.'),
                 }),
             })
             if (!res.ok) {
