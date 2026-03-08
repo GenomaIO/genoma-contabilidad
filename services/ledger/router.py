@@ -659,124 +659,147 @@ _RESULTADO_ACCOUNT_TYPES = {"INGRESO", "GASTO"}
 
 @router.get("/trial-balance")
 def trial_balance(
-    period:     Optional[str]  = Query(None, description="'YYYY-MM' (default: mes actual)"),
-    acumulado:  bool           = Query(False, description="Si True: ACTIVO/PASIVO/PAT muestran saldo acumulado desde apertura (NIIF correcto)"),
+    period:       Optional[str] = Query(None,    description="'YYYY-MM' (default: mes actual)"),
+    mode:         str           = Query("ytd",   description="period=solo mes | ytd=año acumulado (base EEFF, NIIF Sec.2.36) | running=saldo histórico"),
+    acumulado:    bool          = Query(False,   description="Alias legacy de mode=ytd. Si True, equivale a mode='ytd'."),
     current_user: dict = Depends(get_current_user),
     db:           Session = Depends(get_session),
 ):
     """
-    Balance de Comprobación del período.
+    Balance de Comprobación.
 
-    Modos:
-      acumulado=false (default): total movimientos del período (compatibilidad original).
-      acumulado=true  (NIIF):    ACTIVO/PASIVO/PATRIMONIO → saldo inicial (apertura) +
-                                 movimientos → saldo final.
-                                 INGRESO/GASTO → solo el período (correcto para EEFF).
+    Modos (parámetro `mode`):
+      period  — Solo movimientos del período seleccionado.
+                Para revisión interna del mes.
+      ytd     — Acumulado desde el 1 de enero del año fiscal hasta el período
+                seleccionado. BASE para los EEFF (NIIF PYMES Sec. 2.36 y 3.10).
+                DEFAULT.
+      running — Saldo corriente histórico: apertura + TODOS los períodos cerrados
+                + movimientos abiertos. Para auditoría.
 
+    Invariante: Debe = Haber en cualquier modo (partida doble).
     Solo incluye asientos POSTED.
     """
     tenant_id = current_user["tenant_id"]
     if not period:
         period = datetime.now(timezone.utc).strftime("%Y-%m")
 
+    # Alias de compatibilidad: acumulado=True → mode=ytd
+    if acumulado and mode == "ytd":
+        pass  # ya igual
+    elif acumulado:
+        mode = "ytd"
+
+    # Rango de fechas según modo
+    year = period[:4]
+    year_start = f"{year}-01"  # primer período del año fiscal
+    # ┌────────────────────────────────────────────────────────────────────────┐
+    # │ mode="ytd"  → desde año-01-01 hasta fin del período seleccionado.     │
+    # │ Es la base correcta para los EEFF (NIIF PYMES Sec. 2.36 y 3.10).     │
+    # │ Invariante garantizada: Debe = Haber (partida doble).                  │
+    # └────────────────────────────────────────────────────────────────────────┘
+
     # Catálogo de cuentas para tipos
     accounts_map = {}
     try:
         accs = db.execute(text(
-            "SELECT code, name, account_type FROM accounts WHERE tenant_id = :tid"
+            "SELECT code, name, account_type FROM accounts WHERE tenant_id = :tid AND is_active = true"
         ), {"tid": tenant_id}).fetchall()
         accounts_map = {r.code: {"name": r.name, "type": r.account_type} for r in accs}
     except Exception:
         pass
 
-    # Movimientos del período (siempre, independiente del modo)
-    rows = db.execute(text("""
-        SELECT
-            jl.account_code,
-            SUM(jl.debit)  AS total_debit,
-            SUM(jl.credit) AS total_credit
-        FROM journal_lines jl
-        JOIN journal_entries je ON je.id = jl.entry_id
-        WHERE je.tenant_id = :tenant_id
-          AND je.period    = :period
-          AND je.status    = 'POSTED'
-        GROUP BY jl.account_code
-        ORDER BY jl.account_code
-    """), {"tenant_id": tenant_id, "period": period}).fetchall()
-
-    # ── Modo acumulado: cargar saldos de apertura ─────────────────
-    ap_map = {}
-    if acumulado:
-        for r in db.execute(text("""
-            SELECT jl.account_code,
-                   SUM(jl.debit) - SUM(jl.credit) AS saldo_aper
+    # ── Construir la consulta SQL según modo ─────────────────────
+    if mode == "period":
+        # Solo el período seleccionado — vista de movimientos del mes
+        rows = db.execute(text("""
+            SELECT
+                jl.account_code,
+                SUM(jl.debit)  AS total_debit,
+                SUM(jl.credit) AS total_credit
             FROM journal_lines jl
             JOIN journal_entries je ON je.id = jl.entry_id
             WHERE je.tenant_id = :tid
+              AND je.period    = :period
               AND je.status    = 'POSTED'
-              AND je.source    = 'APERTURA'
             GROUP BY jl.account_code
-        """), {"tid": tenant_id}).fetchall():
-            ap_map[r.account_code] = round(float(r.saldo_aper or 0), 2)
+            ORDER BY jl.account_code
+        """), {"tid": tenant_id, "period": period}).fetchall()
+
+    elif mode == "ytd":
+        # ── MODO YTD (DEFAULT) ────────────────────────────────────────────
+        # Acumula desde el primer período del año hasta el período seleccionado.
+        # BASE de los EEFF. Garantiza Debe = Haber.
+        # NIIF PYMES Sec. 2.36 (devengo) · Sec. 3.10 (período anual).
+        rows = db.execute(text("""
+            SELECT
+                jl.account_code,
+                SUM(jl.debit)  AS total_debit,
+                SUM(jl.credit) AS total_credit
+            FROM journal_lines jl
+            JOIN journal_entries je ON je.id = jl.entry_id
+            WHERE je.tenant_id = :tid
+              AND je.period    >= :year_start
+              AND je.period    <= :period
+              AND je.status    = 'POSTED'
+            GROUP BY jl.account_code
+            ORDER BY jl.account_code
+        """), {"tid": tenant_id, "year_start": year_start, "period": period}).fetchall()
+
+    else:  # running — saldo histórico completo (todos los años)
+        rows = db.execute(text("""
+            SELECT
+                jl.account_code,
+                SUM(jl.debit)  AS total_debit,
+                SUM(jl.credit) AS total_credit
+            FROM journal_lines jl
+            JOIN journal_entries je ON je.id = jl.entry_id
+            WHERE je.tenant_id = :tid
+              AND je.period    <= :period
+              AND je.status    = 'POSTED'
+            GROUP BY jl.account_code
+            ORDER BY jl.account_code
+        """), {"tid": tenant_id, "period": period}).fetchall()
 
     # ── Construir resultado ───────────────────────────────────────
-    total_debit = 0.0; total_credit = 0.0
+    total_debit = 0.0
+    total_credit = 0.0
     lines_out = []
+
     for r in rows:
         td = float(r.total_debit  or 0)
         tc = float(r.total_credit or 0)
         total_debit  += td
         total_credit += tc
-        acc_info  = accounts_map.get(r.account_code, {})
-        acc_type  = acc_info.get("type", "")
-
-        if acumulado and acc_type in _BALANCE_ACCOUNT_TYPES:
-            saldo_inicial = ap_map.get(r.account_code, 0.0)
-            saldo_final   = round(saldo_inicial + td - tc, 2)
-        else:
-            saldo_inicial = 0.0
-            saldo_final   = round(td - tc, 2)
+        acc_info = accounts_map.get(r.account_code, {})
+        acc_type = acc_info.get("type", "")
+        saldo    = round(td - tc, 2)
 
         lines_out.append({
             "account_code":  r.account_code,
-            "account_name":  acc_info.get("name", ""),
+            "account_name":  acc_info.get("name", r.account_code),
             "account_type":  acc_type,
-            "saldo_inicial": saldo_inicial,
             "total_debit":   round(td, 2),
             "total_credit":  round(tc, 2),
-            "saldo":         saldo_final,
+            "saldo":         saldo,
         })
 
-    # Cuentas que solo tienen apertura (sin movimiento en el período) — solo si acumulado
-    if acumulado:
-        codes_in_rows = {r.account_code for r in rows}
-        for code, aper_saldo in ap_map.items():
-            if code not in codes_in_rows:
-                acc_info = accounts_map.get(code, {})
-                acc_type = acc_info.get("type", "")
-                if acc_type in _BALANCE_ACCOUNT_TYPES:
-                    lines_out.append({
-                        "account_code":  code,
-                        "account_name":  acc_info.get("name", ""),
-                        "account_type":  acc_type,
-                        "saldo_inicial": aper_saldo,
-                        "total_debit":   0.0,
-                        "total_credit":  0.0,
-                        "saldo":         aper_saldo,
-                    })
-        lines_out.sort(key=lambda x: x["account_code"])
-
+    # ── Invariante: Debe = Haber ──────────────────────────────────
+    # En partida doble, CUALQUIER corte temporal debe cuadrar.
     balanced = abs(total_debit - total_credit) < 0.01
 
     return {
         "period":        period,
-        "acumulado":     acumulado,
-        "tenant_id":     tenant_id,
+        "mode":          mode,
+        "year_start":    year_start if mode in ("ytd", "running") else period,
+        "acumulado":     mode in ("ytd", "running"),  # compatibilidad con frontend legacy
         "balanced":      balanced,
         "total_debit":   round(total_debit,  2),
         "total_credit":  round(total_credit, 2),
         "diff":          round(abs(total_debit - total_credit), 5),
         "lines":         lines_out,
+        "tenant_id":     tenant_id,
+        "niif_ref":      "NIIF PYMES Sec. 2.36 (devengo) · Sec. 3.10 (período anual)" if mode == "ytd" else "",
     }
 
 
