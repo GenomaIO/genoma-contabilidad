@@ -15,7 +15,8 @@ const NAV_ITEMS = [
             { icon: '📒', label: 'Diario', path: '/diario' },
             { icon: '📈', label: 'Mayor', path: '/mayor' },
             { icon: '⚖️', label: 'Balance', path: '/balance' },
-            { icon: '📆', label: 'Cierre', path: '/cierre' },
+            { icon: '📆', label: 'Cierre Mensual', path: '/cierre' },
+            { icon: '📅', label: 'Cierre Anual', path: '/cierre-anual' },
         ]
     },
     {

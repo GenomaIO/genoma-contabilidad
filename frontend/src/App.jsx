@@ -9,6 +9,7 @@ import Catalogo from './pages/Catalogo'
 import AsientosPendientes from './pages/AsientosPendientes'
 import BalanceComprobacion from './pages/BalanceComprobacion'
 import CierrePeriodo from './pages/CierrePeriodo'
+import CierreAnual from './pages/CierreAnual'
 import Apertura from './pages/Apertura'
 import Mayor from './pages/Mayor'
 import ActivosFijos from './pages/ActivosFijos'
@@ -83,6 +84,7 @@ function AppLayout() {
                     <Route path="/prorrata" element={<ComingSoon name="Prorrata IVA" />} />
                     <Route path="/reportes" element={<ComingSoon name="Estados Financieros" />} />
                     <Route path="/cierre" element={<CierrePeriodo />} />
+                    <Route path="/cierre-anual" element={<CierreAnual />} />
                     <Route path="/libros-digitales" element={<LibrosDigitales />} />
                     <Route path="/config" element={<Navigate to="/config/apertura" replace />} />
                     <Route path="/config/apertura" element={<Apertura />} />

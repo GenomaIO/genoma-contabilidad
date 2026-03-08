@@ -50,17 +50,19 @@ class EntrySource(str, enum.Enum):
     """
     Origen del asiento — trazabilidad para auditoría Hacienda.
     """
-    APERTURA = "APERTURA"  # Asiento de apertura de ejercicio — fuente especial, POSTED directo
-    MANUAL   = "MANUAL"    # Ingresado a mano por el contador/asistente
-    FE       = "FE"        # Factura Electrónica (tipo 01)
-    TE       = "TE"        # Tiquete Electrónico (tipo 04)
-    NC       = "NC"        # Nota de Crédito (tipo 03)
-    ND       = "ND"        # Nota de Débito (tipo 02)
-    REP      = "REP"       # Recibo de Pago (tipo 08)
-    FEC      = "FEC"       # Factura Electrónica de Compra (tipo 08 compra)
-    RECIBIDO = "RECIBIDO"  # Documento recibido (lado comprador)
-    CIERRE   = "CIERRE"    # Asiento de cierre de período
+    APERTURA     = "APERTURA"      # Asiento de apertura de ejercicio — POSTED directo
+    MANUAL       = "MANUAL"        # Ingresado a mano por el contador/asistente
+    FE           = "FE"            # Factura Electrónica (tipo 01)
+    TE           = "TE"            # Tiquete Electrónico (tipo 04)
+    NC           = "NC"            # Nota de Crédito (tipo 03)
+    ND           = "ND"            # Nota de Débito (tipo 02)
+    REP          = "REP"           # Recibo de Pago (tipo 08)
+    FEC          = "FEC"           # Factura Electrónica de Compra (tipo 08 compra)
+    RECIBIDO     = "RECIBIDO"      # Documento recibido (lado comprador)
+    CIERRE       = "CIERRE"        # Asiento de cierre mensual (nominales del período)
+    CIERRE_ANUAL = "CIERRE_ANUAL"  # Asientos de cierre anual (nominales → patrimonio)
     DEPRECIACION = "DEPRECIACION"  # Depreciación automática mensual de activos fijos
+    REVERSO      = "REVERSO"       # Asiento de reversión automático (anulación de POSTED)
 
 
 class DeductibleStatus(str, enum.Enum):
@@ -185,3 +187,65 @@ class JournalLine(Base):
     def __repr__(self):
         side = f"DR {self.debit}" if self.debit else f"CR {self.credit}"
         return f"<JournalLine {self.account_code} {side} tenant={self.tenant_id}>"
+
+
+# ─────────────────────────────────────────────────────────────────
+# FiscalYear — Ejercicio Fiscal Anual
+# ─────────────────────────────────────────────────────────────────
+
+class FiscalYearStatus(str, enum.Enum):
+    """
+    Estado del ejercicio fiscal anual.
+    OPEN    : año en curso — meses pueden estar OPEN/CLOSING/CLOSED.
+    CLOSING : el contador inició el proceso de cierre anual.
+    CLOSED  : todos los meses cerrados y cierre anual ejecutado.
+    LOCKED  : cierre anual APROBADO y m periodo inmutable (art. 51 Ley Renta).
+    """
+    OPEN    = "OPEN"
+    CLOSING = "CLOSING"
+    CLOSED  = "CLOSED"
+    LOCKED  = "LOCKED"
+
+
+class FiscalYear(Base):
+    """
+    Registro del ejercicio fiscal anual por tenant.
+
+    Un registro por año por tenant.
+    Estados: OPEN → CLOSING → CLOSED → LOCKED
+
+    net_income: utilidad (o pérdida) neta del ejercicio al momento del cierre.
+    opening_entry_id: FK al asiento de apertura del año SIGUIENTE generado automáticamente.
+    closing_entries: IDs JSON de los 3 asientos de cierre anual (CIERRE_ANUAL).
+    """
+    __tablename__ = "fiscal_years"
+    __table_args__ = (
+        Index("idx_fy_tenant_year", "tenant_id", "year"),
+    )
+
+    id          = Column(String(36), primary_key=True, default=gen_uuid)
+    tenant_id   = Column(String(36), nullable=False, index=True)
+    year        = Column(String(4),  nullable=False)   # '2026'
+
+    status      = Column(Enum(FiscalYearStatus), nullable=False,
+                         default=FiscalYearStatus.OPEN)
+
+    # Resultado económico del ejercicio
+    net_income  = Column(Numeric(18, 5), nullable=True)   # + utilidad / - pérdida
+
+    # Trazabilidad del cierre
+    closed_by   = Column(String(36),  nullable=True)
+    closed_at   = Column(DateTime(timezone=True), nullable=True)
+    locked_by   = Column(String(36),  nullable=True)
+    locked_at   = Column(DateTime(timezone=True), nullable=True)
+
+    # Asiento de apertura generado automáticamente para el año siguiente
+    opening_entry_id = Column(String(36), nullable=True)
+
+    # IDs JSON de los 3 asientos de cierre anual
+    closing_entries  = Column(Text, nullable=True)   # '["uuid1","uuid2","uuid3"]'
+
+    created_at  = Column(DateTime(timezone=True), default=now_utc, nullable=False)
+
+    def __repr__(self):
+        return f"<FiscalYear {self.year} [{self.status}] tenant={self.tenant_id}>"

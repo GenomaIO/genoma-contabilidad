@@ -1650,3 +1650,342 @@ def libro_balance(
             "balanceado": abs(total_dr - total_cr) < 0.01,
             "total_debe": round(total_dr, 2), "total_haber": round(total_cr, 2),
             "cuentas": cuentas}
+
+
+# ─────────────────────────────────────────────────────────────────
+# POST /ledger/annual-close — Cierre Anual (NIIF / Ley Renta CR)
+# ─────────────────────────────────────────────────────────────────
+
+from services.ledger.models import FiscalYear, FiscalYearStatus
+
+@router.post("/annual-close")
+def annual_close(
+    year:         str  = Query(..., description="Ejercicio fiscal a cerrar: 'YYYY'"),
+    current_user: dict = Depends(get_current_user),
+    db:           Session = Depends(get_session),
+):
+    """
+    Cierre anual del ejercicio fiscal.
+
+    1. Valida que los 12 meses estén CLOSED.
+    2. Genera 3 asientos CIERRE_ANUAL (POSTED automáticamente):
+       A. Cuentas INGRESO → CR 3304 Resumen de Resultado
+       B. Cuentas GASTO   → DR 3304 Resumen de Resultado
+       C. 3304 → 3303 Utilidad (o 3302 Pérdida)
+    3. Registra FiscalYear con status=LOCKED.
+    """
+    _require_role(current_user["role"], ["admin", "contador"])
+    tenant_id = current_user["tenant_id"]
+    uid       = _uid(current_user)
+    now       = datetime.now(timezone.utc)
+    import json as _j
+
+    # Guard: año válido
+    try:
+        year_int = int(year)
+        if not (2000 <= year_int <= 2100): raise ValueError
+    except ValueError:
+        raise HTTPException(400, f"Año inválido: '{year}'. Use YYYY.")
+
+    # Guard: no cerrar dos veces
+    existing_fy = db.execute(
+        text("SELECT id, status FROM fiscal_years WHERE tenant_id=:tid AND year=:yr"),
+        {"tid": tenant_id, "yr": year}
+    ).fetchone()
+    if existing_fy and existing_fy.status in ("CLOSED", "LOCKED"):
+        raise HTTPException(409, f"El ejercicio {year} ya fue cerrado (status: {existing_fy.status}).")
+
+    # Guard: todos los meses CLOSED
+    period_rows = db.execute(
+        text("SELECT year_month, status FROM period_locks WHERE tenant_id=:tid AND year_month LIKE :p"),
+        {"tid": tenant_id, "p": f"{year}-%"}
+    ).fetchall()
+    period_map = {r.year_month: r.status for r in period_rows}
+    open_periods = [
+        f"{y}-{str(m).zfill(2)} ({period_map.get(f'{year}-{str(m).zfill(2)}','OPEN')})"
+        for m in range(1, 13)
+        if period_map.get(f"{year}-{str(m).zfill(2)}", "OPEN") != "CLOSED"
+    ]
+    if open_periods:
+        raise HTTPException(400,
+            f"Períodos no CLOSED en {year}: {', '.join(open_periods)}. "
+            "Cierra todos los meses antes del cierre anual.")
+
+    # Calcular saldos nominales del año (INGRESO y GASTO)
+    rows = db.execute(text("""
+        SELECT jl.account_code, a.account_type, a.name,
+               SUM(jl.debit) - SUM(jl.credit) AS saldo
+        FROM journal_lines jl
+        JOIN journal_entries je ON je.id = jl.entry_id
+        LEFT JOIN accounts a ON a.tenant_id=je.tenant_id AND a.code=jl.account_code
+        WHERE je.tenant_id=:tid AND je.period LIKE :p AND je.status='POSTED'
+          AND a.account_type IN ('INGRESO','GASTO')
+          AND je.source != 'CIERRE_ANUAL'
+        GROUP BY jl.account_code, a.account_type, a.name
+        HAVING ABS(SUM(jl.debit)-SUM(jl.credit)) > 0.00001
+    """), {"tid": tenant_id, "p": f"{year}-%"}).fetchall()
+
+    lines_ing, lines_gas = [], []
+    total_ing = total_gas = 0.0
+    for r in rows:
+        saldo = float(r.saldo or 0)
+        if r.account_type == "INGRESO" and saldo < 0:
+            lines_ing.append({"account_code": r.account_code,
+                               "description": f"Cierre anual ingreso: {r.name}",
+                               "debit": abs(saldo), "credit": 0.0})
+            total_ing += abs(saldo)
+        elif r.account_type == "GASTO" and saldo > 0:
+            lines_gas.append({"account_code": r.account_code,
+                               "description": f"Cierre anual gasto: {r.name}",
+                               "debit": 0.0, "credit": saldo})
+            total_gas += saldo
+
+    net_income = round(total_ing - total_gas, 2)
+    closing_ids = []
+    close_period = f"{year}-12"
+    close_date   = f"{year}-12-31"
+
+    def _save_closing_entry(desc, all_lines):
+        eid = str(uuid.uuid4())
+        je  = JournalEntry(
+            id=eid, tenant_id=tenant_id, period=close_period,
+            date=close_date, description=desc,
+            status=EntryStatus.POSTED, source=EntrySource.CIERRE_ANUAL,
+            created_by=uid, approved_by=uid, approved_at=now, created_at=now)
+        db.add(je)
+        for l in all_lines:
+            db.add(JournalLine(
+                id=str(uuid.uuid4()), entry_id=eid, tenant_id=tenant_id,
+                account_code=l["account_code"].upper(),
+                description=l.get("description",""),
+                debit=round(float(l.get("debit",0)),5),
+                credit=round(float(l.get("credit",0)),5),
+                deductible_status=DeductibleStatus.EXEMPT, created_at=now))
+        return eid
+
+    # Asiento A: Ingresos → 3304
+    if lines_ing:
+        closing_ids.append(_save_closing_entry(
+            f"Cierre anual {year} — Ingresos a Resumen de Resultado",
+            lines_ing + [{"account_code":"3304","description":"Resumen de Resultado — Ingresos",
+                          "debit":0.0,"credit":round(total_ing,5)}]))
+
+    # Asiento B: Gastos → 3304
+    if lines_gas:
+        closing_ids.append(_save_closing_entry(
+            f"Cierre anual {year} — Gastos a Resumen de Resultado",
+            lines_gas + [{"account_code":"3304","description":"Resumen de Resultado — Gastos",
+                          "debit":round(total_gas,5),"credit":0.0}]))
+
+    # Asiento C: 3304 → Patrimonio
+    if net_income != 0:
+        if net_income > 0:
+            lc = [{"account_code":"3304","description":"Cancelar Resumen de Resultado",
+                   "debit":round(net_income,5),"credit":0.0},
+                  {"account_code":"3303","description":f"Utilidad del Ejercicio {year}",
+                   "debit":0.0,"credit":round(net_income,5)}]
+        else:
+            loss = abs(net_income)
+            lc = [{"account_code":"3302","description":f"Pérdida del Ejercicio {year}",
+                   "debit":round(loss,5),"credit":0.0},
+                  {"account_code":"3304","description":"Cancelar Resumen de Resultado",
+                   "debit":0.0,"credit":round(loss,5)}]
+        closing_ids.append(_save_closing_entry(
+            f"Cierre anual {year} — Traspaso al Patrimonio (net={net_income:,.2f})", lc))
+
+    # Upsert FiscalYear
+    ce_json = _j.dumps(closing_ids)
+    if existing_fy:
+        db.execute(text("""
+            UPDATE fiscal_years SET status='LOCKED', net_income=:ni,
+              closed_by=:uid, closed_at=:ts, locked_by=:uid, locked_at=:ts, closing_entries=:ce
+            WHERE tenant_id=:tid AND year=:yr
+        """), {"ni": net_income, "uid": uid, "ts": now, "ce": ce_json, "tid": tenant_id, "yr": year})
+    else:
+        db.execute(text("""
+            INSERT INTO fiscal_years
+              (id, tenant_id, year, status, net_income, closed_by, closed_at,
+               locked_by, locked_at, closing_entries, created_at)
+            VALUES (:id,:tid,:yr,'LOCKED',:ni,:uid,:ts,:uid,:ts,:ce,:ts)
+        """), {"id": str(uuid.uuid4()), "tid": tenant_id, "yr": year,
+               "ni": net_income, "uid": uid, "ts": now, "ce": ce_json})
+
+    log_action(db, tenant_id, current_user, AuditAction.ENTRY_CREATED,
+        entity_type="fiscal_year", entity_id=year,
+        after={"status":"LOCKED","net_income":net_income,"closing_entries":closing_ids},
+        note=f"Cierre anual ejercicio {year}")
+    db.commit()
+
+    label = "UTILIDAD" if net_income >= 0 else "PÉRDIDA"
+    return {
+        "ok": True, "year": year, "status": "LOCKED",
+        "net_income": net_income, "result_label": label,
+        "closing_entries": closing_ids,
+        "total_ingresos": round(total_ing, 2), "total_gastos": round(total_gas, 2),
+        "message": (f"Cierre anual {year} completado. {label}: {abs(net_income):,.2f}. "
+                    f"Año LOCKED. Genere apertura {year_int+1} con POST /ledger/generate-opening."),
+        "next_action": f"POST /ledger/generate-opening?next_year={year_int+1}",
+    }
+
+
+# ─────────────────────────────────────────────────────────────────
+# POST /ledger/generate-opening — Apertura automática año siguiente
+# ─────────────────────────────────────────────────────────────────
+
+@router.post("/generate-opening")
+def generate_opening(
+    next_year:    str  = Query(..., description="Año del nuevo ejercicio: 'YYYY'"),
+    current_user: dict = Depends(get_current_user),
+    db:           Session = Depends(get_session),
+):
+    """
+    Genera automáticamente el asiento de apertura del año siguiente
+    con los saldos finales de ACTIVO, PASIVO y PATRIMONIO del año anterior.
+    """
+    _require_role(current_user["role"], ["admin", "contador"])
+    tenant_id = current_user["tenant_id"]
+    uid       = _uid(current_user)
+    now       = datetime.now(timezone.utc)
+
+    try:
+        nyi = int(next_year); prev_year = str(nyi - 1)
+    except ValueError:
+        raise HTTPException(400, f"Año inválido: '{next_year}'")
+
+    # Guard: no puede existir ya una apertura de ese año
+    existing = db.query(JournalEntry).filter(
+        JournalEntry.tenant_id == tenant_id,
+        JournalEntry.source    == EntrySource.APERTURA,
+        JournalEntry.period.like(f"{next_year}%"),
+    ).first()
+    if existing:
+        raise HTTPException(409, f"Ya existe asiento de apertura para {next_year} (ID: {existing.id}).")
+
+    # Guard: año anterior LOCKED
+    prev_fy = db.execute(
+        text("SELECT status FROM fiscal_years WHERE tenant_id=:tid AND year=:yr"),
+        {"tid": tenant_id, "yr": prev_year}
+    ).fetchone()
+    if not prev_fy or prev_fy.status != "LOCKED":
+        s = prev_fy.status if prev_fy else "no registrado"
+        raise HTTPException(400, f"El ejercicio {prev_year} debe estar LOCKED (status: {s}).")
+
+    # Calcular saldos de Balance del año anterior
+    bal_rows = db.execute(text("""
+        SELECT jl.account_code, a.name, a.account_type,
+               SUM(jl.debit) - SUM(jl.credit) AS saldo
+        FROM journal_lines jl
+        JOIN journal_entries je ON je.id=jl.entry_id
+        LEFT JOIN accounts a ON a.tenant_id=je.tenant_id AND a.code=jl.account_code
+        WHERE je.tenant_id=:tid AND je.period LIKE :p AND je.status='POSTED'
+          AND a.account_type IN ('ACTIVO','PASIVO','PATRIMONIO')
+        GROUP BY jl.account_code, a.name, a.account_type
+        HAVING ABS(SUM(jl.debit)-SUM(jl.credit)) > 0.00001
+    """), {"tid": tenant_id, "p": f"{prev_year}-%"}).fetchall()
+
+    if not bal_rows:
+        raise HTTPException(400, f"No hay saldos de Balance en {prev_year}. Verifique asientos POSTED.")
+
+    opening_lines = []
+    for r in bal_rows:
+        saldo = round(float(r.saldo or 0), 5)
+        if saldo == 0: continue
+        opening_lines.append({
+            "account_code": r.account_code.upper(),
+            "description": f"Apertura {next_year}: {r.name or r.account_code}",
+            "debit":  saldo if saldo > 0 else 0.0,
+            "credit": abs(saldo) if saldo < 0 else 0.0,
+        })
+
+    total_dr = sum(l["debit"]  for l in opening_lines)
+    total_cr = sum(l["credit"] for l in opening_lines)
+    if abs(total_dr - total_cr) > 0.01:
+        raise HTTPException(500,
+            f"Apertura no balanceada: DR={total_dr:.2f} ≠ CR={total_cr:.2f}. "
+            "Verifique que el cierre anual esté completo.")
+
+    oid = str(uuid.uuid4())
+    je  = JournalEntry(
+        id=oid, tenant_id=tenant_id, period=f"{next_year}-01",
+        date=f"{next_year}-01-01",
+        description=f"Asiento de Apertura {next_year} — Saldos de {prev_year}",
+        status=EntryStatus.POSTED, source=EntrySource.APERTURA,
+        created_by=uid, approved_by=uid, approved_at=now, created_at=now)
+    db.add(je)
+    for l in opening_lines:
+        db.add(JournalLine(
+            id=str(uuid.uuid4()), entry_id=oid, tenant_id=tenant_id,
+            account_code=l["account_code"],
+            description=l["description"],
+            debit=round(l["debit"],5), credit=round(l["credit"],5),
+            deductible_status=DeductibleStatus.EXEMPT, created_at=now))
+
+    db.execute(
+        text("UPDATE fiscal_years SET opening_entry_id=:eid WHERE tenant_id=:tid AND year=:yr"),
+        {"eid": oid, "tid": tenant_id, "yr": prev_year})
+
+    log_action(db, tenant_id, current_user, AuditAction.ENTRY_CREATED,
+        entity_type="journal_entry", entity_id=oid,
+        after={"source":"APERTURA","year":next_year,"lines":len(opening_lines)},
+        note=f"Apertura automática {next_year} desde saldos de {prev_year}")
+    db.commit()
+
+    return {
+        "ok": True, "next_year": next_year, "prev_year": prev_year,
+        "opening_id": oid, "lines_count": len(opening_lines),
+        "total_activos": round(total_dr, 2),
+        "message": f"Apertura {next_year} generada: {len(opening_lines)} cuentas trasladadas desde {prev_year}.",
+    }
+
+
+# ─────────────────────────────────────────────────────────────────
+# GET /ledger/fiscal-years — Lista de ejercicios fiscales
+# ─────────────────────────────────────────────────────────────────
+
+@router.get("/fiscal-years")
+def list_fiscal_years(
+    current_user: dict    = Depends(get_current_user),
+    db:           Session = Depends(get_session),
+):
+    """Lista todos los ejercicios fiscales del tenant con su estado y métricas."""
+    _require_role(current_user["role"], ["admin", "contador", "asistente"])
+    tenant_id = current_user["tenant_id"]
+    import json as _j2
+
+    rows = db.execute(text("""
+        SELECT year, status, net_income, closed_at, locked_at,
+               opening_entry_id, closing_entries
+        FROM fiscal_years WHERE tenant_id=:tid ORDER BY year DESC
+    """), {"tid": tenant_id}).fetchall()
+
+    result = []
+    for r in rows:
+        pc = db.execute(text("""
+            SELECT status, COUNT(*) cnt FROM period_locks
+            WHERE tenant_id=:tid AND year_month LIKE :p GROUP BY status
+        """), {"tid": tenant_id, "p": f"{r.year}-%"}).fetchall()
+        by_st = {x.status: x.cnt for x in pc}
+        try: cids = _j2.loads(r.closing_entries) if r.closing_entries else []
+        except: cids = []
+        result.append({
+            "year": r.year, "status": r.status,
+            "net_income": float(r.net_income) if r.net_income is not None else None,
+            "periods_closed": by_st.get("CLOSED", 0),
+            "periods_by_status": by_st,
+            "closed_at": str(r.closed_at) if r.closed_at else None,
+            "locked_at": str(r.locked_at) if r.locked_at else None,
+            "opening_entry_id": r.opening_entry_id,
+            "closing_entries": cids,
+        })
+
+    if not result:
+        yr_rows = db.execute(text("""
+            SELECT DISTINCT SUBSTR(year_month,1,4) AS yr
+            FROM period_locks WHERE tenant_id=:tid ORDER BY yr DESC
+        """), {"tid": tenant_id}).fetchall()
+        for yr_r in yr_rows:
+            result.append({"year": yr_r.yr, "status": "OPEN", "net_income": None,
+                           "periods_closed": 0, "periods_by_status": {},
+                           "closed_at": None, "opening_entry_id": None, "closing_entries": []})
+
+    return {"fiscal_years": result, "total": len(result)}
