@@ -1024,8 +1024,18 @@ export default function EstadosFinancieros() {
                     <h1 style={{ margin: 0, fontSize: '1.5rem', fontWeight: 800, color: '#fff' }}>
                         Estados Financieros
                     </h1>
-                    <p style={{ margin: '4px 0 0', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-                        NIIF PYMES 3ª Edición · Feb 2025 · IASB · {state.tenant?.nombre}
+                    {state.tenant && (
+                        <div style={{ margin: '4px 0 2px', fontSize: '1rem', fontWeight: 700, color: 'var(--text-primary)', letterSpacing: '0.01em' }}>
+                            {state.tenant.nombre}
+                            {state.tenant.cedula && (
+                                <span style={{ fontSize: '0.75rem', fontWeight: 400, color: 'var(--text-muted)', marginLeft: 8 }}>
+                                    · {state.tenant.cedula}
+                                </span>
+                            )}
+                        </div>
+                    )}
+                    <p style={{ margin: '2px 0 0', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                        NIIF PYMES 3ª Edición · Feb 2025 · IASB
                     </p>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
