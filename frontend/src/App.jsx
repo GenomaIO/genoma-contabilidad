@@ -15,6 +15,7 @@ import Mayor from './pages/Mayor'
 import ActivosFijos from './pages/ActivosFijos'
 import LibrosDigitales from './pages/LibrosDigitales'
 import PerfilFiscal from './pages/PerfilFiscal'
+import EstadosFinancieros from './pages/EstadosFinancieros'
 import { useApp } from './context/AppContext'
 
 // Guard de ruta — espera hidratación antes de decidir
@@ -82,7 +83,7 @@ function AppLayout() {
                     <Route path="/catalogo" element={<Catalogo />} />
                     <Route path="/declaraciones" element={<ComingSoon name="Declaraciones Tribu-CR" />} />
                     <Route path="/prorrata" element={<ComingSoon name="Prorrata IVA" />} />
-                    <Route path="/reportes" element={<ComingSoon name="Estados Financieros" />} />
+                    <Route path="/reportes" element={<EstadosFinancieros />} />
                     <Route path="/cierre" element={<CierrePeriodo />} />
                     <Route path="/cierre-anual" element={<CierreAnual />} />
                     <Route path="/libros-digitales" element={<LibrosDigitales />} />
