@@ -9,6 +9,7 @@
  * Solo asientos POSTED. tenant_id resuelto por el backend desde JWT.
  */
 import { useState, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useApp } from '../context/AppContext'
 
 const TYPE_COLOR = {
@@ -40,6 +41,7 @@ export default function BalanceComprobacion() {
 
     const apiUrl = import.meta.env.VITE_API_URL || ''
     const token = localStorage.getItem('gc_token')
+    const navigate = useNavigate()
 
     useEffect(() => { fetchBalance() }, [period, mode])
 
@@ -246,7 +248,7 @@ export default function BalanceComprobacion() {
                                 }}
                                 onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-hover)'}
                                 onMouseLeave={e => e.currentTarget.style.background = i % 2 === 0 ? 'transparent' : 'rgba(0,0,0,0.03)'}
-                                onClick={() => window.location.href = `/mayor?code=${acc.account_code}`}
+                                onClick={() => navigate(`/mayor?code=${acc.account_code}`)}
                                 title={`Ver Mayor de ${acc.account_code} →`}
                             >
                                 <span style={{ fontFamily: 'monospace', color, fontWeight: 700 }}>
