@@ -20,9 +20,11 @@ from services.ledger.router import router as ledger_router
 from services.integration.webhook_receiver import router as integration_router
 from services.assets.router import router as assets_router
 from services.tax.router import router as tax_router
+from services.reporting.router import router as reporting_router
 import services.catalog.models  # noqa: F401 — registra Account en Base para create_all
 import services.ledger.models   # noqa: F401 — registra JournalEntry/JournalLine en Base
 import services.ledger.audit_log  # noqa: F401 — registra AuditLog en Base
+import services.reporting.models  # noqa: F401 — registra NiifMapping/EeffSnapshot en Base
 import services.assets.models   # noqa: F401 — registra FixedAsset en Base
 
 logging.basicConfig(level=logging.INFO)
@@ -478,6 +480,7 @@ app.include_router(ledger_router)
 app.include_router(integration_router)
 app.include_router(assets_router)
 app.include_router(tax_router)
+app.include_router(reporting_router)
 
 # ── Endpoints API ──────────────────────────────────────────────
 
