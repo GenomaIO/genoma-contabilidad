@@ -123,12 +123,86 @@ export default function Mayor() {
         setMayorData(null)
     }
 
+    // ── Volver al Índice (breadcrumb back) ───────────────────────
+    function goBack() {
+        setMayorData(null)
+        setError(null)
+        // No reseteamos selectedAcc — el filtro queda para consultar de nuevo si quieren
+    }
+
     const color = mayorData ? (TYPE_COLOR[mayorData.account_type] || '#6b7280') : '#6b7280'
     const hasData = mayorData && !loading
 
     // ────────────────────────────────────────────────────────────────
     return (
         <div style={{ padding: '24px', maxWidth: 980, margin: '0 auto', fontFamily: 'Inter, sans-serif' }}>
+
+            {/* ── Breadcrumb contextual (solo visible en vista T-account) ── */}
+            {hasData && (
+                <div style={{
+                    display: 'flex', alignItems: 'center', gap: 8,
+                    marginBottom: 18, padding: '7px 14px',
+                    background: 'rgba(139,92,246,0.07)',
+                    border: '1px solid rgba(139,92,246,0.18)',
+                    borderRadius: 10,
+                    fontSize: '0.8rem',
+                    transition: 'all 0.2s',
+                }}>
+                    {/* Botón ← Índice (chip) */}
+                    <button
+                        id="mayor-back-btn"
+                        onClick={goBack}
+                        style={{
+                            display: 'inline-flex', alignItems: 'center', gap: 5,
+                            padding: '3px 12px', borderRadius: 20,
+                            background: 'rgba(139,92,246,0.15)',
+                            border: '1px solid rgba(139,92,246,0.35)',
+                            color: '#a78bfa',
+                            fontSize: '0.78rem', fontWeight: 600,
+                            cursor: 'pointer',
+                            transition: 'all 0.15s',
+                            whiteSpace: 'nowrap',
+                        }}
+                        onMouseEnter={e => {
+                            e.currentTarget.style.background = 'rgba(139,92,246,0.28)'
+                            e.currentTarget.style.color = '#c4b5fd'
+                        }}
+                        onMouseLeave={e => {
+                            e.currentTarget.style.background = 'rgba(139,92,246,0.15)'
+                            e.currentTarget.style.color = '#a78bfa'
+                        }}
+                    >
+                        ← Índice
+                    </button>
+
+                    {/* Separador */}
+                    <span style={{ color: 'var(--text-muted)', opacity: 0.4, fontSize: '0.9rem' }}>/</span>
+
+                    {/* Cuenta actual */}
+                    <span style={{
+                        fontFamily: 'monospace', fontWeight: 700,
+                        fontSize: '0.82rem', color,
+                    }}>
+                        {selectedAcc?.display_code}
+                    </span>
+                    <span style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>
+                        {selectedAcc?.name}
+                    </span>
+
+                    {/* Type badge */}
+                    {selectedAcc?.account_type && (
+                        <span style={{
+                            marginLeft: 'auto',
+                            fontSize: '0.68rem', fontWeight: 700,
+                            color, background: `${color}22`,
+                            padding: '2px 8px', borderRadius: 20,
+                            border: `1px solid ${color}40`,
+                        }}>
+                            {TYPE_LABEL[selectedAcc.account_type]}
+                        </span>
+                    )}
+                </div>
+            )}
 
             {/* ── Header ─────────────────────────────────────── */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24 }}>
