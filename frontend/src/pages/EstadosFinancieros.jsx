@@ -17,6 +17,36 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useApp } from '../context/AppContext'
 
+
+// ── CSS de impresión ─────────────────────────────────────────────
+const PRINT_STYLE = `
+@media print {
+    body { background: #fff !important; color: #000 !important; }
+    nav, aside, header, .no-print, button, select { display: none !important; }
+    #eeff-tab-content { display: block !important; }
+    table { page-break-inside: avoid; }
+    @page { margin: 1.5cm; size: A4; }
+    .print-page-break { page-break-before: always; }
+    tr { page-break-inside: avoid; }
+}
+`
+
+function PrintStyleInjector() {
+    useEffect(() => {
+        const style = document.createElement('style')
+        style.id = 'eeff-print-style'
+        style.textContent = PRINT_STYLE
+        if (!document.getElementById('eeff-print-style')) {
+            document.head.appendChild(style)
+        }
+        return () => {
+            const s = document.getElementById('eeff-print-style')
+            if (s) s.remove()
+        }
+    }, [])
+    return null
+}
+
 // ── Paleta de colores por tipo de sección ─────────────────────
 const COLORS = {
     activo: '#10b981',  // verde
@@ -56,7 +86,7 @@ const fmtNum = (n) => new Intl.NumberFormat('es-CR', {
 const isNeg = (n) => (n || 0) < 0
 
 // ── Componente: Fila de partida NIIF con drilldown ─────────────
-function NiifLine({ label, amount, niifCode, detail = [], color, isTotal = false, indent = false }) {
+function NiifLine({ label, amount, priorAmount, niifCode, detail = [], color, isTotal = false, indent = false, showCompar = false }) {
     const [open, setOpen] = useState(false)
     const hasDetail = detail.length > 0
 
@@ -100,7 +130,18 @@ function NiifLine({ label, amount, niifCode, detail = [], color, isTotal = false
                         </span>
                     )}
                 </td>
-                {/* Monto */}
+                {/* Monto N-1 (comparativo) */}
+                {showCompar && (
+                    <td style={{
+                        padding: '6px 8px', textAlign: 'right',
+                        fontFamily: 'monospace', fontSize: '0.75rem',
+                        color: 'var(--text-muted)', whiteSpace: 'nowrap',
+                        borderRight: '1px solid rgba(255,255,255,0.06)',
+                    }}>
+                        {priorAmount !== undefined ? fmt(priorAmount) : '—'}
+                    </td>
+                )}
+                {/* Monto N */}
                 <td style={{
                     padding: '6px 12px 6px 8px',
                     textAlign: 'right',
@@ -146,13 +187,13 @@ function NiifLine({ label, amount, niifCode, detail = [], color, isTotal = false
 }
 
 // ── Componente: Sección del ESF/ERI (encabezado + líneas) ──────
-function StatementSection({ title, lines = [], total, totalLabel, color }) {
+function StatementSection({ title, lines = [], total, totalLabel, color, showCompar = false, priorTotal }) {
     if (!lines.length && !total) return null
     return (
         <tbody>
             {/* Encabezado de sección */}
             <tr>
-                <td colSpan={2} style={{
+                <td colSpan={showCompar ? 3 : 2} style={{
                     padding: '12px 8px 4px',
                     fontSize: '0.65rem',
                     fontWeight: 800,
@@ -170,9 +211,11 @@ function StatementSection({ title, lines = [], total, totalLabel, color }) {
                     key={i}
                     label={l.label}
                     amount={l.amount}
+                    priorAmount={l.prior_amount}
                     niifCode={l.code}
                     detail={l.detail || []}
                     color={color}
+                    showCompar={showCompar}
                 />
             ))}
             {/* Total de sección */}
@@ -180,8 +223,10 @@ function StatementSection({ title, lines = [], total, totalLabel, color }) {
                 <NiifLine
                     label={totalLabel}
                     amount={total}
+                    priorAmount={priorTotal}
                     color={color}
                     isTotal
+                    showCompar={showCompar}
                 />
             )}
             <tr><td colSpan={2} style={{ height: 4 }} /></tr>
@@ -245,9 +290,10 @@ function UnmappedWarning({ accounts = [] }) {
 }
 
 // ── TAB: Estado de Situación Financiera ────────────────────────
-function TabESF({ esf, year }) {
+function TabESF({ esf, year, priorYear, showCompar }) {
     if (!esf) return <div style={{ color: 'var(--text-muted)', padding: 24, textAlign: 'center' }}>Sin datos ESF</div>
     const t = esf.totals || {}
+    const p = esf.prior_totals || {}
     return (
         <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
@@ -261,11 +307,12 @@ function TabESF({ esf, year }) {
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
                 {/* Columna ACTIVOS */}
                 <div style={{ background: 'var(--bg-card)', borderRadius: 12, overflow: 'hidden', border: '1px solid var(--border)' }}>
-                    <div style={{ padding: '12px 14px', background: `${COLORS.activo}15`, borderBottom: `1px solid ${COLORS.activo}30` }}>
+                    <div style={{ padding: '12px 14px', background: `${COLORS.activo}15`, borderBottom: `1px solid ${COLORS.activo}30`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <span style={{ fontWeight: 800, fontSize: '0.8rem', color: COLORS.activo }}>ACTIVOS</span>
-                        <span style={{ float: 'right', fontFamily: 'monospace', fontWeight: 700, color: COLORS.activo }}>
-                            {fmt(t.total_activos)}
-                        </span>
+                        <div style={{ display: 'flex', gap: 24, alignItems: 'center' }}>
+                            {showCompar && <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)', fontFamily: 'monospace' }}>{priorYear}: {fmt(p.total_activos)}</span>}
+                            <span style={{ fontFamily: 'monospace', fontWeight: 700, color: COLORS.activo }}>{year}: {fmt(t.total_activos)}</span>
+                        </div>
                     </div>
                     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                         <StatementSection
@@ -273,12 +320,16 @@ function TabESF({ esf, year }) {
                             lines={esf.activo_corriente}
                             total={t.total_activo_corriente}
                             totalLabel="Total Activo Corriente"
+                            showCompar={showCompar}
+                            priorTotal={p?.total_activo_corriente}
                         />
                         <StatementSection
                             title="Activo No Corriente" color={COLORS.activo}
                             lines={esf.activo_no_corriente}
                             total={t.total_activo_no_corriente}
                             totalLabel="Total Activo No Corriente"
+                            showCompar={showCompar}
+                            priorTotal={p?.total_activo_no_corriente}
                         />
                     </table>
                 </div>
@@ -348,9 +399,10 @@ function TabESF({ esf, year }) {
 }
 
 // ── TAB: Estado de Resultado Integral ─────────────────────────
-function TabERI({ eri, year }) {
+function TabERI({ eri, year, priorYear, showCompar }) {
     if (!eri) return <div style={{ color: 'var(--text-muted)', padding: 24, textAlign: 'center' }}>Sin datos ERI</div>
     const t = eri.totals || {}
+    const p = eri.prior_totals || {}
     const un = t.utilidad_neta || 0
     const isLoss = un < 0
 
@@ -716,6 +768,188 @@ function TabMapeo({ tenantId, apiBase, token }) {
     )
 }
 
+
+// ── TAB: Notas a los Estados Financieros ─────────────────────────
+const NOTAS_CATALOG = [
+    {
+        id: 'N-01', sec: 'Sec.8', titulo: 'Políticas Contables Significativas',
+        revelaciones: [
+            'Base de medición: Costo histórico de conformidad con NIIF PYMES 3ª Ed.',
+            'Moneda funcional y de presentación: Colón costarricense (CRC).',
+            'Período contable: 1 de enero al 31 de diciembre.',
+            'Las estimaciones contables significativas incluyen: vida útil de activos, provisiones y deterioro.',
+        ]
+    },
+    {
+        id: 'N-02', sec: 'Sec.10', titulo: 'Efectivo y Equivalentes de Efectivo',
+        revelaciones: [
+            'Se reconocen como efectivo: caja chica, cuentas corrientes y depósitos a plazo ≤ 90 días.',
+            'No existen restricciones sobre el uso del efectivo al cierre del período.',
+        ]
+    },
+    {
+        id: 'N-03', sec: 'Sec.11', titulo: 'Instrumentos Financieros Básicos',
+        revelaciones: [
+            'Las cuentas por cobrar se miden al costo amortizado menos deterioro.',
+            'La estimación para cuentas incobrables se calcula con base en la antigüedad de saldos.',
+            'Las cuentas por pagar a corto plazo no devengan intereses y se liquidan en fecha acordada.',
+        ]
+    },
+    {
+        id: 'N-04', sec: 'Sec.13', titulo: 'Inventarios',
+        revelaciones: [
+            'Los inventarios se valúan al costo o valor neto realizable, el menor.',
+            'Método de costeo: Promedio Ponderado (FIFO disponible en catálogo extendido).',
+            'Se reconoce deterioro cuando el VNR es menor al costo en libros.',
+        ]
+    },
+    {
+        id: 'N-05', sec: 'Sec.16', titulo: 'Propiedades de Inversión',
+        revelaciones: [
+            'Las propiedades de inversión se miden inicialmente al costo y posteriormente al modelo de costo menos depreciación acumulada.',
+        ]
+    },
+    {
+        id: 'N-06', sec: 'Sec.17', titulo: 'Propiedades, Planta y Equipo (PPE)',
+        revelaciones: [
+            'Las PPE se reconocen al costo menos depreciación acumulada y pérdidas por deterioro.',
+            'Método de depreciación: Línea recta.',
+            'Vidas útiles estimadas: Edificios 40 años, Maquinaria 5–15 años, Equipo de cómputo 3–5 años.',
+            'Las mejoras que extienden la vida útil se capitalizan; el mantenimiento ordinario se gasta.',
+        ]
+    },
+    {
+        id: 'N-07', sec: 'Sec.18', titulo: 'Activos Intangibles',
+        revelaciones: [
+            'Los intangibles con vida útil definida se amortizan en línea recta.',
+            'La plusvalía adquirida en combinaciones de negocios se somete a prueba de deterioro anual.',
+        ]
+    },
+    {
+        id: 'N-08', sec: 'Sec.21', titulo: 'Provisiones y Contingencias',
+        revelaciones: [
+            'Se reconoce una provisión cuando existe una obligación presente, es probable que se requiera de recursos y el monto es estimable.',
+            'Las contingencias se revelan cuando son probables pero no medibles.',
+        ]
+    },
+    {
+        id: 'N-09', sec: 'Sec.23', titulo: 'Ingresos de Actividades Ordinarias',
+        revelaciones: [
+            'Los ingresos por venta de bienes se reconocen cuando los riesgos y beneficios se transfieren al comprador.',
+            'Los ingresos por servicios se reconocen por el grado de terminación del servicio.',
+            'Los ingresos por intereses se reconocen usando el método del interés efectivo.',
+        ]
+    },
+    {
+        id: 'N-10', sec: 'Sec.29', titulo: 'Impuesto a las Ganancias',
+        revelaciones: [
+            'El impuesto corriente se mide con las tasas vigentes aprobadas al cierre del período.',
+            'Se reconocen impuestos diferidos por diferencias temporarias usando el método del pasivo.',
+        ]
+    },
+    {
+        id: 'N-11', sec: 'Sec.28', titulo: 'Beneficios a Empleados',
+        revelaciones: [
+            'Los beneficios a corto plazo (salarios, vacaciones, aguinaldo) se acumulan conforme se devengan.',
+            'La prestación laboral (Código de Trabajo CR) se reconoce como pasivo corriente.',
+            'No existen planes de beneficios post-empleo de beneficio definido al período que se informa.',
+        ]
+    },
+]
+
+function Nota({ nota }) {
+    const [open, setOpen] = useState(false)
+    return (
+        <div style={{
+            background: 'var(--bg-card)', borderRadius: 10,
+            border: '1px solid var(--border)', overflow: 'hidden',
+            marginBottom: 6,
+        }}>
+            <div
+                onClick={() => setOpen(o => !o)}
+                style={{
+                    display: 'flex', alignItems: 'center', gap: 10,
+                    padding: '10px 14px', cursor: 'pointer',
+                    background: open ? 'rgba(139,92,246,0.06)' : 'transparent',
+                    transition: 'background 0.15s',
+                }}
+            >
+                <span style={{ fontSize: '0.6rem', opacity: 0.5, transform: open ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.15s', userSelect: 'none' }}>▶</span>
+                <span style={{ fontSize: '0.65rem', fontWeight: 700, color: '#8b5cf6', minWidth: 40 }}>{nota.id}</span>
+                <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)', marginRight: 6 }}>{nota.sec}</span>
+                <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#fff', flex: 1 }}>{nota.titulo}</span>
+                <span style={{ fontSize: '0.6rem', color: 'var(--text-muted)' }}>{open ? 'cerrar' : 'ver'}</span>
+            </div>
+            {open && (
+                <div style={{ padding: '10px 14px 12px 46px', borderTop: '1px solid var(--border)' }}>
+                    <ul style={{ margin: 0, padding: 0, listStyle: 'none' }}>
+                        {nota.revelaciones.map((r, i) => (
+                            <li key={i} style={{
+                                fontSize: '0.78rem', color: 'var(--text-secondary)',
+                                padding: '3px 0', borderBottom: '1px solid rgba(255,255,255,0.03)',
+                                display: 'flex', gap: 8,
+                            }}>
+                                <span style={{ color: '#8b5cf6', minWidth: 10 }}>·</span>
+                                {r}
+                            </li>
+                        ))}
+                    </ul>
+                </div>
+            )}
+        </div>
+    )
+}
+
+function TabNotas({ data }) {
+    if (!data) return <div style={{ color: 'var(--text-muted)', padding: 24, textAlign: 'center' }}>Genera los EEFF primero para ver las notas.</div>
+    const t = data.eri?.totals || {}
+    const esft = data.esf?.totals || {}
+    const hasPerd = (t.utilidad_neta || 0) < 0
+
+    return (
+        <div>
+            {/* Cabecera */}
+            <div style={{ marginBottom: 16, padding: '12px 16px', background: 'rgba(139,92,246,0.07)', borderRadius: 10, border: '1px solid rgba(139,92,246,0.2)' }}>
+                <div style={{ fontWeight: 800, color: '#a78bfa', marginBottom: 4 }}>
+                    📋 Notas a los Estados Financieros
+                </div>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                    Al 31 de diciembre de {data.year} · NIIF PYMES 3ª Edición (feb. 2025) · IASB.
+                    Las notas son parte integral de los estados financieros y deben leerse conjuntamente con ellos.
+                </div>
+                {/* Tabla resumen rápido */}
+                <div style={{ display: 'flex', gap: 16, marginTop: 12, flexWrap: 'wrap' }}>
+                    {[
+                        { label: 'Total Activos', value: esft.total_activos, color: '#10b981' },
+                        { label: 'Total Pasivos', value: esft.total_pasivos, color: '#f59e0b' },
+                        { label: 'Patrimonio', value: esft.total_patrimonio, color: '#8b5cf6' },
+                        { label: hasPerd ? 'Pérdida Neta' : 'Utilidad Neta', value: t.utilidad_neta, color: hasPerd ? '#ef4444' : '#06b6d4' },
+                    ].map((kpi, i) => (
+                        <div key={i} style={{ background: 'var(--bg-card)', borderRadius: 8, padding: '8px 14px', border: '1px solid var(--border)', minWidth: 110 }}>
+                            <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>{kpi.label}</div>
+                            <div style={{ fontFamily: 'monospace', fontWeight: 700, color: kpi.color, fontSize: '0.82rem' }}>
+                                {new Intl.NumberFormat('es-CR', { style: 'currency', currency: 'CRC', maximumFractionDigits: 0 }).format(kpi.value || 0)}
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            </div>
+
+            {/* Notas colapsables */}
+            <div>
+                {NOTAS_CATALOG.map(nota => (
+                    <Nota key={nota.id} nota={nota} />
+                ))}
+            </div>
+
+            <div style={{ marginTop: 14, padding: '8px 12px', borderRadius: 8, background: 'rgba(139,92,246,0.07)', fontSize: '0.68rem', color: 'var(--text-muted)' }}>
+                📖 Notas generadas automáticamente con base en las políticas contables estándar NIIF PYMES 3ª Ed.
+                El contador debe revisar y personalizar estas revelaciones según las circunstancias específicas de la entidad.
+            </div>
+        </div>
+    )
+}
+
 // ═══════════════════════════════════════════════════════════════
 // COMPONENTE PRINCIPAL
 // ═══════════════════════════════════════════════════════════════
@@ -727,6 +961,7 @@ export default function EstadosFinancieros() {
     const [loading, setLoading] = useState(false)
     const [error, setError] = useState(null)
     const [seeded, setSeeded] = useState(false)
+    const [showCompar, setShowCompar] = useState(true)
 
     const API = import.meta.env.VITE_API_URL || 'https://genoma-contabilidad.onrender.com'
     const token = state.token
@@ -776,10 +1011,12 @@ export default function EstadosFinancieros() {
         { id: 'ecp', label: '🏛️ Cambios en Patrimonio', badge: data ? 'ECP' : null },
         { id: 'efe', label: '💧 Flujos de Efectivo', badge: data ? (data.warnings?.efe_cash_matches === false ? '⚠️' : 'EFE') : null },
         { id: 'map', label: '🗺️ Mapeo NIIF', badge: data?.warnings?.unmapped_accounts?.length > 0 ? `⚠️ ${data.warnings.unmapped_accounts.length}` : null },
+        { id: 'not', label: '📋 Notas NIIF', badge: null },
     ]
 
     return (
         <div style={{ padding: '24px', maxWidth: 1100, margin: '0 auto', fontFamily: 'Inter, sans-serif' }}>
+            <PrintStyleInjector />
 
             {/* ── Header ──────────────────────────────────────── */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24 }}>
@@ -807,6 +1044,22 @@ export default function EstadosFinancieros() {
                             <option key={y} value={y}>Año {y}</option>
                         ))}
                     </select>
+                    {/* Toggle comparativo N-1 */}
+                    {data?.has_prior && (
+                        <button
+                            id="eeff-comparar-btn"
+                            onClick={() => setShowCompar(s => !s)}
+                            style={{
+                                background: showCompar ? 'rgba(6,182,212,0.15)' : 'var(--bg-card)',
+                                border: `1px solid ${showCompar ? 'rgba(6,182,212,0.4)' : 'var(--border)'}`,
+                                color: showCompar ? '#06b6d4' : 'var(--text-muted)',
+                                borderRadius: 8, padding: '7px 14px',
+                                fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer',
+                            }}
+                        >
+                            {showCompar ? '📊 Comparativo ON' : '📊 Comparativo'}
+                        </button>
+                    )}
                     {/* Botón regenerar */}
                     <button
                         id="eeff-reload-btn"
@@ -822,6 +1075,22 @@ export default function EstadosFinancieros() {
                     >
                         {loading ? '⏳ Calculando...' : '🔄 Generar EEFF'}
                     </button>
+                    {/* Botón Imprimir */}
+                    {data && (
+                        <button
+                            id="eeff-imprimir-btn"
+                            onClick={() => window.print()}
+                            style={{
+                                background: 'rgba(245,158,11,0.1)',
+                                border: '1px solid rgba(245,158,11,0.3)',
+                                color: '#f59e0b', borderRadius: 8,
+                                padding: '7px 14px', fontSize: '0.8rem',
+                                fontWeight: 600, cursor: 'pointer',
+                            }}
+                        >
+                            🖨️ Imprimir
+                        </button>
+                    )}
                 </div>
             </div>
 
@@ -918,10 +1187,10 @@ export default function EstadosFinancieros() {
                 )}
 
                 {!loading && data && activeTab === 'esf' && (
-                    <TabESF esf={data.esf} year={year} />
+                    <TabESF esf={data.esf} year={year} priorYear={data.prior_year} showCompar={data.has_prior && showCompar} />
                 )}
                 {!loading && data && activeTab === 'eri' && (
-                    <TabERI eri={data.eri} year={year} />
+                    <TabERI eri={data.eri} year={year} priorYear={data.prior_year} showCompar={data.has_prior && showCompar} />
                 )}
                 {!loading && data && activeTab === 'ecp' && (
                     <TabECP ecp={data.ecp} year={year} />
@@ -931,6 +1200,9 @@ export default function EstadosFinancieros() {
                 )}
                 {activeTab === 'map' && (
                     <TabMapeo tenantId={state.tenant?.id} apiBase={API} token={token} />
+                )}
+                {activeTab === 'not' && (
+                    <TabNotas data={data} />
                 )}
             </div>
         </div>

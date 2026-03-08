@@ -475,10 +475,11 @@ class EeffEngine:
         return {k: Decimal(str(v)) for k, v in pa["buckets"].items()}
 
     # ─────────────────────────────────────────────────────────────
-    # 9. Punto de entrada principal — genera los 4 EEFF
+    # 9. Punto de entrada principal — genera los 4 EEFF con comparativo
     # ─────────────────────────────────────────────────────────────
     def compute(self) -> dict:
-        """Genera ESF + ERI + ECP + EFE desde el balance de comprobación."""
+        """Genera ESF + ERI + ECP + EFE desde el balance de comprobación.
+        Incluye prior_amount en cada línea ESF/ERI para comparativo N-1."""
         trial_balance = self._get_trial_balance()
         mappings      = self._get_mappings()
         accum         = self._accumulate(trial_balance, mappings)
@@ -502,9 +503,44 @@ class EeffEngine:
             esf_totals=esf["totals"],
         )
 
+        # ── Enriquecer líneas con prior_amount para comparativo N-1 ──
+        has_prior = bool(buckets_prior)
+        if has_prior:
+            for sk in ("activo_corriente","activo_no_corriente",
+                       "pasivo_corriente","pasivo_no_corriente","patrimonio"):
+                for line in esf.get(sk, []):
+                    line["prior_amount"] = float(
+                        buckets_prior.get(line["code"], Decimal("0")))
+            for sk in ("ingresos","costos","gastos_operativos",
+                       "gastos_financieros","impuesto_renta","otro_resultado"):
+                for line in eri.get(sk, []):
+                    line["prior_amount"] = float(
+                        buckets_prior.get(line["code"], Decimal("0")))
+
+            def p(code): return float(buckets_prior.get(code, Decimal("0")))
+
+            esf["prior_totals"] = {
+                "total_activo_corriente":    sum(p(l["code"]) for l in esf["activo_corriente"]),
+                "total_activo_no_corriente": sum(p(l["code"]) for l in esf["activo_no_corriente"]),
+                "total_activos":             sum(p(l["code"]) for l in esf["activo_corriente"]+esf["activo_no_corriente"]),
+                "total_pasivo_corriente":    sum(p(l["code"]) for l in esf["pasivo_corriente"]),
+                "total_pasivo_no_corriente": sum(p(l["code"]) for l in esf["pasivo_no_corriente"]),
+                "total_pasivos":             sum(p(l["code"]) for l in esf["pasivo_corriente"]+esf["pasivo_no_corriente"]),
+                "total_patrimonio":          sum(p(l["code"]) for l in esf["patrimonio"]),
+            }
+            eri["prior_totals"] = {
+                "total_ingresos":   sum(p(l["code"]) for l in eri["ingresos"]),
+                "total_costo":      sum(p(l["code"]) for l in eri["costos"]),
+                "total_gastos_op":  sum(p(l["code"]) for l in eri["gastos_operativos"]),
+                "total_gastos_fin": sum(p(l["code"]) for l in eri["gastos_financieros"]),
+                "total_isr":        sum(p(l["code"]) for l in eri["impuesto_renta"]),
+            }
+
         return {
             "ok":           True,
             "year":         self.year,
+            "prior_year":   str(int(self.year) - 1),
+            "has_prior":    has_prior,
             "from_date":    self.from_date,
             "to_date":      self.to_date,
             "niif_edition": "3rd_2025",
@@ -523,5 +559,6 @@ class EeffEngine:
                 "total_accounts_in_tb": len(trial_balance),
                 "mapped_accounts":      len(trial_balance) - len(unmapped),
                 "unmapped_count":       len(unmapped),
+                "has_comparative":      has_prior,
             }
         }
