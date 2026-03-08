@@ -964,7 +964,7 @@ export default function EstadosFinancieros() {
     const [showCompar, setShowCompar] = useState(true)
 
     const API = import.meta.env.VITE_API_URL || 'https://genoma-contabilidad.onrender.com'
-    const token = state.token
+    const token = localStorage.getItem('gc_token')
 
     // Años disponibles para selector (año actual y 3 anteriores)
     const currentYear = new Date().getFullYear()
