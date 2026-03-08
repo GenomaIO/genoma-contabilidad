@@ -282,36 +282,242 @@ class EeffEngine:
         }
 
     # ─────────────────────────────────────────────────────────────
-    # 6. Punto de entrada principal
+    # 6. Construir ECP — Estado de Cambios en el Patrimonio
+    # ─────────────────────────────────────────────────────────────
+    def _build_ecp(self, buckets_current: dict, buckets_prior: dict,
+                   utilidad_neta: Decimal) -> dict:
+        """
+        Estado de Cambios en el Patrimonio — Sección 6 NIIF PYMES 3ª Ed.
+        Columnas: Capital | Reservas | Utilidades Acumuladas | Resultado | ORI | TOTAL
+        """
+        PAT_COLUMNS = [
+            {"key": "capital",       "label": "Capital Social",         "codes": ["ESF.PAT.01"]},
+            {"key": "reservas",      "label": "Reservas",               "codes": ["ESF.PAT.02"]},
+            {"key": "utilidades_ac", "label": "Utilidades Acumuladas",  "codes": ["ESF.PAT.03"]},
+            {"key": "resultado",     "label": "Resultado del Período",  "codes": ["ESF.PAT.04"]},
+            {"key": "ori",           "label": "ORI Acumulado",          "codes": ["ESF.PAT.05"]},
+        ]
+
+        def get_bucket(b, codes):
+            return sum(
+                (b.get(c, Decimal("0")) if isinstance(b.get(c, Decimal("0")), Decimal)
+                 else Decimal(str(b.get(c, 0))))
+                for c in codes
+            )
+
+        rows = []
+        for col in PAT_COLUMNS:
+            prior   = get_bucket(buckets_prior,   col["codes"])
+            current = get_bucket(buckets_current, col["codes"])
+            change  = current - prior
+            row = {
+                "key":           col["key"],
+                "label":         col["label"],
+                "saldo_inicial": float(prior),
+                "movimiento":    float(change),
+                "saldo_final":   float(current),
+            }
+            if col["key"] == "resultado":
+                row["movimiento"] = float(utilidad_neta)
+                row["nota"] = "Según Estado de Resultado Integral"
+            rows.append(row)
+
+        total_inicial = sum(Decimal(str(r["saldo_inicial"])) for r in rows)
+        total_final   = sum(Decimal(str(r["saldo_final"])) for r in rows)
+
+        return {
+            "columns":  rows,
+            "totals":   {
+                "total_inicial":    float(total_inicial),
+                "total_movimiento": float(total_final - total_inicial),
+                "total_final":      float(total_final),
+            },
+            "niif_ref": "Sec.6 NIIF PYMES 3ª Ed.",
+        }
+
+    # ─────────────────────────────────────────────────────────────
+    # 7. Construir EFE — Flujos de Efectivo Método Indirecto
+    # ─────────────────────────────────────────────────────────────
+    def _build_efe(self, buckets_current: dict, buckets_prior: dict,
+                   eri_totals: dict, esf_totals: dict) -> dict:
+        """
+        EFE Método Indirecto — Sección 7 NIIF PYMES 3ª Ed.
+        Validación CRÍTICA: efectivo final calculado == ESF.AC.01 (efectivo en Balance)
+        Nueva req. 3ª Ed. Sec. 7.14: conciliación de pasivos de financiación.
+        """
+        def get(b, code):
+            v = b.get(code, Decimal("0"))
+            return v if isinstance(v, Decimal) else Decimal(str(v))
+
+        efectivo_final   = get(buckets_current, "ESF.AC.01")
+        efectivo_inicial = get(buckets_prior,   "ESF.AC.01")
+
+        # A — OPERACIÓN (método indirecto: parte de utilidad neta)
+        utilidad_neta = Decimal(str(eri_totals.get("utilidad_neta", 0)))
+
+        # Cambios en Capital de Trabajo (Delta activos corrientes operativos)
+        delta_cxc    = -(get(buckets_current, "ESF.AC.02") - get(buckets_prior, "ESF.AC.02"))
+        delta_inv    = -(get(buckets_current, "ESF.AC.03") - get(buckets_prior, "ESF.AC.03"))
+        delta_oth_ac = -(get(buckets_current, "ESF.AC.07") - get(buckets_prior, "ESF.AC.07"))
+        # Delta pasivos corrientes operativos
+        delta_cxp    =  (get(buckets_current, "ESF.PC.01") - get(buckets_prior, "ESF.PC.01"))
+        delta_prv    =  (get(buckets_current, "ESF.PC.04") - get(buckets_prior, "ESF.PC.04"))
+        delta_isr    =  (get(buckets_current, "ESF.PC.05") - get(buckets_prior, "ESF.PC.05"))
+
+        total_operacion = utilidad_neta + delta_cxc + delta_inv + delta_oth_ac + delta_cxp + delta_prv + delta_isr
+
+        # B — INVERSIÓN
+        delta_ppe    = -(get(buckets_current, "ESF.ANC.01") - get(buckets_prior, "ESF.ANC.01"))
+        delta_int    = -(get(buckets_current, "ESF.ANC.03") - get(buckets_prior, "ESF.ANC.03"))
+        delta_inv_lp = -(get(buckets_current, "ESF.ANC.05") - get(buckets_prior, "ESF.ANC.05"))
+        total_inversion = delta_ppe + delta_int + delta_inv_lp
+
+        # C — FINANCIACIÓN
+        prest_lp_fin = get(buckets_current, "ESF.PNC.01")
+        prest_lp_ini = get(buckets_prior,   "ESF.PNC.01")
+        delta_prest  =  (prest_lp_fin - prest_lp_ini)
+        delta_cap    =  (get(buckets_current, "ESF.PAT.01") - get(buckets_prior, "ESF.PAT.01"))
+        delta_res    =  (get(buckets_current, "ESF.PAT.02") - get(buckets_prior, "ESF.PAT.02"))
+        utl_ac_ini   = get(buckets_prior,   "ESF.PAT.03")
+        utl_ac_fin   = get(buckets_current, "ESF.PAT.03")
+        dividendos   = -(max(Decimal("0"), utl_ac_ini - utl_ac_fin))
+        total_financiacion = delta_prest + delta_cap + delta_res + dividendos
+
+        # Conciliación de efectivo
+        cambio_neto = total_operacion + total_inversion + total_financiacion
+        efectivo_final_calculado = efectivo_inicial + cambio_neto
+        diff = abs(efectivo_final_calculado - efectivo_final)
+        cash_ok = diff <= TOLERANCE
+
+        return {
+            "metodo": "indirecto",
+            "operacion": {
+                "items": [
+                    {"label": "Utilidad (Pérdida) neta del período",   "amount": float(utilidad_neta),  "type": "inicio"},
+                    {"label": "Cambio en Deudores comerciales (CxC)",  "amount": float(delta_cxc),     "type": "capital_trabajo"},
+                    {"label": "Cambio en Inventarios",                  "amount": float(delta_inv),     "type": "capital_trabajo"},
+                    {"label": "Cambio en Otros activos corrientes",     "amount": float(delta_oth_ac),  "type": "capital_trabajo"},
+                    {"label": "Cambio en Acreedores comerciales (CxP)","amount": float(delta_cxp),     "type": "capital_trabajo"},
+                    {"label": "Cambio en Provisiones corrientes",       "amount": float(delta_prv),     "type": "capital_trabajo"},
+                    {"label": "Cambio en ISR por pagar",               "amount": float(delta_isr),     "type": "capital_trabajo"},
+                ],
+                "total": float(total_operacion),
+            },
+            "inversion": {
+                "items": [
+                    {"label": "Compra neta de PPE",                    "amount": float(delta_ppe),     "type": "inversion"},
+                    {"label": "Compra neta de Intangibles",             "amount": float(delta_int),     "type": "inversion"},
+                    {"label": "Movimiento en Inversiones LP",           "amount": float(delta_inv_lp),  "type": "inversion"},
+                ],
+                "total": float(total_inversion),
+            },
+            "financiacion": {
+                "items": [
+                    {"label": "Préstamos netos (obtenidos/pagados)",    "amount": float(delta_prest),   "type": "financiacion"},
+                    {"label": "Aportes de capital",                     "amount": float(delta_cap),     "type": "financiacion"},
+                    {"label": "Dividendos pagados",                     "amount": float(dividendos),    "type": "financiacion"},
+                    {"label": "Variación en reservas",                  "amount": float(delta_res),     "type": "financiacion"},
+                ],
+                "total": float(total_financiacion),
+            },
+            "conciliacion": {
+                "efectivo_inicial":               float(efectivo_inicial),
+                "total_actividades_operacion":     float(total_operacion),
+                "total_actividades_inversion":     float(total_inversion),
+                "total_actividades_financiacion":  float(total_financiacion),
+                "cambio_neto_efectivo":             float(cambio_neto),
+                "efectivo_final_calculado":         float(efectivo_final_calculado),
+                "efectivo_final_esf":               float(efectivo_final),
+                "diferencia":                       float(diff),
+                "efe_cash_matches":                 cash_ok,
+            },
+            # Nueva req. 3ª Ed. Sec. 7.14: conciliación pasivos de financiación
+            "conciliacion_pasivos_fin": [
+                {"label": "Préstamos LP — Saldo Inicial",    "amount": float(prest_lp_ini)},
+                {"label": "Nuevos préstamos obtenidos",     "amount": float(max(Decimal("0"), delta_prest))},
+                {"label": "Pagos de capital",               "amount": float(min(Decimal("0"), delta_prest))},
+                {"label": "Préstamos LP — Saldo Final",     "amount": float(prest_lp_fin)},
+            ],
+            "niif_ref": "Sec.7 NIIF PYMES 3ª Ed.",
+            "warnings": [] if cash_ok else [
+                f"⚠️ Diferencia EFE vs ESF: {float(diff):,.2f} — revisar mapeo"
+            ],
+        }
+
+    # ─────────────────────────────────────────────────────────────
+    # 8. Saldos del año anterior para EFE + ECP
+    # ─────────────────────────────────────────────────────────────
+    def _get_prior_year_buckets(self, mappings: dict) -> dict:
+        """Saldos anuales del año anterior (N-1) para comparativo y deltas."""
+        py = str(int(self.year) - 1)
+        rows = self.db.execute(text("""
+            SELECT jl.account_code, a.account_type, a.name,
+                   COALESCE(SUM(jl.debit),0), COALESCE(SUM(jl.credit),0)
+            FROM journal_lines jl
+            JOIN journal_entries je ON jl.entry_id = je.id
+            JOIN accounts a ON a.code = jl.account_code AND a.tenant_id = je.tenant_id
+            WHERE je.tenant_id = :tid
+              AND je.status = 'POSTED'
+              AND je.date >= :f AND je.date <= :t
+              AND jl.account_code NOT IN ('3304')
+            GROUP BY jl.account_code, a.account_type, a.name
+            HAVING (SUM(jl.debit) != 0 OR SUM(jl.credit) != 0)
+        """), {"tid": self.tenant_id, "f": f"{py}-01-01", "t": f"{py}-12-31"}).fetchall()
+
+        if not rows:
+            return {}
+        prior_tb = {r[0]: {
+            "account_code": r[0], "account_type": r[1], "account_name": r[2],
+            "debit":  Decimal(str(r[3])), "credit": Decimal(str(r[4])),
+            "balance": Decimal(str(r[3])) - Decimal(str(r[4])),
+        } for r in rows}
+        pa = self._accumulate(prior_tb, mappings)
+        return {k: Decimal(str(v)) for k, v in pa["buckets"].items()}
+
+    # ─────────────────────────────────────────────────────────────
+    # 9. Punto de entrada principal — genera los 4 EEFF
     # ─────────────────────────────────────────────────────────────
     def compute(self) -> dict:
-        """
-        Genera los EEFF (ESF + ERI) desde el balance de comprobación.
-        Retorna un dict con todos los datos listos para el frontend.
-        """
+        """Genera ESF + ERI + ECP + EFE desde el balance de comprobación."""
         trial_balance = self._get_trial_balance()
         mappings      = self._get_mappings()
         accum         = self._accumulate(trial_balance, mappings)
-
-        buckets = {k: Decimal(str(v)) for k, v in accum["buckets"].items()}
-        detail  = accum["detail"]
+        buckets  = {k: Decimal(str(v)) for k, v in accum["buckets"].items()}
+        detail   = accum["detail"]
         unmapped = accum["unmapped_codes"]
+
+        buckets_prior = self._get_prior_year_buckets(mappings)
 
         esf = self._build_esf(buckets, detail)
         eri = self._build_eri(buckets, detail)
+        ecp = self._build_ecp(
+            buckets_current=buckets,
+            buckets_prior=buckets_prior,
+            utilidad_neta=Decimal(str(eri["totals"]["utilidad_neta"])),
+        )
+        efe = self._build_efe(
+            buckets_current=buckets,
+            buckets_prior=buckets_prior,
+            eri_totals=eri["totals"],
+            esf_totals=esf["totals"],
+        )
 
         return {
-            "ok":             True,
-            "year":           self.year,
-            "from_date":      self.from_date,
-            "to_date":        self.to_date,
-            "niif_edition":   "3rd_2025",
-            "esf":            esf,
-            "eri":            eri,
-            "warnings":       {
-                "unmapped_accounts": unmapped,
-                "has_unmapped":      len(unmapped) > 0,
-                "esf_balanced":      esf["totals"]["balanced"],
+            "ok":           True,
+            "year":         self.year,
+            "from_date":    self.from_date,
+            "to_date":      self.to_date,
+            "niif_edition": "3rd_2025",
+            "esf":   esf,
+            "eri":   eri,
+            "ecp":   ecp,
+            "efe":   efe,
+            "warnings": {
+                "unmapped_accounts":  unmapped,
+                "has_unmapped":       len(unmapped) > 0,
+                "esf_balanced":       esf["totals"]["balanced"],
+                "efe_cash_matches":   efe["conciliacion"]["efe_cash_matches"],
+                "efe_warnings":       efe.get("warnings", []),
             },
             "metadata": {
                 "total_accounts_in_tb": len(trial_balance),

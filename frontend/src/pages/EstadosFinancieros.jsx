@@ -459,6 +459,182 @@ function TabERI({ eri, year }) {
     )
 }
 
+// ── TAB: Estado de Cambios en el Patrimonio ───────────────────
+function TabECP({ ecp, year }) {
+    if (!ecp) return <div style={{ color: 'var(--text-muted)', padding: 24, textAlign: 'center' }}>Sin datos ECP</div>
+    const t = ecp.totals || {}
+    const cols = ecp.columns || []
+    const color = '#8b5cf6'
+
+    return (
+        <div>
+            <div style={{ marginBottom: 12, fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                Período enero–diciembre {year} · {ecp.niif_ref}
+            </div>
+            <div style={{ background: 'var(--bg-card)', borderRadius: 12, overflow: 'auto', border: '1px solid var(--border)' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 700 }}>
+                    <thead>
+                        <tr style={{ background: `${color}15`, borderBottom: `1px solid ${color}30` }}>
+                            <th style={{ padding: '10px 12px', textAlign: 'left', fontSize: '0.72rem', fontWeight: 800, color, letterSpacing: '0.05em' }}>Componente</th>
+                            <th style={{ padding: '10px 8px', textAlign: 'right', fontSize: '0.72rem', fontWeight: 800, color }}>Saldo Inicial</th>
+                            <th style={{ padding: '10px 8px', textAlign: 'right', fontSize: '0.72rem', fontWeight: 800, color }}>Movimiento</th>
+                            <th style={{ padding: '10px 8px', textAlign: 'right', fontSize: '0.72rem', fontWeight: 800, color }}>Saldo Final</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {cols.map((col, i) => (
+                            <tr key={i} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}
+                                onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.03)'}
+                                onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                            >
+                                <td style={{ padding: '7px 12px', fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
+                                    {col.label}
+                                    {col.nota && <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)', marginLeft: 6 }}>({col.nota})</span>}
+                                </td>
+                                <td style={{ padding: '7px 8px', textAlign: 'right', fontFamily: 'monospace', fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                                    {fmt(col.saldo_inicial)}
+                                </td>
+                                <td style={{ padding: '7px 8px', textAlign: 'right', fontFamily: 'monospace', fontSize: '0.78rem', color: col.movimiento < 0 ? '#ef4444' : col.movimiento > 0 ? '#10b981' : 'var(--text-muted)' }}>
+                                    {col.movimiento !== 0 ? (col.movimiento > 0 ? '+' : '') + fmt(col.movimiento) : '—'}
+                                </td>
+                                <td style={{ padding: '7px 8px', textAlign: 'right', fontFamily: 'monospace', fontSize: '0.78rem', fontWeight: 600, color }}>
+                                    {fmt(col.saldo_final)}
+                                </td>
+                            </tr>
+                        ))}
+                    </tbody>
+                    <tfoot>
+                        <tr style={{ background: `${color}10`, borderTop: `2px solid ${color}40` }}>
+                            <td style={{ padding: '10px 12px', fontWeight: 800, fontSize: '0.8rem', color: '#fff' }}>TOTAL PATRIMONIO</td>
+                            <td style={{ padding: '10px 8px', textAlign: 'right', fontFamily: 'monospace', fontWeight: 700, color }}>{fmt(t.total_inicial)}</td>
+                            <td style={{ padding: '10px 8px', textAlign: 'right', fontFamily: 'monospace', fontWeight: 700, color: t.total_movimiento < 0 ? '#ef4444' : '#10b981' }}>
+                                {t.total_movimiento !== 0 ? (t.total_movimiento > 0 ? '+' : '') + fmt(t.total_movimiento) : '—'}
+                            </td>
+                            <td style={{ padding: '10px 8px', textAlign: 'right', fontFamily: 'monospace', fontWeight: 800, color }}>{fmt(t.total_final)}</td>
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
+            <div style={{ marginTop: 12, padding: '8px 12px', borderRadius: 8, background: 'rgba(139,92,246,0.07)', fontSize: '0.68rem', color: 'var(--text-muted)' }}>
+                📖 NIIF PYMES 3ª Ed. · Sección 6 · Conciliación de cada componente del patrimonio
+            </div>
+        </div>
+    )
+}
+
+// ── TAB: Estado de Flujos de Efectivo ─────────────────────────
+function TabEFE({ efe, year }) {
+    if (!efe) return <div style={{ color: 'var(--text-muted)', padding: 24, textAlign: 'center' }}>Sin datos EFE</div>
+    const c = efe.conciliacion || {}
+    const cashOk = c.efe_cash_matches
+
+    function EfeSection({ title, section, color, icon }) {
+        const items = (section?.items || []).filter(i => i.amount !== 0)
+        return (
+            <div style={{ marginBottom: 12 }}>
+                <div style={{ padding: '8px 14px', background: `${color}15`, borderLeft: `3px solid ${color}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontWeight: 800, fontSize: '0.78rem', color }}>{icon} {title}</span>
+                    <span style={{ fontFamily: 'monospace', fontWeight: 800, fontSize: '0.82rem', color: section?.total < 0 ? '#ef4444' : color }}>
+                        {fmt(section?.total)}
+                    </span>
+                </div>
+                <div style={{ paddingLeft: 3 }}>
+                    {items.map((item, i) => (
+                        <div key={i} style={{
+                            display: 'flex', justifyContent: 'space-between',
+                            padding: '5px 14px', fontSize: '0.78rem',
+                            borderBottom: '1px solid rgba(255,255,255,0.03)',
+                            color: 'var(--text-secondary)',
+                        }}>
+                            <span>{item.label}</span>
+                            <span style={{ fontFamily: 'monospace', color: item.amount < 0 ? '#ef4444' : item.amount > 0 ? '#10b981' : 'var(--text-muted)' }}>
+                                {item.amount > 0 ? '+' : ''}{fmt(item.amount)}
+                            </span>
+                        </div>
+                    ))}
+                </div>
+            </div>
+        )
+    }
+
+    return (
+        <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+                <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Método Indirecto · {efe.niif_ref}</span>
+                <div id="efe-cash-check" style={{
+                    padding: '4px 14px', borderRadius: 20, fontSize: '0.72rem', fontWeight: 700,
+                    background: cashOk ? 'rgba(16,185,129,0.12)' : 'rgba(239,68,68,0.12)',
+                    border: `1px solid ${cashOk ? 'rgba(16,185,129,0.3)' : 'rgba(239,68,68,0.3)'}`,
+                    color: cashOk ? '#10b981' : '#ef4444',
+                }}>
+                    {cashOk ? '✅ Efectivo cuadra (EFE = ESF.AC.01)' : `❌ Diferencia: ${fmt(c.diferencia)}`}
+                </div>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 320px', gap: 16, alignItems: 'start' }}>
+                {/* Columna izquierda: Actividades */}
+                <div style={{ background: 'var(--bg-card)', borderRadius: 12, overflow: 'hidden', border: '1px solid var(--border)' }}>
+                    <EfeSection title="Actividades de Operación" section={efe.operacion} color='#10b981' icon='⚙️' />
+                    <EfeSection title="Actividades de Inversión" section={efe.inversion} color='#f59e0b' icon='🔧' />
+                    <EfeSection title="Actividades de Financiación" section={efe.financiacion} color='#8b5cf6' icon='💰' />
+                </div>
+
+                {/* Columna derecha: Conciliación */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                    <div style={{ background: 'var(--bg-card)', borderRadius: 12, border: '1px solid var(--border)', overflow: 'hidden' }}>
+                        <div style={{ padding: '10px 14px', background: 'rgba(255,255,255,0.04)', borderBottom: '1px solid var(--border)' }}>
+                            <span style={{ fontWeight: 800, fontSize: '0.78rem', color: '#fff' }}>Conciliación de Efectivo</span>
+                        </div>
+                        {[
+                            { label: 'Efectivo inicial', value: c.efectivo_inicial, color: 'var(--text-secondary)' },
+                            { label: '+ Flujo Operación', value: c.total_actividades_operacion, color: '#10b981' },
+                            { label: '+ Flujo Inversión', value: c.total_actividades_inversion, color: '#f59e0b' },
+                            { label: '+ Flujo Financiación', value: c.total_actividades_financiacion, color: '#8b5cf6' },
+                            { label: 'Cambio neto', value: c.cambio_neto_efectivo, color: '#06b6d4', bold: true },
+                            { label: 'Efectivo final (EFE)', value: c.efectivo_final_calculado, color: '#fff', bold: true },
+                            { label: 'Efectivo en Balance (ESF)', value: c.efectivo_final_esf, color: '#fff', bold: true },
+                        ].map((row, i) => (
+                            <div key={i} style={{
+                                display: 'flex', justifyContent: 'space-between',
+                                padding: '5px 14px', borderBottom: '1px solid rgba(255,255,255,0.04)',
+                                background: row.bold ? 'rgba(255,255,255,0.03)' : 'transparent',
+                            }}>
+                                <span style={{ fontSize: '0.73rem', color: 'var(--text-muted)' }}>{row.label}</span>
+                                <span style={{ fontSize: '0.73rem', fontFamily: 'monospace', fontWeight: row.bold ? 700 : 400, color: row.value < 0 ? '#ef4444' : row.color }}>
+                                    {fmt(row.value)}
+                                </span>
+                            </div>
+                        ))}
+                    </div>
+
+                    {/* Conciliación pasivos financiación — Sec. 7.14 3ªEd. */}
+                    <div style={{ background: 'var(--bg-card)', borderRadius: 12, border: '1px solid var(--border)', overflow: 'hidden' }}>
+                        <div style={{ padding: '10px 14px', background: 'rgba(139,92,246,0.06)', borderBottom: '1px solid var(--border)' }}>
+                            <span style={{ fontWeight: 700, fontSize: '0.72rem', color: '#8b5cf6' }}>Pasivos de Financiación (Sec. 7.14)</span>
+                        </div>
+                        {(efe.conciliacion_pasivos_fin || []).map((row, i) => (
+                            <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 14px', borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
+                                <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>{row.label}</span>
+                                <span style={{ fontSize: '0.7rem', fontFamily: 'monospace', color: row.amount < 0 ? '#ef4444' : 'var(--text-secondary)' }}>{fmt(row.amount)}</span>
+                            </div>
+                        ))}
+                    </div>
+
+                    {efe.warnings?.length > 0 && (
+                        <div style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 8, padding: '8px 12px' }}>
+                            {efe.warnings.map((w, i) => <div key={i} style={{ fontSize: '0.75rem', color: '#ef4444' }}>{w}</div>)}
+                        </div>
+                    )}
+                </div>
+            </div>
+
+            <div style={{ marginTop: 12, padding: '8px 12px', borderRadius: 8, background: 'rgba(16,185,129,0.07)', fontSize: '0.68rem', color: 'var(--text-muted)' }}>
+                📖 NIIF PYMES 3ª Ed. · Sección 7 · Método Indirecto · Sec. 7.14 Conciliación de pasivos de financiación
+            </div>
+        </div>
+    )
+}
+
 // ── TAB: Wizard de Mapeo NIIF ──────────────────────────────────
 function TabMapeo({ tenantId, apiBase, token }) {
     const [unmapped, setUnmapped] = useState([])
@@ -597,6 +773,8 @@ export default function EstadosFinancieros() {
     const TABS = [
         { id: 'esf', label: '📊 Situación Financiera', badge: data ? 'ESF' : null },
         { id: 'eri', label: '📈 Resultado Integral', badge: data ? 'ERI' : null },
+        { id: 'ecp', label: '🏛️ Cambios en Patrimonio', badge: data ? 'ECP' : null },
+        { id: 'efe', label: '💧 Flujos de Efectivo', badge: data ? (data.warnings?.efe_cash_matches === false ? '⚠️' : 'EFE') : null },
         { id: 'map', label: '🗺️ Mapeo NIIF', badge: data?.warnings?.unmapped_accounts?.length > 0 ? `⚠️ ${data.warnings.unmapped_accounts.length}` : null },
     ]
 
@@ -744,6 +922,12 @@ export default function EstadosFinancieros() {
                 )}
                 {!loading && data && activeTab === 'eri' && (
                     <TabERI eri={data.eri} year={year} />
+                )}
+                {!loading && data && activeTab === 'ecp' && (
+                    <TabECP ecp={data.ecp} year={year} />
+                )}
+                {!loading && data && activeTab === 'efe' && (
+                    <TabEFE efe={data.efe} year={year} />
                 )}
                 {activeTab === 'map' && (
                     <TabMapeo tenantId={state.tenant?.id} apiBase={API} token={token} />
