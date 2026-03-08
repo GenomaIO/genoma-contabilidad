@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import Optional
 
-from services.auth.dependencies import get_current_user
+from services.auth.security import get_current_user
 from services.auth.database import get_db
 from .models import NiifLineDef, NiifMapping, EeffSnapshot
 from .niif_lines import (
