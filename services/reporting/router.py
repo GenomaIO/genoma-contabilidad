@@ -18,7 +18,7 @@ from pydantic import BaseModel
 from typing import Optional
 
 from services.auth.security import get_current_user
-from services.auth.database import get_db
+from services.auth.database import get_session
 from .models import NiifLineDef, NiifMapping, EeffSnapshot
 from .niif_lines import (
     seed_niif_lines, seed_standard_mapping,
@@ -55,7 +55,7 @@ def now_utc():
 # ─────────────────────────────────────────────────────────────────
 
 @router.get("/eeff/lines")
-def get_niif_lines(db: Session = Depends(get_db), user=Depends(get_current_user)):
+def get_niif_lines(db: Session = Depends(get_session), user=Depends(get_current_user)):
     """
     Retorna el catálogo global de partidas NIIF.
     Si la tabla está vacía, la siembra automáticamente.
@@ -87,7 +87,7 @@ def get_niif_lines(db: Session = Depends(get_db), user=Depends(get_current_user)
 
 
 @router.get("/eeff/mapping")
-def get_mapping(db: Session = Depends(get_db), user=Depends(get_current_user)):
+def get_mapping(db: Session = Depends(get_session), user=Depends(get_current_user)):
     """Retorna todos los mapeos NIIF del tenant actual."""
     tenant_id = user["tenant_id"]
     mappings = db.query(NiifMapping).filter_by(tenant_id=tenant_id).all()
@@ -109,7 +109,7 @@ def get_mapping(db: Session = Depends(get_db), user=Depends(get_current_user)):
 @router.post("/eeff/mapping")
 def upsert_mapping(
     body: MappingIn,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_session),
     user=Depends(get_current_user)
 ):
     """
@@ -143,7 +143,7 @@ def upsert_mapping(
 
 
 @router.get("/eeff/mapping/unmapped")
-def get_unmapped(db: Session = Depends(get_db), user=Depends(get_current_user)):
+def get_unmapped(db: Session = Depends(get_session), user=Depends(get_current_user)):
     """
     Cuentas activas del tenant que NO tienen mapeo NIIF.
     Si hay cuentas aquí, los EEFF pueden estar incompletos.
@@ -160,7 +160,7 @@ def get_unmapped(db: Session = Depends(get_db), user=Depends(get_current_user)):
 
 
 @router.post("/eeff/seed-mapping")
-def seed_mapping(db: Session = Depends(get_db), user=Depends(get_current_user)):
+def seed_mapping(db: Session = Depends(get_session), user=Depends(get_current_user)):
     """
     Aplica el mapeo automático del catálogo estándar Genoma.
     Solo inserta si no existe — idempotente.
@@ -183,7 +183,7 @@ def get_eeff(
     year: str,
     from_date: Optional[str] = Query(None, description="Fecha inicio YYYY-MM-DD"),
     to_date:   Optional[str] = Query(None, description="Fecha fin YYYY-MM-DD"),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_session),
     user=Depends(get_current_user)
 ):
     """
