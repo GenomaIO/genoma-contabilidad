@@ -776,11 +776,93 @@ export default function Conciliacion() {
                         Carga tu estado de cuenta (CSV, Excel o PDF) y compáralo automáticamente con el Libro Diario.
                     </p>
                 </div>
-                {step !== 'upload' && (
-                    <button onClick={() => { setStep('upload'); setTxns([]); setStats(null) }} style={btnSecondary}>
-                        ↩ Nueva conciliación
-                    </button>
-                )}
+
+                {/* Botones del header — igual patrón que Catálogo */}
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                    {step !== 'upload' && (
+                        <button onClick={() => { setStep('upload'); setTxns([]); setStats(null) }} style={btnSecondary}>
+                            ↩ Nueva conciliación
+                        </button>
+                    )}
+
+                    {/* 💡 Tooltip Info — onMouseEnter/Leave, sin estado, igual al Catálogo */}
+                    <div style={{ position: 'relative', display: 'inline-block' }}
+                        onMouseEnter={e => e.currentTarget.querySelector('.recon-guide').style.display = 'block'}
+                        onMouseLeave={e => e.currentTarget.querySelector('.recon-guide').style.display = 'none'}
+                    >
+                        <button style={{
+                            background: 'transparent', border: '1px solid var(--border-color)',
+                            borderRadius: 20, padding: '5px 10px', cursor: 'pointer',
+                            color: 'var(--text-secondary)', fontSize: '0.82rem',
+                            display: 'flex', alignItems: 'center', gap: 5,
+                        }}>💡 Info</button>
+
+                        <div className="recon-guide" style={{
+                            display: 'none', position: 'absolute', right: 0, top: '110%', zIndex: 999,
+                            background: 'var(--bg-card)', border: '1px solid var(--border-color)',
+                            borderRadius: 10, padding: '14px 16px', width: 340,
+                            boxShadow: '0 8px 24px rgba(0,0,0,0.35)', fontSize: '0.78rem',
+                        }}>
+                            <p style={{ margin: '0 0 8px', fontWeight: 700, color: 'var(--text-primary)', fontSize: '0.85rem' }}>
+                                💡 Guía de Conciliación
+                            </p>
+
+                            {/* Flujo de 3 pasos */}
+                            <p style={{ margin: '0 0 6px', fontWeight: 600, color: 'var(--text-secondary)' }}>Flujo de 3 pasos:</p>
+                            {[
+                                ['📂', '1.', 'Carga el PDF, CSV o Excel del banco'],
+                                ['🔗', '2.', 'Selecciona la cuenta contable del banco'],
+                                ['✅', '3.', 'Guardar sesión → luego Conciliar'],
+                            ].map(([ico, n, txt]) => (
+                                <div key={n} style={{ display: 'flex', gap: 6, marginBottom: 4, alignItems: 'flex-start' }}>
+                                    <span style={{ opacity: 0.6, minWidth: 18, fontSize: '0.72rem', paddingTop: 1 }}>{n}</span>
+                                    <span style={{ fontSize: '0.9rem', flexShrink: 0 }}>{ico}</span>
+                                    <span style={{ color: 'var(--text-secondary)', lineHeight: 1.4 }}>{txt}</span>
+                                </div>
+                            ))}
+
+                            <hr style={{ border: 'none', borderTop: '1px solid var(--border-color)', margin: '10px 0' }} />
+
+                            {/* Formatos */}
+                            <p style={{ margin: '0 0 6px', fontWeight: 600, color: 'var(--text-secondary)' }}>Formatos aceptados:</p>
+                            <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: 10 }}>
+                                <tbody>
+                                    {[
+                                        ['PDF', 'BNCR, BCR'],
+                                        ['CSV', 'BAC, cooperativas'],
+                                        ['Excel', 'BN Virtual'],
+                                    ].map(([fmt, bancos]) => (
+                                        <tr key={fmt} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                                            <td style={{ padding: '3px 6px', fontWeight: 700, color: 'var(--text-primary)', fontFamily: 'monospace', fontSize: '0.72rem' }}>{fmt}</td>
+                                            <td style={{ padding: '3px 6px', color: 'var(--text-muted)' }}>{bancos}</td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+
+                            <hr style={{ border: 'none', borderTop: '1px solid var(--border-color)', margin: '0 0 10px' }} />
+
+                            {/* Estados */}
+                            <p style={{ margin: '0 0 6px', fontWeight: 600, color: 'var(--text-secondary)' }}>Estados del resultado:</p>
+                            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
+                                {[
+                                    ['CON_FE', '#16a34a', 'rgba(34,197,94,0.15)'],
+                                    ['SIN_FE', '#dc2626', 'rgba(239,68,68,0.15)'],
+                                    ['PENDIENTE', '#64748b', 'rgba(148,163,184,0.15)'],
+                                ].map(([lbl, color, bg]) => (
+                                    <span key={lbl} style={{
+                                        fontSize: '0.7rem', fontWeight: 700, padding: '2px 8px',
+                                        borderRadius: 5, background: bg, color,
+                                    }}>{lbl}</span>
+                                ))}
+                            </div>
+
+                            <p style={{ margin: 0, fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                                ⚡ CENTINELA se activa automáticamente al conciliar
+                            </p>
+                        </div>
+                    </div>
+                </div>
             </div>
 
             {/* Banner de estado del período */}
