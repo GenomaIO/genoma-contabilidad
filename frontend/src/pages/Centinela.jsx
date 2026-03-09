@@ -487,15 +487,69 @@ export default function Centinela() {
                 </div>
             )}
 
-            {/* Normativa CR */}
-            <div style={{ ...cardStyle, marginBottom: 16, padding: '10px 18px', background: 'rgba(14,165,233,0.04)' }}>
-                <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                    <span>⚖️ <strong>Decreto 44739-H</strong> — SINPE debe tener FE con código 06</span>
-                    <span>📋 <strong>D-270</strong> — Gastos sin FE a declarar antes del día 10</span>
-                    <span>📊 <strong>IVA</strong> — monto ÷ 1.13 × 0.13 = IVA incluido</span>
-                    <span>🏛️ <strong>Renta</strong> — base estimada × 15% (conservador)</span>
-                </div>
-            </div>
+            {/* ── Botón Info + Tooltip de normativa fiscal ─────────────────── */}
+            {(() => {
+                const [showInfo, setShowInfo] = React.useState(false)
+                React.useEffect(() => {
+                    if (!showInfo) return
+                    const close = () => setShowInfo(false)
+                    document.addEventListener('click', close)
+                    return () => document.removeEventListener('click', close)
+                }, [showInfo])
+                return (
+                    <div style={{ position: 'relative', display: 'inline-block', marginBottom: 16 }}>
+                        <button
+                            id="btn-centinela-info"
+                            onClick={e => { e.stopPropagation(); setShowInfo(p => !p) }}
+                            style={{
+                                background: 'var(--bg-card)', border: '1px solid var(--border)',
+                                borderRadius: 20, padding: '5px 14px', cursor: 'pointer',
+                                fontSize: '0.8rem', color: 'var(--text-muted)',
+                                display: 'flex', alignItems: 'center', gap: 6, fontWeight: 600,
+                                boxShadow: showInfo ? '0 2px 8px rgba(0,0,0,0.18)' : 'none',
+                                transition: 'box-shadow 0.15s',
+                            }}
+                        >
+                            💡 Info
+                        </button>
+                        {showInfo && (
+                            <div
+                                onClick={e => e.stopPropagation()}
+                                style={{
+                                    position: 'absolute', top: 'calc(100% + 8px)', left: 0,
+                                    zIndex: 1200, width: 320,
+                                    background: 'var(--bg-card)',
+                                    border: '1px solid var(--border)',
+                                    borderRadius: 12, padding: '16px 18px',
+                                    boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
+                                }}
+                            >
+                                <div style={{ fontWeight: 700, fontSize: '0.85rem', marginBottom: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
+                                    💡 Normativa fiscal aplicada
+                                </div>
+                                {[
+                                    { icon: '⚖️', label: 'Decreto 44739-H', desc: 'SINPE debe tener FE con código 06' },
+                                    { icon: '📋', label: 'D-270', desc: 'Gastos sin FE a declarar antes del día 10' },
+                                    { icon: '📊', label: 'IVA', desc: 'monto ÷ 1.13 × 0.13 = IVA incluido' },
+                                    { icon: '🏛️', label: 'Renta', desc: 'base estimada × 15% (conservador)' },
+                                ].map(row => (
+                                    <div key={row.label} style={{
+                                        display: 'flex', gap: 10, alignItems: 'flex-start',
+                                        padding: '7px 0', borderBottom: '1px solid var(--border)',
+                                        fontSize: '0.78rem',
+                                    }}>
+                                        <span style={{ fontSize: '1rem', flexShrink: 0 }}>{row.icon}</span>
+                                        <div>
+                                            <span style={{ fontWeight: 700, color: 'var(--text-primary)' }}>{row.label}</span>
+                                            <span style={{ color: 'var(--text-muted)', marginLeft: 6 }}>— {row.desc}</span>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                )
+            })()}
 
             {/* Tabs: Score / Tabla / Fugas / D-270 */}
             <div style={{ display: 'flex', gap: 4, marginBottom: 16, flexWrap: 'wrap', alignItems: 'center' }}>
