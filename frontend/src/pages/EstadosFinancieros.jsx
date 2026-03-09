@@ -319,118 +319,109 @@ function TabESF({ esf, year, priorYear, showCompar }) {
     if (!esf) return <div style={{ color: 'var(--text-muted)', padding: 24, textAlign: 'center' }}>Sin datos ESF</div>
     const t = esf.totals || {}
     const p = esf.prior_totals || {}
+    const cols = showCompar ? 3 : 2
+
     return (
         <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
-                <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-                    Al 31 de diciembre de {year}
-                </span>
+            {/* Sub-header */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
+                <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Al 31 de diciembre de {year}</span>
                 <BalanceCheck balanced={t.balanced} difference={t.difference} />
             </div>
 
-            {/* Tabla */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-                {/* Columna ACTIVOS */}
-                <div style={{ background: 'var(--bg-card)', borderRadius: 12, overflow: 'hidden', border: '1px solid var(--border)' }}>
-                    <div style={{ padding: '12px 14px', background: `${COLORS.activo}15`, borderBottom: `1px solid ${COLORS.activo}30`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <span style={{ fontWeight: 800, fontSize: '0.8rem', color: COLORS.activo }}>ACTIVOS</span>
-                        <div style={{ display: 'flex', gap: 24, alignItems: 'center' }}>
-                            {showCompar && <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)', fontFamily: 'monospace' }}>{priorYear}: {fmt(p.total_activos)}</span>}
-                            <span style={{ fontFamily: 'monospace', fontWeight: 700, color: COLORS.activo }}>{year}: {fmt(t.total_activos)}</span>
-                        </div>
-                    </div>
-                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                        <StatementSection
-                            title="Activo Corriente" color={COLORS.activo}
-                            lines={esf.activo_corriente}
-                            total={t.total_activo_corriente}
-                            totalLabel="Total Activo Corriente"
-                            showCompar={showCompar}
-                            priorTotal={p?.total_activo_corriente}
-                        />
-                        <StatementSection
-                            title="Activo No Corriente" color={COLORS.activo}
-                            lines={esf.activo_no_corriente}
-                            total={t.total_activo_no_corriente}
-                            totalLabel="Total Activo No Corriente"
-                            showCompar={showCompar}
-                            priorTotal={p?.total_activo_no_corriente}
-                        />
-                    </table>
-                </div>
+            {/* ━━━ Tabla vertical única (Activos → Pasivos → Patrimonio) ━━━ */}
+            <div style={{ background: 'var(--bg-card)', borderRadius: 14, overflow: 'hidden', border: '1px solid var(--border)' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed' }}>
+                    <colgroup>
+                        <col style={{ width: showCompar ? '60%' : '75%' }} />
+                        {showCompar && <col style={{ width: '20%' }} />}
+                        <col style={{ width: showCompar ? '20%' : '25%' }} />
+                    </colgroup>
+                    <thead>
+                        <tr style={{ background: 'rgba(255,255,255,0.04)', borderBottom: '2px solid rgba(255,255,255,0.08)' }}>
+                            <th style={{ padding: '11px 16px', textAlign: 'left', fontSize: '0.69rem', fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.07em', textTransform: 'uppercase' }}>Partida NIIF</th>
+                            {showCompar && (
+                                <th data-prior="true" className="niif-prior-col"
+                                    style={{ padding: '11px 10px', textAlign: 'right', fontSize: '0.69rem', fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.04em' }}>
+                                    {priorYear || (parseInt(year) - 1)}
+                                </th>
+                            )}
+                            <th style={{ padding: '11px 16px', textAlign: 'right', fontSize: '0.69rem', fontWeight: 900, color: '#fff', letterSpacing: '0.04em' }}>{year}</th>
+                        </tr>
+                    </thead>
 
-                {/* Columna PASIVOS + PATRIMONIO */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                    <div style={{ background: 'var(--bg-card)', borderRadius: 12, overflow: 'hidden', border: '1px solid var(--border)', flex: 1 }}>
-                        <div style={{ padding: '12px 14px', background: `${COLORS.pasivo}15`, borderBottom: `1px solid ${COLORS.pasivo}30` }}>
-                            <span style={{ fontWeight: 800, fontSize: '0.8rem', color: COLORS.pasivo }}>PASIVOS</span>
-                            <span style={{ float: 'right', fontFamily: 'monospace', fontWeight: 700, color: COLORS.pasivo }}>
-                                {fmt(t.total_pasivos)}
-                            </span>
-                        </div>
-                        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                            <StatementSection
-                                title="Pasivo Corriente" color={COLORS.pasivo}
-                                lines={esf.pasivo_corriente}
-                                total={t.total_pasivo_corriente}
-                                totalLabel="Total Pasivo Corriente"
-                                showCompar={showCompar}
-                                priorTotal={p?.total_pasivo_corriente}
-                            />
-                            <StatementSection
-                                title="Pasivo No Corriente" color={COLORS.pasivo}
-                                lines={esf.pasivo_no_corriente}
-                                total={t.total_pasivo_no_corriente}
-                                totalLabel="Total Pasivo No Corriente"
-                                showCompar={showCompar}
-                                priorTotal={p?.total_pasivo_no_corriente}
-                            />
-                        </table>
-                    </div>
+                    {/* ─ ACTIVOS ─────────────────────────────────────────── */}
+                    <tbody>
+                        <tr style={{ background: `${COLORS.activo}12`, borderTop: `2px solid ${COLORS.activo}50` }}>
+                            <td colSpan={cols} style={{ padding: '7px 16px 5px', fontSize: '0.63rem', fontWeight: 900, letterSpacing: '0.15em', color: COLORS.activo, textTransform: 'uppercase' }}>Activos</td>
+                        </tr>
+                    </tbody>
+                    <StatementSection title="Activo Corriente" color={COLORS.activo}
+                        lines={esf.activo_corriente} total={t.total_activo_corriente}
+                        totalLabel="Total Activo Corriente" showCompar={showCompar} priorTotal={p?.total_activo_corriente} />
+                    <StatementSection title="Activo No Corriente" color={COLORS.activo}
+                        lines={esf.activo_no_corriente} total={t.total_activo_no_corriente}
+                        totalLabel="Total Activo No Corriente" showCompar={showCompar} priorTotal={p?.total_activo_no_corriente} />
+                    <tbody>
+                        <tr style={{ background: `${COLORS.activo}18`, borderTop: `2px solid ${COLORS.activo}60` }}>
+                            <td style={{ padding: '12px 16px', fontWeight: 900, fontSize: '0.83rem', color: COLORS.activo }}>TOTAL ACTIVOS</td>
+                            {showCompar && <td data-prior="true" className="niif-prior-col" style={{ padding: '12px 10px', textAlign: 'right', fontFamily: 'monospace', fontWeight: 700, color: 'var(--text-muted)' }}>{fmt(p.total_activos)}</td>}
+                            <td style={{ padding: '12px 16px', textAlign: 'right', fontFamily: 'monospace', fontWeight: 900, fontSize: '0.9rem', color: COLORS.activo }}>{fmt(t.total_activos)}</td>
+                        </tr>
+                        <tr><td colSpan={cols} style={{ height: 10, background: 'rgba(0,0,0,0.15)' }} /></tr>
+                    </tbody>
 
-                    <div style={{ background: 'var(--bg-card)', borderRadius: 12, overflow: 'hidden', border: '1px solid var(--border)' }}>
-                        <div style={{ padding: '12px 14px', background: `${COLORS.patrimonio}15`, borderBottom: `1px solid ${COLORS.patrimonio}30` }}>
-                            <span style={{ fontWeight: 800, fontSize: '0.8rem', color: COLORS.patrimonio }}>PATRIMONIO</span>
-                            <span style={{ float: 'right', fontFamily: 'monospace', fontWeight: 700, color: COLORS.patrimonio }}>
-                                {fmt(t.total_patrimonio)}
-                            </span>
-                        </div>
-                        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                            <StatementSection
-                                title="Patrimonio" color={COLORS.patrimonio}
-                                lines={esf.patrimonio}
-                                showCompar={showCompar}
-                                priorTotal={p?.total_patrimonio}
-                            />
-                        </table>
-                    </div>
+                    {/* ─ PASIVOS ─────────────────────────────────────────── */}
+                    <tbody>
+                        <tr style={{ background: `${COLORS.pasivo}12`, borderTop: `2px solid ${COLORS.pasivo}50` }}>
+                            <td colSpan={cols} style={{ padding: '7px 16px 5px', fontSize: '0.63rem', fontWeight: 900, letterSpacing: '0.15em', color: COLORS.pasivo, textTransform: 'uppercase' }}>Pasivos</td>
+                        </tr>
+                    </tbody>
+                    <StatementSection title="Pasivo Corriente" color={COLORS.pasivo}
+                        lines={esf.pasivo_corriente} total={t.total_pasivo_corriente}
+                        totalLabel="Total Pasivo Corriente" showCompar={showCompar} priorTotal={p?.total_pasivo_corriente} />
+                    <StatementSection title="Pasivo No Corriente" color={COLORS.pasivo}
+                        lines={esf.pasivo_no_corriente} total={t.total_pasivo_no_corriente}
+                        totalLabel="Total Pasivo No Corriente" showCompar={showCompar} priorTotal={p?.total_pasivo_no_corriente} />
+                    <tbody>
+                        <tr style={{ background: `${COLORS.pasivo}14`, borderTop: `1px solid ${COLORS.pasivo}40` }}>
+                            <td style={{ padding: '10px 16px', fontWeight: 800, fontSize: '0.8rem', color: COLORS.pasivo }}>Total Pasivos</td>
+                            {showCompar && <td data-prior="true" className="niif-prior-col" style={{ padding: '10px 10px', textAlign: 'right', fontFamily: 'monospace', color: 'var(--text-muted)' }}>{fmt(p.total_pasivos)}</td>}
+                            <td style={{ padding: '10px 16px', textAlign: 'right', fontFamily: 'monospace', fontWeight: 800, fontSize: '0.83rem', color: COLORS.pasivo }}>{fmt(t.total_pasivos)}</td>
+                        </tr>
+                        <tr><td colSpan={cols} style={{ height: 10, background: 'rgba(0,0,0,0.15)' }} /></tr>
+                    </tbody>
 
-                    {/* Check total P+Pat */}
-                    <div style={{
-                        background: 'var(--bg-card)', borderRadius: 10,
-                        padding: '10px 14px', border: '1px solid var(--border)',
-                        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                    }}>
-                        <span style={{ fontSize: '0.78rem', fontWeight: 800, color: '#fff' }}>
-                            TOTAL PASIVOS + PATRIMONIO
-                        </span>
-                        <span style={{ fontFamily: 'monospace', fontWeight: 800, color: '#fff', fontSize: '0.85rem' }}>
-                            {fmt(t.total_pasivo_patrimonio)}
-                        </span>
-                    </div>
-                </div>
+                    {/* ─ PATRIMONIO ──────────────────────────────────────── */}
+                    <tbody>
+                        <tr style={{ background: `${COLORS.patrimonio}12`, borderTop: `2px solid ${COLORS.patrimonio}50` }}>
+                            <td colSpan={cols} style={{ padding: '7px 16px 5px', fontSize: '0.63rem', fontWeight: 900, letterSpacing: '0.15em', color: COLORS.patrimonio, textTransform: 'uppercase' }}>Patrimonio</td>
+                        </tr>
+                    </tbody>
+                    <StatementSection title="Patrimonio" color={COLORS.patrimonio}
+                        lines={esf.patrimonio} showCompar={showCompar} priorTotal={p?.total_patrimonio} />
+
+                    {/* ─ GRAN TOTAL ──────────────────────────────────────── */}
+                    <tbody>
+                        <tr style={{ background: 'rgba(255,255,255,0.06)', borderTop: '2px solid rgba(255,255,255,0.22)' }}>
+                            <td style={{ padding: '13px 16px', fontWeight: 900, fontSize: '0.85rem', color: '#fff' }}>TOTAL PASIVOS + PATRIMONIO</td>
+                            {showCompar && (
+                                <td data-prior="true" className="niif-prior-col"
+                                    style={{ padding: '13px 10px', textAlign: 'right', fontFamily: 'monospace', fontWeight: 700, fontSize: '0.82rem', color: 'var(--text-muted)' }}>
+                                    {fmt((p.total_pasivos ?? 0) + (p.total_patrimonio ?? 0))}
+                                </td>
+                            )}
+                            <td style={{ padding: '13px 16px', textAlign: 'right', fontFamily: 'monospace', fontWeight: 900, fontSize: '0.92rem', color: '#fff' }}>{fmt(t.total_pasivo_patrimonio)}</td>
+                        </tr>
+                    </tbody>
+                </table>
             </div>
 
-            {/* Nota NIIF — Sec. 3.14 comparativo */}
-            <div className="niif-comparativo-nota" style={{ marginTop: 12, padding: '8px 12px', borderRadius: 8, background: 'rgba(139,92,246,0.07)', fontSize: '0.68rem', color: 'var(--text-muted)' }}>
-                📖 NIIF PYMES 3ª Ed. (Feb 2025) · Sección 4 · Clasificación Corriente/No Corriente
+            {/* Nota NIIF */}
+            <div className="niif-comparativo-nota" style={{ marginTop: 10, padding: '7px 12px', borderRadius: 8, background: 'rgba(139,92,246,0.07)', fontSize: '0.68rem', color: 'var(--text-muted)', display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
+                <span>📖 NIIF PYMES 3ª Ed. (Feb 2025) · Sec. 4 · Clasificación Corriente/No Corriente</span>
                 {showCompar && !priorYear && (
-                    <span style={{ marginLeft: 8, color: '#f59e0b', fontStyle: 'italic' }}>
-                        · ⚠️ Primer año de operación — columna {parseInt(year) - 1} presentada en cero (Sec. 3.14 NIIF PYMES)
-                    </span>
-                )}
-                {!showCompar && (
-                    <span style={{ marginLeft: 8 }}>· Haga clic en una partida para ver el detalle de cuentas</span>
+                    <span style={{ color: '#f59e0b', fontStyle: 'italic' }}>· ⚠️ Primer año · columna {parseInt(year) - 1} en cero (Sec. 3.14)</span>
                 )}
             </div>
         </div>
