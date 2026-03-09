@@ -7,7 +7,6 @@ import ClientSelector from './pages/ClientSelector'
 import Onboarding from './pages/Onboarding'
 import Catalogo from './pages/Catalogo'
 import AsientosPendientes from './pages/AsientosPendientes'
-import BalanceComprobacion from './pages/BalanceComprobacion'
 import CierrePeriodo from './pages/CierrePeriodo'
 import CierreAnual from './pages/CierreAnual'
 import Apertura from './pages/Apertura'
@@ -79,7 +78,7 @@ function AppLayout() {
                     <Route path="/" element={<Dashboard />} />
                     <Route path="/diario" element={<AsientosPendientes />} />
                     <Route path="/mayor" element={<Mayor />} />
-                    <Route path="/balance" element={<BalanceComprobacion />} />
+                    <Route path="/balance" element={<BalanzaComprobacion />} />
                     <Route path="/auxiliares/activos" element={<ActivosFijos />} />
                     <Route path="/integracion" element={<ComingSoon name="Integración Facturador" />} />
                     <Route path="/asientos" element={<AsientosPendientes />} />
