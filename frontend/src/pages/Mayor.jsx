@@ -133,43 +133,44 @@ export default function Mayor() {
     const color = mayorData ? (TYPE_COLOR[mayorData.account_type] || '#6b7280') : '#6b7280'
     const hasData = mayorData && !loading
 
-    // ── Exportar Mayor a Excel (CSV BOM UTF-8) ───────────────────
+    // ── Exportar Mayor a Excel (CSV BOM UTF-8 — Formato Contable) ──
     function exportToExcel() {
         if (!mayorData) return
         const acc = mayorData
         const filename = `Mayor_${acc.account_code}_${fromDate}_${toDate}.csv`.replace(/:/g, '-')
 
-        // Fila de apertura
-        const aperturaRow = acc.opening_balance != null ? [
-            acc.from_date || fromDate, 'APER', '← Saldo de Apertura',
-            '', '', acc.opening_balance.toFixed(2)
-        ] : []
+        // Formato contable CR: 1 234 567,89 (miles + 2 decimales)
+        const fmtAcct = (n) => n != null
+            ? Number(n).toLocaleString('es-CR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+            : '0,00'
 
         const rows = [
-            ['Libro Mayor — T-Account', '', '', '', '', ''],
+            ['LIBRO MAYOR — T-ACCOUNT', '', '', '', '', ''],
             [`Cuenta: ${acc.account_code} – ${acc.account_name}`, '', '', '', '', ''],
             [`Período: ${fromDate} → ${toDate}`, '', '', '', '', ''],
             ['', '', '', '', '', ''],
-            [`Saldo Inicial (Apertura): ${(acc.opening_balance ?? 0).toFixed(2)} CRC`, '', '', '', '', ''],
+            [`Saldo Inicial (Apertura): ${fmtAcct(acc.opening_balance ?? 0)} CRC`, '', '', '', '', ''],
             ['', '', '', '', '', ''],
             ['FECHA', 'REFERENCIA', 'DESCRIPCIÓN', 'DEBE (DR)', 'HABER (CR)', 'SALDO'],
-            // ✅ Usa acc.movements (no acc.lines) — campo real del API
+            // Fila de apertura
+            ...(acc.opening_balance != null ? [[
+                acc.from_date || fromDate, 'APER', '← Saldo de Apertura',
+                '', '', fmtAcct(acc.opening_balance)
+            ]] : []),
+            // Movimientos del período
             ...(acc.movements || []).map(m => [
                 m.date || '',
-                // ✅ Usa m.source_ref (no m.ref)
                 m.source_ref || `#${String(m.entry_id || '').slice(-6)}`,
                 m.description || '',
-                m.debit > 0 ? m.debit.toFixed(2) : '0.00',
-                m.credit > 0 ? m.credit.toFixed(2) : '0.00',
-                // ✅ Usa m.balance (no m.running_balance)
-                typeof m.balance !== 'undefined' ? m.balance.toFixed(2) : '',
+                m.debit > 0 ? fmtAcct(m.debit) : '-',
+                m.credit > 0 ? fmtAcct(m.credit) : '-',
+                typeof m.balance !== 'undefined' ? fmtAcct(m.balance) : '',
             ]),
             ['', '', '', '', '', ''],
-            // ✅ Usa acc.total_debit / acc.total_credit (no acc.period_debit/credit)
             ['', 'TOTALES DEL PERÍODO', '',
-                (acc.total_debit ?? 0).toFixed(2),
-                (acc.total_credit ?? 0).toFixed(2),
-                (acc.closing_balance ?? 0).toFixed(2)
+                fmtAcct(acc.total_debit ?? 0),
+                fmtAcct(acc.total_credit ?? 0),
+                fmtAcct(acc.closing_balance ?? 0)
             ],
         ]
 

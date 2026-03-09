@@ -116,28 +116,33 @@ export default function BalanceComprobacion() {
     const fmt = n => `¢${Math.abs(n).toLocaleString('es-CR', { minimumFractionDigits: 2 })}`
     const gridCols = '90px 1fr 80px 130px 130px'
 
-    // ── Exportar a Excel (CSV con BOM UTF-8) ───────────────────────
+    // ── Exportar a Excel (CSV con BOM UTF-8) — Formato Contable ───
     function exportToExcel() {
         const modeLabel = mode === 'ytd' ? 'Acumulado' : 'Mes'
         const [yr, mo] = period.split('-')
         const periodoLabel = `${MONTHS[parseInt(mo, 10) - 1]}_${yr}`
         const filename = `BalanceComprobacion_${modeLabel}_${periodoLabel}.csv`
 
+        // Formato contable CR: 1 234 567,89 → mantiene separador de miles
+        const fmtAcct = (n) => n != null
+            ? Number(n).toLocaleString('es-CR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+            : '0,00'
+
         const rows = [
-            ['Balance de Comprobación', '', '', '', ''],
+            ['BALANCE DE COMPROBACIÓN', '', '', '', ''],
             [`Modo: ${modeLabel}`, `Período: ${MONTHS[parseInt(mo, 10) - 1]} ${yr}`, '', '', ''],
-            [balanced ? 'Balanceado ✅' : 'Desbalanceado ⚠️', '', '', '', ''],
+            [balanced ? 'Estado: Balanceado ✓' : 'Estado: DESBALANCEADO ⚠', '', '', '', ''],
             ['', '', '', '', ''],
-            ['CÓDIGO', 'NOMBRE', 'TIPO', 'DÉBITOS (CRC)', 'CRÉDITOS (CRC)'],
+            ['CÓDIGO', 'NOMBRE DE CUENTA', 'TIPO', 'DÉBITOS (CRC)', 'CRÉDITOS (CRC)'],
             ...accounts.map(a => [
                 a.account_code,
                 a.account_name || a.account_code,
                 a.account_type,
-                a.total_debit > 0 ? a.total_debit.toFixed(2) : '0.00',
-                a.total_credit > 0 ? a.total_credit.toFixed(2) : '0.00',
+                a.total_debit > 0 ? fmtAcct(a.total_debit) : '-',
+                a.total_credit > 0 ? fmtAcct(a.total_credit) : '-',
             ]),
             ['', '', '', '', ''],
-            ['', 'TOTAL', '', totalDebit.toFixed(2), totalCredit.toFixed(2)],
+            ['', 'TOTAL', '', fmtAcct(totalDebit), fmtAcct(totalCredit)],
         ]
 
         const csv = '\uFEFF' + rows
@@ -151,9 +156,64 @@ export default function BalanceComprobacion() {
         URL.revokeObjectURL(url)
     }
 
-    // ── Imprimir ───────────────────────────────────────────────────
+    // ── Imprimir — ventana HTML propia (evita react-root en blanco) ─
     function handlePrint() {
-        window.print()
+        if (!data || accounts.length === 0) return
+        const [yr, mo] = period.split('-')
+        const periodoLabel = `${MONTHS[parseInt(mo, 10) - 1]} ${yr}`
+        const modeLabel = mode === 'ytd' ? 'Acumulado' : 'Solo el mes'
+        const fmtN = (n) => n != null
+            ? Number(n).toLocaleString('es-CR', { minimumFractionDigits: 2 }) : '-'
+
+        const typeColors = {
+            ACTIVO: '#1d4ed8', PASIVO: '#dc2626', PATRIMONIO: '#7c3aed',
+            INGRESO: '#059669', GASTO: '#d97706'
+        }
+
+        const bodyRows = accounts.map((a, i) => `
+            <tr style="background:${i % 2 === 0 ? '#fff' : '#f8f8ff'}">
+                <td style="font-family:monospace;font-weight:700;color:${typeColors[a.account_type] || '#333'}">${a.account_code}</td>
+                <td>${a.account_name || a.account_code}</td>
+                <td style="color:${typeColors[a.account_type] || '#333'};font-size:10px">${a.account_type}</td>
+                <td style="text-align:right;color:#1d4ed8">${a.total_debit > 0 ? fmtN(a.total_debit) : '—'}</td>
+                <td style="text-align:right;color:#059669">${a.total_credit > 0 ? fmtN(a.total_credit) : '—'}</td>
+            </tr>`).join('')
+
+        const html = `<!DOCTYPE html>
+<html lang="es"><head><meta charset="UTF-8">
+<title>Balance de Comprobación — ${periodoLabel}</title>
+<style>
+  body { font-family: Arial, sans-serif; font-size: 11px; color: #111; margin: 20px; }
+  h2 { font-size: 15px; margin: 0 0 2px; } .sub { font-size: 10px; color: #555; margin: 2px 0 12px; }
+  table { width: 100%; border-collapse: collapse; }
+  th { background: #ede9fe; padding: 6px 8px; text-align: left; border: 1px solid #bbb; font-size: 10px; }
+  th.num { text-align: right; }
+  td { padding: 5px 8px; border: 1px solid #e0e0e0; }
+  .total-row td { font-weight: bold; background: #f0edff; border-top: 2px solid #7c3aed; }
+  @page { margin: 12mm; size: A4 landscape; }
+</style></head><body>
+<h2>⚖️ Balance de Comprobación</h2>
+<p class="sub">Período: ${periodoLabel} &nbsp;|&nbsp; Modo: ${modeLabel} &nbsp;|&nbsp; ${accounts.length} cuentas &nbsp;|&nbsp; ${balanced ? '✓ Balanceado' : '⚠ Desbalanceado'}</p>
+<table>
+  <thead><tr>
+    <th>CÓDIGO</th><th>NOMBRE DE CUENTA</th><th>TIPO</th>
+    <th class="num">DÉBITOS (CRC)</th><th class="num">CRÉDITOS (CRC)</th>
+  </tr></thead>
+  <tbody>
+    ${bodyRows}
+    <tr class="total-row">
+      <td colspan="3"><strong>TOTAL</strong></td>
+      <td style="text-align:right">${fmtN(totalDebit)}</td>
+      <td style="text-align:right">${fmtN(totalCredit)}</td>
+    </tr>
+  </tbody>
+</table>
+<script>window.onload = () => { window.print(); }<\/script>
+</body></html>`
+
+        const win = window.open('', '_blank', 'width=1000,height=700')
+        win.document.write(html)
+        win.document.close()
     }
 
     // Estilos de botón modo
