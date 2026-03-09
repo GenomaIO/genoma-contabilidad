@@ -893,6 +893,21 @@ export default function Conciliacion() {
                 setStats(d.stats)
                 setSaldoDiff(d.saldo_diff)
                 setStep('done')
+
+                // ── Recargar transacciones para actualizar Estado/Conf./Acción ──
+                // El backend actualizó match_estado en la DB — traemos el estado real
+                try {
+                    const rd = await fetch(`${API}/conciliacion/sesion/${reconId}/detalle`, {
+                        headers: authH(token)
+                    })
+                    if (rd.ok) {
+                        const dd = await rd.json()
+                        if (Array.isArray(dd.transacciones) && dd.transacciones.length > 0) {
+                            setTxns(dd.transacciones)
+                        }
+                    }
+                } catch (_) { /* si falla la recarga, las txns siguen siendo las anteriores */ }
+
                 // stats V2: con_fe, sin_fe, probable, total_banco
                 const conFE = d.stats?.con_fe ?? d.stats?.conciliados ?? 0
                 const sinFE = d.stats?.sin_fe ?? 0
@@ -907,6 +922,14 @@ export default function Conciliacion() {
                     if (rc.ok) {
                         const dc = await rc.json()
                         setCentinelaScore(dc.score)
+                        // Recargar txns de nuevo tras CENTINELA (agrega fuga_tipo, iva_estimado)
+                        const rd2 = await fetch(`${API}/conciliacion/sesion/${reconId}/detalle`, { headers: authH(token) })
+                        if (rd2.ok) {
+                            const dd2 = await rd2.json()
+                            if (Array.isArray(dd2.transacciones) && dd2.transacciones.length > 0) {
+                                setTxns(dd2.transacciones)
+                            }
+                        }
                     }
                 } catch (_) { /* CENTINELA falla silenciosamente */ }
             } else {
