@@ -480,6 +480,38 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning(f"⚠️  Migración M_CONCILIACION omitida: {e}")
 
+        # ── Migración M_CONC_V2: columnas faltantes en bank_transactions ──
+        # La migración M_CONCILIACION creó bank_transactions sin las columnas:
+        #   moneda, monto_orig_usd, tc_bccr, monto_crc, score_puntos,
+        #   iva_estimado, base_estimada, accion, accion_tomada,
+        #   ai_clasificacion, ai_cuenta_hint, ai_confianza
+        # que el router bulk-insert necesita. ALTER ... ADD COLUMN IF NOT EXISTS
+        # es idempotente — falla silenciosamente si la columna ya existe.
+        try:
+            with _engine.begin() as conn:
+                _cols = [
+                    ("moneda",          "VARCHAR(3)       DEFAULT 'CRC'"),
+                    ("monto_crc",       "NUMERIC(18,2)    DEFAULT 0"),
+                    ("monto_orig_usd",  "NUMERIC(18,2)"),
+                    ("tc_bccr",         "NUMERIC(10,4)"),
+                    ("score_puntos",    "INTEGER          DEFAULT 0"),
+                    ("iva_estimado",    "NUMERIC(18,2)    DEFAULT 0"),
+                    ("base_estimada",   "NUMERIC(18,2)    DEFAULT 0"),
+                    ("accion",          "TEXT"),
+                    ("accion_tomada",   "BOOLEAN          DEFAULT FALSE"),
+                    ("ai_clasificacion","TEXT"),
+                    ("ai_cuenta_hint",  "TEXT"),
+                    ("ai_confianza",    "NUMERIC(5,2)     DEFAULT 0"),
+                ]
+                for col, typedef in _cols:
+                    conn.execute(text(
+                        f"ALTER TABLE bank_transactions "
+                        f"ADD COLUMN IF NOT EXISTS {col} {typedef}"
+                    ))
+            logger.info("✅ Migración M_CONC_V2: columnas faltantes en bank_transactions agregadas")
+        except Exception as e:
+            logger.warning(f"⚠️  Migración M_CONC_V2 omitida: {e}")
+
         # ── Migración M_CLEANUP_5900_01: eliminar cuenta fantasma ────
         # La cuenta '5900.01' fue creada accidentalmente por el bug de
         # nextChildCode (generaba prefijo-string en lugar de parent_code).
