@@ -540,13 +540,17 @@ def run_match(recon_id: str, db: Session = Depends(_get_db)):
 
     # ── Capa 2: FE emitidas del período (ingresos con comprobante) ─────────────
     fe_emitidas = [dict(r._mapping) for r in db.execute(text("""
-        SELECT je.id, je.date::text AS fecha, je.total_amount AS monto,
+        SELECT je.id, je.date::text AS fecha,
+               COALESCE(SUM(jl.credit), 0) AS monto,
                je.source, je.description
         FROM journal_entries je
+        JOIN journal_lines jl ON jl.entry_id = je.id
         WHERE je.tenant_id = :tid
           AND je.period     = :period
           AND je.source    IN ('FE', 'TE', 'NC', 'ND')
           AND je.status     = 'POSTED'
+        GROUP BY je.id, je.date, je.source, je.description
+        HAVING COALESCE(SUM(jl.credit), 0) > 0
     """), {"tid": tenant_id, "period": period_fmt}).fetchall()]
 
     # ── Capa 3: FE recibidas del período (gastos con comprobante) ─────────────
