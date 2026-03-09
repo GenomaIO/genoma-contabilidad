@@ -18,6 +18,7 @@ import PerfilFiscal from './pages/PerfilFiscal'
 import EstadosFinancieros from './pages/EstadosFinancieros'
 import Conciliacion from './pages/Conciliacion'
 import Centinela from './pages/Centinela'
+import BalanzaComprobacion from './pages/BalanzaComprobacion'
 import { useApp } from './context/AppContext'
 
 // Guard de ruta — espera hidratación antes de decidir
@@ -94,6 +95,7 @@ function AppLayout() {
                     <Route path="/config/perfil-fiscal" element={<PerfilFiscal />} />
                     <Route path="/conciliacion" element={<Conciliacion />} />
                     <Route path="/centinela" element={<Centinela />} />
+                    <Route path="/balanza" element={<BalanzaComprobacion />} />
                     <Route path="*" element={<ComingSoon name="Página no encontrada" />} />
                 </Routes>
             </main>

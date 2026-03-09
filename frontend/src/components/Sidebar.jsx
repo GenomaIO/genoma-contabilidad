@@ -70,6 +70,7 @@ const NAV_ITEMS = [
         collapsible: true,
         defaultOpen: true,
         items: [
+            { icon: '⚖️', label: 'Balanza de Comprobación', path: '/balanza' },
             { icon: '📑', label: 'Estados Financieros', path: '/reportes' },
             { icon: '📚', label: 'Libros Digitales', path: '/libros-digitales' },
             { icon: '📝', label: 'Notas EEFF', path: '/reportes/notas', coming: true },

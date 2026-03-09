@@ -778,8 +778,13 @@ def trial_balance(
         """), {"tid": tenant_id, "period": period}).fetchall()
 
     # ── Construir resultado ───────────────────────────────────────
-    total_debit = 0.0
-    total_credit = 0.0
+    NATURALEZA_DEBE  = {"ACTIVO", "GASTO"}
+    NATURALEZA_HABER = {"PASIVO", "PATRIMONIO", "INGRESO"}
+
+    total_debit       = 0.0
+    total_credit      = 0.0
+    total_saldo_debe  = 0.0
+    total_saldo_haber = 0.0
     lines_out = []
 
     for r in rows:
@@ -789,33 +794,73 @@ def trial_balance(
         total_credit += tc
         acc_info = accounts_map.get(r.account_code, {})
         acc_type = acc_info.get("type", "")
-        saldo    = round(td - tc, 2)
+
+        # ── REGLA CONTABLE DE REVELACIÓN ────────────────────────────
+        # Saldo neto = Σ Débitos - Σ Créditos
+        #   ACTIVO / GASTO     → naturaleza deudora   → saldo en columna DEBE
+        #   PASIVO / PATRIMONIO / INGRESO
+        #                      → naturaleza acreedora → saldo en columna HABER
+        # Si el saldo va contra la naturaleza (ej: una Caja con saldo CR)
+        # se marca con alarma_naturaleza=True para que el frontend lo resalte.
+        saldo_neto = round(td - tc, 2)  # + = deudor, - = acreedor
+
+        if acc_type in NATURALEZA_DEBE:
+            # Cuentas de naturaleza DEUDORA
+            saldo_debe  = round(max(saldo_neto, 0), 2)
+            saldo_haber = round(abs(min(saldo_neto, 0)), 2)
+            alarma_naturaleza = saldo_neto < 0  # saldo CR en cuenta deudora = anómalo
+        elif acc_type in NATURALEZA_HABER:
+            # Cuentas de naturaleza ACREEDORA
+            saldo_haber = round(max(-saldo_neto, 0), 2)  # saldo_neto negativo = acreedora
+            saldo_debe  = round(max(saldo_neto, 0), 2)
+            alarma_naturaleza = saldo_neto > 0  # saldo DR en cuenta acreedora = anómalo
+        else:
+            # Tipo desconocido: inferir por prefijo del código
+            c0 = str(r.account_code)[0] if r.account_code else "0"
+            if c0 in ("1", "5"):  # Activo / Gasto
+                saldo_debe  = round(max(saldo_neto, 0), 2)
+                saldo_haber = round(abs(min(saldo_neto, 0)), 2)
+            else:                  # Pasivo / Patrimonio / Ingreso
+                saldo_haber = round(max(-saldo_neto, 0), 2)
+                saldo_debe  = round(max(saldo_neto, 0), 2)
+            alarma_naturaleza = False
+
+        total_saldo_debe  += saldo_debe
+        total_saldo_haber += saldo_haber
 
         lines_out.append({
-            "account_code":  r.account_code,
-            "account_name":  acc_info.get("name", r.account_code),
-            "account_type":  acc_type,
-            "total_debit":   round(td, 2),
-            "total_credit":  round(tc, 2),
-            "saldo":         saldo,
+            "account_code":      r.account_code,
+            "account_name":      acc_info.get("name", r.account_code),
+            "account_type":      acc_type,
+            "total_debit":       round(td, 2),
+            "total_credit":      round(tc, 2),
+            "saldo":             saldo_neto,
+            "saldo_debe":        saldo_debe,    # ← columna DEBE de la balanza
+            "saldo_haber":       saldo_haber,   # ← columna HABER de la balanza
+            "alarma_naturaleza": alarma_naturaleza,  # saldo contra natura
         })
 
     # ── Invariante: Debe = Haber ──────────────────────────────────
-    # En partida doble, CUALQUIER corte temporal debe cuadrar.
-    balanced = abs(total_debit - total_credit) < 0.01
+    # La cuadratura se verifica en los SALDOS revelados (no solo en sumas)
+    balanced      = abs(total_debit - total_credit) < 0.01
+    balanced_sald = abs(total_saldo_debe - total_saldo_haber) < 0.01
 
     return {
-        "period":        period,
-        "mode":          mode,
-        "year_start":    year_start if mode in ("ytd", "running") else period,
-        "acumulado":     mode in ("ytd", "running"),  # compatibilidad con frontend legacy
-        "balanced":      balanced,
-        "total_debit":   round(total_debit,  2),
-        "total_credit":  round(total_credit, 2),
-        "diff":          round(abs(total_debit - total_credit), 5),
-        "lines":         lines_out,
-        "tenant_id":     tenant_id,
-        "niif_ref":      "NIIF PYMES Sec. 2.36 (devengo) · Sec. 3.10 (período anual)" if mode == "ytd" else "",
+        "period":             period,
+        "mode":               mode,
+        "year_start":         year_start if mode in ("ytd", "running") else period,
+        "acumulado":          mode in ("ytd", "running"),
+        "balanced":           balanced,
+        "balanced_saldos":    balanced_sald,    # ← cuadratura de saldos revelados
+        "total_debit":        round(total_debit,       2),
+        "total_credit":       round(total_credit,      2),
+        "total_saldo_debe":   round(total_saldo_debe,  2),
+        "total_saldo_haber":  round(total_saldo_haber, 2),
+        "diff":               round(abs(total_debit - total_credit), 5),
+        "diff_saldos":        round(abs(total_saldo_debe - total_saldo_haber), 5),
+        "lines":              lines_out,
+        "tenant_id":          tenant_id,
+        "niif_ref":           "NIIF PYMES Sec. 2.36 (devengo) · Sec. 3.10 (período anual)" if mode == "ytd" else "",
     }
 
 
