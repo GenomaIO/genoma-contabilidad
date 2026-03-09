@@ -120,32 +120,34 @@ function NiifLine({ label, amount, priorAmount, niifCode, detail = [], color, is
                 onMouseEnter={e => { if (hasDetail) e.currentTarget.style.background = 'rgba(255,255,255,0.05)' }}
                 onMouseLeave={e => { if (!isTotal) e.currentTarget.style.background = 'transparent' }}
             >
-                {/* Descripción */}
+                {/* Descripción — NOTE: display flex va en el div interno, NO en el td
+                     (display:flex en td saca la celda del flujo de tabla en browsers sin tableLayout:fixed) */}
                 <td style={{
                     padding: indent ? '5px 8px 5px 24px' : '6px 8px',
                     fontSize: isTotal ? '0.82rem' : '0.8rem',
                     fontWeight: isTotal ? 700 : 400,
                     color: isTotal ? '#fff' : 'var(--text-secondary)',
-                    display: 'flex', alignItems: 'center', gap: 6,
                     borderLeft: !isTotal ? `2px solid ${color}30` : 'none',
                 }}>
-                    {hasDetail && (
-                        <span style={{
-                            fontSize: '0.6rem', opacity: 0.5,
-                            transform: open ? 'rotate(90deg)' : 'rotate(0deg)',
-                            display: 'inline-block', transition: 'transform 0.15s',
-                            userSelect: 'none',
-                        }}>▶</span>
-                    )}
-                    {!hasDetail && !isTotal && (
-                        <span style={{ width: 10, display: 'inline-block' }} />
-                    )}
-                    {label}
-                    {niifCode && !isTotal && (
-                        <span style={{ fontSize: '0.6rem', opacity: 0.35, marginLeft: 2 }}>
-                            {niifCode}
-                        </span>
-                    )}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        {hasDetail && (
+                            <span style={{
+                                fontSize: '0.6rem', opacity: 0.5,
+                                transform: open ? 'rotate(90deg)' : 'rotate(0deg)',
+                                display: 'inline-block', transition: 'transform 0.15s',
+                                userSelect: 'none',
+                            }}>▶</span>
+                        )}
+                        {!hasDetail && !isTotal && (
+                            <span style={{ width: 10, display: 'inline-block' }} />
+                        )}
+                        {label}
+                        {niifCode && !isTotal && (
+                            <span style={{ fontSize: '0.6rem', opacity: 0.35, marginLeft: 2 }}>
+                                {niifCode}
+                            </span>
+                        )}
+                    </div>
                 </td>
                 {/* Monto N-1 (comparativo) — NIIF Sec. 3.14: obligatorio siempre */}
                 {showCompar && (
@@ -254,7 +256,7 @@ function StatementSection({ title, lines = [], total, totalLabel, color, showCom
                     showCompar={showCompar}
                 />
             )}
-            <tr><td colSpan={2} style={{ height: 4 }} /></tr>
+            <tr><td colSpan={showCompar ? 3 : 2} style={{ height: 4 }} /></tr>
         </tbody>
     )
 }
@@ -497,7 +499,14 @@ function TabERI({ eri, year, priorYear, showCompar }) {
                 background: 'var(--bg-card)', borderRadius: 12, overflow: 'hidden',
                 border: '1px solid var(--border)', maxWidth: sc ? 780 : 600
             }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed' }}>
+                    {/* colgroup es obligatorio con tableLayout:fixed para que las columnas N-1 se rendericen
+                         sin él, display:flex en td puede sacar la celda del flujo de tabla */}
+                    <colgroup>
+                        <col style={{ width: sc ? '60%' : '75%' }} />
+                        {sc && <col style={{ width: '20%' }} />}
+                        <col style={{ width: sc ? '20%' : '25%' }} />
+                    </colgroup>
                     {/* Header comparativo N-1 / N */}
                     {sc && (
                         <thead>
