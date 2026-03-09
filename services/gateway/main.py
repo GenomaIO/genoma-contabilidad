@@ -21,6 +21,7 @@ from services.integration.webhook_receiver import router as integration_router
 from services.assets.router import router as assets_router
 from services.tax.router import router as tax_router
 from services.reporting.router import router as reporting_router
+from services.conciliacion.router import router as conciliacion_router
 import services.catalog.models  # noqa: F401 — registra Account en Base para create_all
 import services.ledger.models   # noqa: F401 — registra JournalEntry/JournalLine en Base
 import services.ledger.audit_log  # noqa: F401 — registra AuditLog en Base
@@ -665,6 +666,7 @@ app.include_router(integration_router)
 app.include_router(assets_router)
 app.include_router(tax_router)
 app.include_router(reporting_router)
+app.include_router(conciliacion_router)
 
 # ── Endpoints API ──────────────────────────────────────────────
 

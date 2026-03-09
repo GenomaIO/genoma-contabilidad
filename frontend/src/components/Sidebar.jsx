@@ -51,6 +51,8 @@ const NAV_ITEMS = [
             { icon: '📐', label: 'Provisiones', path: '/generadores/provisiones' },
             { icon: '💵', label: 'Nómina', path: '/generadores/nomina', coming: true },
             { icon: '💱', label: 'Ajuste FX', path: '/generadores/fx', coming: true },
+            { icon: '🏦', label: 'Conciliación Bancaria', path: '/conciliacion' },
+            { icon: '🛡️', label: 'CENTINELA Fiscal', path: '/centinela' },
         ]
     },
     {
