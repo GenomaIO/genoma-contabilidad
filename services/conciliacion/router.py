@@ -386,6 +386,8 @@ def bulk_insert_transactions(
         raise HTTPException(status_code=403, detail="Acceso denegado")
 
     try:
+        from services.conciliacion.beneficiario_extractor import extraer_beneficiario
+
         # Limpiar txns anteriores de esta sesión (permite re-cargas)
         db.execute(text(
             "DELETE FROM bank_transactions WHERE recon_id = :id"
@@ -393,13 +395,18 @@ def bulk_insert_transactions(
 
         # Insertar todas las transacciones
         for txn in req.transactions:
+            # Extraer beneficiario en tiempo de inserción (sin DB extra, función pura)
+            benef = extraer_beneficiario(txn.descripcion, txn.telefono)
+
             db.execute(text("""
                 INSERT INTO bank_transactions
                   (id, recon_id, tenant_id, fecha, descripcion, monto, tipo,
-                   moneda, telefono, monto_orig_usd, tc_bccr, match_estado)
+                   moneda, telefono, monto_orig_usd, tc_bccr, match_estado,
+                   beneficiario_nombre, beneficiario_telefono_norm, beneficiario_categoria)
                 VALUES
                   (:id, :recon_id, :tenant_id, :fecha, :descripcion, :monto, :tipo,
-                   :moneda, :telefono, :monto_orig_usd, :tc_bccr, 'PENDIENTE')
+                   :moneda, :telefono, :monto_orig_usd, :tc_bccr, 'PENDIENTE',
+                   :bnom, :btel, :bcat)
             """), {
                 "id":           str(uuid_lib.uuid4()),
                 "recon_id":     recon_id,
@@ -412,10 +419,13 @@ def bulk_insert_transactions(
                 "telefono":     txn.telefono,
                 "monto_orig_usd": txn.monto_orig_usd,
                 "tc_bccr":      txn.tc_bccr,
+                "bnom":         benef["nombre_norm"],
+                "btel":         benef["telefono_norm"],
+                "bcat":         benef["categoria"],
             })
 
         db.commit()
-        logger.info(f"✅ {len(req.transactions)} txns insertadas en recon_id={recon_id}")
+        logger.info(f"✅ {len(req.transactions)} txns insertadas en recon_id={recon_id} (con beneficiario)")
         return {
             "ok": True,
             "recon_id":     recon_id,
@@ -426,6 +436,7 @@ def bulk_insert_transactions(
     except Exception as e:
         logger.error(f"Error bulk-insert txns: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
 
 
 @router.post("/conciliacion/match/{recon_id}")

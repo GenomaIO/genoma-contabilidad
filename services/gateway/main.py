@@ -528,6 +528,42 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning(f"⚠️  Migración M_CATALOG_V2 omitida: {e}")
 
+        # ── Migración M_CENTINELA_V1: beneficiario extraído en bank_transactions ──
+        # Agrega columnas para persistir el nombre normalizado del beneficiario
+        # y su categoría (TERCERO, BANK_FEE, BANK_INTEREST, SINPE).
+        # Son la base del análisis acumulado cross-meses de CENTINELA.
+        try:
+            with _engine.begin() as conn:
+                conn.execute(text(
+                    "ALTER TABLE bank_transactions "
+                    "ADD COLUMN IF NOT EXISTS beneficiario_nombre TEXT"
+                ))
+                conn.execute(text(
+                    "ALTER TABLE bank_transactions "
+                    "ADD COLUMN IF NOT EXISTS beneficiario_telefono_norm TEXT"
+                ))
+                conn.execute(text(
+                    "ALTER TABLE bank_transactions "
+                    "ADD COLUMN IF NOT EXISTS beneficiario_categoria TEXT"
+                ))
+                conn.execute(text(
+                    "ALTER TABLE bank_transactions "
+                    "ADD COLUMN IF NOT EXISTS tiene_fe BOOLEAN DEFAULT FALSE"
+                ))
+                conn.execute(text(
+                    "ALTER TABLE bank_transactions "
+                    "ADD COLUMN IF NOT EXISTS fe_numero TEXT"
+                ))
+                conn.execute(text(
+                    "ALTER TABLE bank_transactions "
+                    "ADD COLUMN IF NOT EXISTS tarifa_iva NUMERIC(5,2) DEFAULT 13.0"
+                ))
+            logger.info("✅ Migración M_CENTINELA_V1: columnas beneficiario + tiene_fe + tarifa_iva en bank_transactions")
+        except Exception as e:
+            logger.warning(f"⚠️  Migración M_CENTINELA_V1 omitida: {e}")
+
+
+
 
         # La cuenta '5900.01' fue creada accidentalmente por el bug de
         # nextChildCode (generaba prefijo-string en lugar de parent_code).
