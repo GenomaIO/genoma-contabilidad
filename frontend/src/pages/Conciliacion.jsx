@@ -295,7 +295,7 @@ function StatsBar({ stats, saldoDiff }) {
 }
 
 /* ── Upload de archivo ───────────────────────────────────────────────── */
-function FileUploader({ token, onTransacciones }) {
+function FileUploader({ token, onTransacciones, onPeriodChange }) {
     const [banco, setBanco] = useState('')
     const [period, setPeriod] = useState(currentPeriod())
     const [entidades, setEntidades] = useState([])
@@ -495,7 +495,11 @@ function FileUploader({ token, onTransacciones }) {
                     type="text"
                     placeholder="202601"
                     value={period}
-                    onChange={e => setPeriod(e.target.value)}
+                    onChange={e => {
+                        const v = e.target.value
+                        setPeriod(v)
+                        if (onPeriodChange && v.length === 6) onPeriodChange(v)
+                    }}
                     maxLength={6}
                     style={inputStyle}
                 />
@@ -670,7 +674,7 @@ export default function Conciliacion() {
                 <div style={cardStyle}>
                     <div style={cardHeader}>📂 Paso 1 — Cargar estado de cuenta</div>
                     <div style={{ padding: '20px 24px' }}>
-                        <FileUploader token={token} onTransacciones={handleTransacciones} />
+                        <FileUploader token={token} onTransacciones={handleTransacciones} onPeriodChange={setPeriodPage} />
                         <div style={{ marginTop: 16, padding: '12px 16px', background: 'var(--bg-secondary)', borderRadius: 10, fontSize: '0.8rem', color: 'var(--text-muted)' }}>
                             💡 <strong>Formatos aceptados:</strong> CSV (BAC, BCR, cooperativas) · Excel XLSX (BN Virtual) · PDF — El sistema detecta el banco automáticamente por el formato del archivo.
                         </div>
