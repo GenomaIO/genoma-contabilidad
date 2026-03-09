@@ -816,7 +816,7 @@ export default function Conciliacion() {
                         display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap',
                     }}>
                         <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', fontWeight: 600 }}>
-                            {reconId ? '✅ Guardado' : '💾 Cuenta contable bancaria:'}
+                            {reconId ? '✅ Sesión iniciada' : '🔗 Cuenta bancaria en el libro:'}
                         </div>
                         {!reconId && (
                             <>
@@ -838,18 +838,22 @@ export default function Conciliacion() {
                                     onClick={saveSesion}
                                     disabled={saving || !accountCode}
                                     style={{ ...btnPrimary, background: '#2563eb', whiteSpace: 'nowrap' }}
+                                    title="Registra las transacciones bancarias en la DB para poder compararlas con el libro diario. NO crea asientos contables."
                                 >
-                                    {saving ? '⏳ Guardando...' : '💾 Guardar en contabilidad'}
+                                    {saving ? '⏳ Preparando...' : '🔗 Iniciar conciliación'}
                                 </button>
+                                <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', flex: '100%' }}>
+                                    ℹ️ Esto NO crea asientos — registra las transacciones del banco para compararlas con tu cuenta {accountCode || ''}
+                                </span>
                             </>
                         )}
                         {reconId && (
                             <span style={{ fontSize: '0.78rem', color: '#16a34a' }}>
-                                {txns.length} transacciones en DB · Cuenta: {accountCode} · Listo para conciliar ⚖️
+                                {txns.length} transacciones listas para comparar · Cuenta: {accountCode} · Presiona Conciliar ⚖️
                             </span>
                         )}
-                        {saveMsg && (
-                            <span style={{ fontSize: '0.78rem', color: saveMsg.ok ? '#16a34a' : '#dc2626', flex: '100%' }}>
+                        {saveMsg && saveMsg.ok === false && (
+                            <span style={{ fontSize: '0.78rem', color: '#dc2626', flex: '100%' }}>
                                 {saveMsg.text}
                             </span>
                         )}
