@@ -20,6 +20,7 @@ from services.auth.database import get_session
 from services.auth.security import get_current_user
 from services.catalog.models import Account, AccountType, AccountSubType
 from services.catalog.seeder import seed_standard_catalog, seed_generic_catalog
+from services.reporting.models import NiifMapping          # para mapeo NIIF wizard
 
 router = APIRouter(prefix="/catalog", tags=["catalogo"])
 
@@ -52,6 +53,9 @@ class AccountCreate(BaseModel):
     account_sub_type: Optional[AccountSubType] = None
     parent_code:     Optional[str] = None
     allow_entries:   bool = True
+    # Wizard NIIF: solo aplica cuando se crea una serie nueva (prefijo no en STANDARD_AUTO_MAPPING)
+    niif_line_code:  Optional[str] = None   # ej: "ESF.ANC.01"
+    is_contra:       bool = False            # True para contra-cuentas (Dep. Acumulada, etc.)
 
     @field_validator("code")
     @classmethod
@@ -416,6 +420,27 @@ def create_account(
     db.add(account)
     db.commit()
     db.refresh(account)
+
+    # ── Guardar mapeo NIIF si el wizard lo proporcionó ─────────────
+    # Se usa el prefijo de 4 dígitos como clave en niif_mappings para que
+    # todos los hijos futuros de esta serie hereden el mapeo automáticamente.
+    if req.niif_line_code:
+        code_clean = req.code.strip().upper()
+        # El prefijo son los primeros 4 caracteres sin el punto
+        prefix4 = code_clean.replace('.', '')[:4]
+        # Solo guardar si no existe ya un mapeo para este prefijo
+        existing_map = db.query(NiifMapping).filter_by(
+            tenant_id=tenant_id, account_code=prefix4
+        ).first()
+        if not existing_map:
+            db.add(NiifMapping(
+                id=str(uuid.uuid4()),
+                tenant_id=tenant_id,
+                account_code=prefix4,
+                niif_line_code=req.niif_line_code,
+                is_contra=req.is_contra,
+            ))
+            db.commit()
 
     # Respuesta enriquecida con promoted_parent y warnings
     response = {
