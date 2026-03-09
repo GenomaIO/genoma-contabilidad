@@ -431,6 +431,123 @@ export default function AsientosPendientes() {
         width: '100%', boxSizing: 'border-box'
     }
 
+    // ── IMPORT CSV — estado ───────────────────────────────────────
+    const [importFeedback, setImportFeedback] = useState(null) // {ok, msg}
+    const csvInputRef = useRef(null)
+
+    // Descarga la plantilla CSV con un asiento de ejemplo
+    function downloadTemplate() {
+        const rows = [
+            '# Plantilla de importación de asientos — Genoma Contabilidad',
+            '# Reglas:',
+            '#   FECHA: formato YYYY-MM-DD',
+            '#   DESCRIPCION_ASIENTO: texto igual agrupa líneas en el mismo asiento',
+            '#   CUENTA: código exacto del catálogo (ej: 1101.01)',
+            '#   DEBE y HABER: número decimal con punto (ej: 225932.24)',
+            '#   Solo DEBE > 0 ó solo HABER > 0 por línea (partida simple)',
+            '#   Elimina estas líneas de comentario antes de importar',
+            'FECHA,DESCRIPCION_ASIENTO,CUENTA,DESCRIPCION_LINEA,DEBE,HABER',
+            '2026-03-08,Pago servicios de oficina marzo,5210.03,Gasto depreciación vehículo,225932.24,0',
+            '2026-03-08,Pago servicios de oficina marzo,1201.04,Depreciación acumulada vehículos,0,225932.24',
+            '2026-03-08,Compra suministros de oficina,5901.01,Suministros y representación,44192.00,0',
+            '2026-03-08,Compra suministros de oficina,1101.01,Caja General — pago en efectivo,0,44192.00',
+        ].join('\r\n')
+        const blob = new Blob(['\uFEFF' + rows], { type: 'text/csv;charset=utf-8;' })
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url; a.download = 'plantilla_asiento.csv'; a.click()
+        URL.revokeObjectURL(url)
+    }
+
+    // Parsea el texto CSV → array de filas {fecha, desc_asiento, cuenta, desc_linea, debe, haber}
+    function parseCsvText(text) {
+        const lines = text.split(/\r?\n/).filter(l => l.trim() && !l.trim().startsWith('#'))
+        if (lines.length < 2) return []
+        // Detectar si primera línea es encabezado
+        const hdr = lines[0].split(',').map(c => c.trim().replace(/^"|"$/g, '').toUpperCase())
+        const isHeader = hdr.some(h => ['FECHA', 'CUENTA', 'DEBE', 'HABER'].includes(h))
+        const dataLines = isHeader ? lines.slice(1) : lines
+        return dataLines.map(l => {
+            const cols = l.split(',').map(c => c.trim().replace(/^"|"$/g, ''))
+            const get = (idx) => (cols[idx] || '').trim()
+            return {
+                fecha: get(0),
+                desc_asiento: get(1),
+                cuenta: get(2).toUpperCase(),
+                desc_linea: get(3),
+                debe: parseFloat(get(4)) || 0,
+                haber: parseFloat(get(5)) || 0,
+            }
+        }).filter(r => r.fecha && r.cuenta)
+    }
+
+    // Agrupa filas por (fecha + desc_asiento) → array de entries {date, description, lines[]}
+    function groupIntoEntries(rows) {
+        const map = new Map()
+        for (const r of rows) {
+            const key = `${r.fecha}||${r.desc_asiento}`
+            if (!map.has(key)) map.set(key, { date: r.fecha, description: r.desc_asiento, lines: [] })
+            map.get(key).lines.push({
+                account_code: r.cuenta,
+                description: r.desc_linea || '',
+                debit: r.debe > 0 ? String(r.debe) : '',
+                credit: r.haber > 0 ? String(r.haber) : '',
+            })
+        }
+        return Array.from(map.values())
+    }
+
+    // Valida las entries: balance, mínimo 2 líneas, fecha válida
+    function validateImport(entries) {
+        const errors = []
+        for (let i = 0; i < entries.length; i++) {
+            const e = entries[i]
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(e.date)) errors.push(`Asiento ${i + 1}: fecha inválida "${e.date}"`)
+            if (e.lines.length < 2) errors.push(`Asiento ${i + 1}: necesita mínimo 2 líneas`)
+            const dr = e.lines.reduce((s, l) => s + (parseFloat(l.debit) || 0), 0)
+            const cr = e.lines.reduce((s, l) => s + (parseFloat(l.credit) || 0), 0)
+            if (Math.abs(dr - cr) > 0.01) errors.push(`Asiento ${i + 1} "${e.description}": desbalanceado (DR=${dr.toFixed(2)} ≠ CR=${cr.toFixed(2)})`)
+        }
+        return errors
+    }
+
+    // Maneja el input file: parsea, valida y carga el PRIMER asiento en el form
+    function handleImportFile(e) {
+        const file = e.target.files?.[0]
+        if (!file) return
+        e.target.value = ''  // permite reimportar el mismo archivo
+        const reader = new FileReader()
+        reader.onload = (ev) => {
+            try {
+                const rows = parseCsvText(ev.target.result)
+                if (rows.length === 0) {
+                    setImportFeedback({ ok: false, msg: 'El archivo no contiene datos válidos. Verifica el formato.' })
+                    return
+                }
+                const entries = groupIntoEntries(rows)
+                const errors = validateImport(entries)
+                if (errors.length > 0) {
+                    setImportFeedback({ ok: false, msg: errors.join(' · ') })
+                    return
+                }
+                // Cargar el primer asiento en el form (si hay varios, se importan todos)
+                const first = entries[0]
+                setForm({
+                    date: first.date,
+                    description: first.description,
+                    lines: first.lines.length >= 2 ? first.lines : [...first.lines, EMPTY_LINE()],
+                })
+                const msg = entries.length === 1
+                    ? `✅ 1 asiento importado con ${first.lines.length} líneas — revisa y guarda.`
+                    : `✅ ${entries.length} asientos detectados — cargado asiento 1 de ${entries.length}. Guarda este y repite para los demás.`
+                setImportFeedback({ ok: true, msg })
+            } catch {
+                setImportFeedback({ ok: false, msg: 'Error al parsear el archivo. Verifica que sea CSV válido.' })
+            }
+        }
+        reader.readAsText(file, 'UTF-8')
+    }
+
     // ────────────────────────────────────────────────────────────
     return (
         <div style={{ padding: '24px', maxWidth: 980, margin: '0 auto', fontFamily: 'Inter, sans-serif' }}>
@@ -847,11 +964,78 @@ export default function AsientosPendientes() {
                             ))}
                         </div>
 
-                        {/* Botón agregar línea */}
-                        <button id="btn-add-line" onClick={addLine}
-                            style={{ padding: '6px 14px', background: 'transparent', border: '1px dashed var(--border-color)', borderRadius: 7, color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '0.82rem', marginBottom: 16 }}>
-                            + Agregar línea
-                        </button>
+                        {/* Botones: Agregar línea + Importar CSV + Plantilla */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14, flexWrap: 'wrap' }}>
+                            <button id="btn-add-line" onClick={addLine}
+                                style={{ padding: '6px 14px', background: 'transparent', border: '1px dashed var(--border-color)', borderRadius: 7, color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '0.82rem' }}>
+                                + Agregar línea
+                            </button>
+
+                            {/* Separador visual */}
+                            <span style={{ width: 1, height: 20, background: 'var(--border-color)', flexShrink: 0 }} />
+
+                            {/* Input file oculto */}
+                            <input
+                                id="csv-file-input"
+                                ref={csvInputRef}
+                                type="file"
+                                accept=".csv,text/csv"
+                                onChange={handleImportFile}
+                                style={{ display: 'none' }}
+                            />
+
+                            {/* Botón Importar CSV */}
+                            <button
+                                id="btn-import-csv"
+                                type="button"
+                                onClick={() => { setImportFeedback(null); csvInputRef.current?.click() }}
+                                title="Importar líneas desde archivo CSV"
+                                style={{
+                                    display: 'flex', alignItems: 'center', gap: 5,
+                                    padding: '6px 13px', borderRadius: 7, cursor: 'pointer',
+                                    fontSize: '0.82rem', fontWeight: 600,
+                                    border: '1px solid rgba(124,58,237,0.4)',
+                                    background: 'rgba(124,58,237,0.08)', color: '#a78bfa',
+                                    transition: 'all 0.15s',
+                                }}
+                            >
+                                📎 Importar CSV
+                            </button>
+
+                            {/* Botón Descargar plantilla */}
+                            <button
+                                id="btn-download-template"
+                                type="button"
+                                onClick={downloadTemplate}
+                                title="Descargar plantilla CSV de ejemplo"
+                                style={{
+                                    display: 'flex', alignItems: 'center', gap: 5,
+                                    padding: '6px 13px', borderRadius: 7, cursor: 'pointer',
+                                    fontSize: '0.82rem', fontWeight: 600,
+                                    border: '1px solid rgba(16,185,129,0.35)',
+                                    background: 'rgba(16,185,129,0.07)', color: '#34d399',
+                                    transition: 'all 0.15s',
+                                }}
+                            >
+                                ⬇ Plantilla
+                            </button>
+                        </div>
+
+                        {/* Banner de feedback del import — éxito o error */}
+                        {importFeedback && (
+                            <div style={{
+                                padding: '8px 14px', borderRadius: 8, marginBottom: 12,
+                                fontSize: '0.82rem', fontWeight: 600,
+                                background: importFeedback.ok ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)',
+                                border: `1px solid ${importFeedback.ok ? 'rgba(16,185,129,0.4)' : 'rgba(239,68,68,0.4)'}`,
+                                color: importFeedback.ok ? '#10b981' : '#ef4444',
+                                display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10,
+                            }}>
+                                <span>{importFeedback.msg}</span>
+                                <button onClick={() => setImportFeedback(null)}
+                                    style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'inherit', fontSize: '0.85rem', flexShrink: 0 }}>✕</button>
+                            </div>
+                        )}
 
                         {/* ── Dropdowns position:fixed — flotan sobre todo, independiente del grid ── */}
                         {form.lines.map((_, i) => {
