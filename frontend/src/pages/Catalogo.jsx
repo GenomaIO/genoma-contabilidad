@@ -721,16 +721,120 @@ export default function Catalogo() {
 
 
 // ─────────────────────────────────────────────────────────────────
-// Modal Nueva Cuenta
+// Modal Nueva Cuenta — con wizard NIIF automático
+// Cuando el prefijo de 4 dígitos no está en el mapping estándar,
+// aparece el selector de línea NIIF para que el contador la asigne.
 // ─────────────────────────────────────────────────────────────────
 
+// Prefijos ya cubiertos por STANDARD_AUTO_MAPPING (del lado cliente — solo para UX)
+const KNOWN_PREFIXES = new Set([
+    '1101', '1102', '1103', '1104', '1105', '1106',
+    '1107', '1201', '1202', '1203', '1204', '1205',
+    '1301', '1302', '1303', '1304', '1305', '1306', '1307',
+    '1401', '1402', '1403', '1404', '1501', '1502',
+    '1601', '1602', '1690', '1701',
+    '2101', '2102', '2103', '2104', '2105', '2106', '2107', '2108',
+    '2201', '2202', '2203', '2701',
+    '3101', '3102', '3201', '3202', '3301', '3302', '3303', '3401', '3402',
+    '4101', '4102', '4103', '4104', '4201', '4202', '4203', '4901', '4902', '4903',
+    '5101', '5102', '5201', '5202', '5203', '5204', '5205', '5206', '5207',
+    '5208', '5209', '5210', '5211', '5212', '5213', '5214',
+    '5301', '5302', '5303', '5401', '5402', '5901', '5902', '5903',
+])
+
+// Opciones NIIF agrupadas para el selector
+const NIIF_OPTIONS = [
+    {
+        group: 'ACTIVO CORRIENTE', options: [
+            { value: 'ESF.AC.01', label: 'Efectivo y equivalentes al efectivo' },
+            { value: 'ESF.AC.02', label: 'Deudores comerciales y CxC (neto)' },
+            { value: 'ESF.AC.03', label: 'Inventarios' },
+            { value: 'ESF.AC.04', label: 'Activos por contratos (Sec.23)' },
+            { value: 'ESF.AC.05', label: 'Activos biológicos corrientes' },
+            { value: 'ESF.AC.06', label: 'Activo por impuesto corriente' },
+            { value: 'ESF.AC.07', label: 'Otros activos corrientes' },
+        ]
+    },
+    {
+        group: 'ACTIVO NO CORRIENTE', options: [
+            { value: 'ESF.ANC.01', label: 'Propiedades, planta y equipo (PPE neto)' },
+            { value: 'ESF.ANC.02', label: 'Propiedades de inversión' },
+            { value: 'ESF.ANC.03', label: 'Activos intangibles (excl. plusvalía)' },
+            { value: 'ESF.ANC.04', label: 'Plusvalía (Goodwill)' },
+            { value: 'ESF.ANC.05', label: 'Inversiones en asociadas' },
+            { value: 'ESF.ANC.06', label: 'Activo por impuesto diferido' },
+            { value: 'ESF.ANC.07', label: 'Otros activos no corrientes' },
+        ]
+    },
+    {
+        group: 'PASIVO CORRIENTE', options: [
+            { value: 'ESF.PC.01', label: 'Acreedores comerciales y otras CxP' },
+            { value: 'ESF.PC.02', label: 'Pasivos financieros corrientes' },
+            { value: 'ESF.PC.03', label: 'Pasivos por contratos (Sec.23)' },
+            { value: 'ESF.PC.04', label: 'Provisiones corrientes' },
+            { value: 'ESF.PC.05', label: 'Pasivo por impuesto corriente' },
+            { value: 'ESF.PC.06', label: 'Otros pasivos corrientes' },
+        ]
+    },
+    {
+        group: 'PASIVO NO CORRIENTE', options: [
+            { value: 'ESF.PNC.01', label: 'Préstamos y financiamiento largo plazo' },
+            { value: 'ESF.PNC.02', label: 'Pasivo por impuesto diferido' },
+            { value: 'ESF.PNC.03', label: 'Provisiones no corrientes' },
+            { value: 'ESF.PNC.04', label: 'Otros pasivos no corrientes' },
+        ]
+    },
+    {
+        group: 'PATRIMONIO', options: [
+            { value: 'ESF.PAT.01', label: 'Capital social / Capital del propietario' },
+            { value: 'ESF.PAT.02', label: 'Reservas (legal, voluntaria)' },
+            { value: 'ESF.PAT.03', label: 'Resultados acumulados' },
+            { value: 'ESF.PAT.04', label: 'Resultado del período (neto)' },
+            { value: 'ESF.PAT.05', label: 'ORI acumulado' },
+        ]
+    },
+    {
+        group: 'ESTADO DE RESULTADOS — INGRESOS', options: [
+            { value: 'ERI.ING.01', label: 'Ingresos por ventas de bienes' },
+            { value: 'ERI.ING.02', label: 'Ingresos por prestación de servicios' },
+            { value: 'ERI.ING.03', label: 'Ingresos financieros (intereses)' },
+            { value: 'ERI.ING.04', label: 'Diferencial cambiario favorable' },
+            { value: 'ERI.ING.05', label: 'Otros ingresos ordinarios' },
+        ]
+    },
+    {
+        group: 'ESTADO DE RESULTADOS — COSTOS Y GASTOS', options: [
+            { value: 'ERI.GST.01', label: 'Costo de ventas / Costo de servicios' },
+            { value: 'ERI.GST.02', label: 'Gastos de ventas y distribución' },
+            { value: 'ERI.GST.03', label: 'Gastos de administración' },
+            { value: 'ERI.GST.04', label: 'Gastos financieros (intereses pagados)' },
+            { value: 'ERI.GST.05', label: 'Diferencial cambiario desfavorable' },
+            { value: 'ERI.GST.06', label: 'Otros gastos' },
+            { value: 'ERI.ISR', label: 'Impuesto sobre la renta del período' },
+        ]
+    },
+]
+
 function NuevaCuentaModal({ onClose, apiUrl, token }) {
-    const [form, setForm] = useState({ code: '', name: '', account_type: 'ACTIVO', parent_code: '', allow_entries: true })
+    const [form, setForm] = useState({
+        code: '', name: '', account_type: 'ACTIVO',
+        parent_code: '', allow_entries: true,
+        niif_line_code: '',   // ← nuevo campo para wizard
+        is_contra: false,     // ← contra-cuenta (Dep. Acumulada, etc.)
+    })
     const [saving, setSaving] = useState(false)
     const [error, setError] = useState(null)
 
+    // Detecta si el prefijo de 4 dígitos necesita mapeo manual
+    const prefix4 = form.code.replace('.', '').slice(0, 4)
+    const needsNiifWizard = prefix4.length === 4 && !KNOWN_PREFIXES.has(prefix4)
+
     async function handleSubmit(e) {
         e.preventDefault()
+        if (needsNiifWizard && !form.niif_line_code) {
+            setError('Por favor seleccioná la línea del Estado Financiero para esta cuenta.')
+            return
+        }
         setSaving(true)
         setError(null)
         try {
@@ -740,6 +844,11 @@ function NuevaCuentaModal({ onClose, apiUrl, token }) {
                 account_type: form.account_type,
                 parent_code: form.parent_code || undefined,
                 allow_entries: form.allow_entries,
+                // Solo se envía si el contador lo eligió (serie nueva)
+                ...(form.niif_line_code ? {
+                    niif_line_code: form.niif_line_code,
+                    is_contra: form.is_contra,
+                } : {}),
             }
             const res = await fetch(`${apiUrl}/catalog/accounts`, {
                 method: 'POST',
@@ -757,39 +866,98 @@ function NuevaCuentaModal({ onClose, apiUrl, token }) {
         }
     }
 
-    const inputStyle = { width: '100%', padding: '9px 12px', border: '1px solid var(--border-color)', borderRadius: 7, background: 'var(--bg-card)', color: 'var(--text-primary)', fontSize: '0.88rem', boxSizing: 'border-box' }
+    const inputStyle = {
+        width: '100%', padding: '9px 12px',
+        border: '1px solid var(--border-color)', borderRadius: 7,
+        background: 'var(--bg-card)', color: 'var(--text-primary)',
+        fontSize: '0.88rem', boxSizing: 'border-box'
+    }
 
     return (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
-            <div style={{ background: 'var(--bg-secondary)', borderRadius: 14, padding: 28, width: '100%', maxWidth: 460, boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
+            <div style={{ background: 'var(--bg-secondary)', borderRadius: 14, padding: 28, width: '100%', maxWidth: 480, boxShadow: '0 20px 60px rgba(0,0,0,0.5)', maxHeight: '90vh', overflowY: 'auto' }}>
                 <h2 style={{ margin: '0 0 20px', fontSize: '1.1rem', fontWeight: 700, color: 'var(--text-primary)' }}>➕ Nueva Cuenta</h2>
                 <form onSubmit={handleSubmit}>
                     <div style={{ marginBottom: 14 }}>
                         <label style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>Código *</label>
-                        <input id="nueva-code" style={inputStyle} value={form.code} onChange={e => setForm(f => ({ ...f, code: e.target.value }))} placeholder="Ej: 5215" required />
+                        <input id="nueva-code" style={inputStyle} value={form.code}
+                            onChange={e => setForm(f => ({ ...f, code: e.target.value, niif_line_code: '' }))}
+                            placeholder="Ej: 5215 ó 5215.01" required />
                     </div>
                     <div style={{ marginBottom: 14 }}>
                         <label style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>Nombre *</label>
-                        <input id="nueva-name" style={inputStyle} value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="Ej: Gastos de Capacitación" required />
+                        <input id="nueva-name" style={inputStyle} value={form.name}
+                            onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
+                            placeholder="Ej: Gastos de Capacitación" required />
                     </div>
                     <div style={{ marginBottom: 14 }}>
                         <label style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>Tipo *</label>
-                        <select id="nueva-type" style={inputStyle} value={form.account_type} onChange={e => setForm(f => ({ ...f, account_type: e.target.value }))}>
+                        <select id="nueva-type" style={inputStyle} value={form.account_type}
+                            onChange={e => setForm(f => ({ ...f, account_type: e.target.value }))}>
                             {Object.entries(TYPE_CONFIG).map(([k, v]) => <option key={k} value={k}>{v.icon} {v.label}</option>)}
                         </select>
                     </div>
                     <div style={{ marginBottom: 14 }}>
                         <label style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>Cuenta padre (código, opcional)</label>
-                        <input id="nueva-parent" style={inputStyle} value={form.parent_code} onChange={e => setForm(f => ({ ...f, parent_code: e.target.value }))} placeholder="Ej: 5200" />
+                        <input id="nueva-parent" style={inputStyle} value={form.parent_code}
+                            onChange={e => setForm(f => ({ ...f, parent_code: e.target.value }))}
+                            placeholder="Ej: 5200" />
                     </div>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 18, fontSize: '0.85rem', color: 'var(--text-secondary)', cursor: 'pointer' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14, fontSize: '0.85rem', color: 'var(--text-secondary)', cursor: 'pointer' }}>
                         <input type="checkbox" checked={form.allow_entries} onChange={e => setForm(f => ({ ...f, allow_entries: e.target.checked }))} />
                         Permite asientos (desmarcar si es cuenta-grupo)
                     </label>
+
+                    {/* ── Wizard NIIF: aparece solo si la serie es nueva ── */}
+                    {needsNiifWizard && (
+                        <div id="niif-wizard-panel" style={{
+                            background: 'rgba(124,58,237,0.08)', border: '1px solid rgba(124,58,237,0.3)',
+                            borderRadius: 10, padding: '14px', marginBottom: 14,
+                        }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                                <span style={{ fontSize: '1.1rem' }}>🗂️</span>
+                                <div>
+                                    <div style={{ fontWeight: 700, fontSize: '0.88rem', color: '#a78bfa' }}>
+                                        Línea de Estado Financiero (NIIF)
+                                    </div>
+                                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: 2 }}>
+                                        La serie <strong style={{ color: '#a78bfa' }}>{prefix4}xx</strong> es nueva — indicá a qué partida NIIF pertenece.
+                                        Toda cuenta con ese prefijo heredará este mapeo automáticamente.
+                                    </div>
+                                </div>
+                            </div>
+                            <select
+                                id="niif-line-selector"
+                                style={{ ...inputStyle, border: '1px solid rgba(124,58,237,0.5)', marginBottom: 8 }}
+                                value={form.niif_line_code}
+                                onChange={e => setForm(f => ({ ...f, niif_line_code: e.target.value }))}
+                                required={needsNiifWizard}
+                            >
+                                <option value="">— Seleccioná la línea NIIF —</option>
+                                {NIIF_OPTIONS.map(grp => (
+                                    <optgroup key={grp.group} label={grp.group}>
+                                        {grp.options.map(opt => (
+                                            <option key={opt.value} value={opt.value}>{opt.value} · {opt.label}</option>
+                                        ))}
+                                    </optgroup>
+                                ))}
+                            </select>
+                            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.82rem', color: 'var(--text-secondary)', cursor: 'pointer' }}>
+                                <input type="checkbox" checked={form.is_contra}
+                                    onChange={e => setForm(f => ({ ...f, is_contra: e.target.checked }))} />
+                                Es contra-cuenta (ej: Depreciación Acumulada, Provisión incobrables)
+                            </label>
+                        </div>
+                    )}
+
                     {error && <div style={{ color: '#ef4444', fontSize: '0.82rem', marginBottom: 12 }}>⚠️ {error}</div>}
                     <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
-                        <button type="button" onClick={onClose} style={{ padding: '8px 16px', background: 'transparent', border: '1px solid var(--border-color)', borderRadius: 7, color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '0.85rem' }}>Cancelar</button>
-                        <button id="btn-guardar-cuenta" type="submit" disabled={saving} style={{ padding: '8px 20px', background: '#7c3aed', border: 'none', borderRadius: 7, color: 'white', fontWeight: 700, cursor: 'pointer', fontSize: '0.85rem' }}>
+                        <button type="button" onClick={onClose}
+                            style={{ padding: '8px 16px', background: 'transparent', border: '1px solid var(--border-color)', borderRadius: 7, color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '0.85rem' }}>
+                            Cancelar
+                        </button>
+                        <button id="btn-guardar-cuenta" type="submit" disabled={saving}
+                            style={{ padding: '8px 20px', background: '#7c3aed', border: 'none', borderRadius: 7, color: 'white', fontWeight: 700, cursor: 'pointer', fontSize: '0.85rem' }}>
                             {saving ? 'Guardando...' : 'Guardar'}
                         </button>
                     </div>
