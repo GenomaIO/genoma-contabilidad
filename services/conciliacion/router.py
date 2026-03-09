@@ -506,7 +506,17 @@ def bulk_insert_transactions(
 def run_match(recon_id: str, db: Session = Depends(_get_db)):
     """
     Corre el motor de matching para una sesión de conciliación.
-    Compara las transacciones cargadas vs. el Libro Diario del período.
+
+    Estrategia en dos capas:
+    1. Primero cruza contra FE emitidas/recibidas del sistema (comprobante fiscal real)
+    2. Fallback: cruza contra asientos POSTED del Libro Diario
+    3. También clasifica automáticamente BANK_FEE/BANK_INTEREST (siempre CON_FE)
+
+    Estados resultantes:
+      CON_FE      → tiene FE o es cargo bancario (comprobado fiscalmente)
+      SIN_FE      → sin comprobante → riesgo fiscal
+      PROBABLE    → posible match en libros (confianza media)
+      SOLO_LIBROS → en libros pero no en banco (cheques pendientes)
     """
     from services.conciliacion.reconciliation_engine import (
         match_transactions, find_solo_libros, calcular_diferencia_saldo
@@ -520,14 +530,35 @@ def run_match(recon_id: str, db: Session = Depends(_get_db)):
         raise HTTPException(status_code=404, detail="Sesión no encontrada")
 
     tenant_id, period, banco, account_code, saldo_final_banco = row
+    year, month = period[:4], period[4:6]
+    period_fmt = f"{year}-{month}"
 
-    # Obtener transacciones del banco para esta sesión
+    # ── Capa 1: transacciones del banco ───────────────────────────────────────
     bank_txns = [dict(r._mapping) for r in db.execute(text(
         "SELECT * FROM bank_transactions WHERE recon_id = :id ORDER BY fecha"
     ), {"id": recon_id}).fetchall()]
 
-    # Obtener asientos del Libro Diario del período
-    year, month = period[:4], period[4:6]
+    # ── Capa 2: FE emitidas del período (ingresos con comprobante) ─────────────
+    fe_emitidas = [dict(r._mapping) for r in db.execute(text("""
+        SELECT je.id, je.date::text AS fecha, je.total_amount AS monto,
+               je.source, je.description
+        FROM journal_entries je
+        WHERE je.tenant_id = :tid
+          AND je.period     = :period
+          AND je.source    IN ('FE', 'TE', 'NC', 'ND')
+          AND je.status     = 'POSTED'
+    """), {"tid": tenant_id, "period": period_fmt}).fetchall()]
+
+    # ── Capa 3: FE recibidas del período (gastos con comprobante) ─────────────
+    fe_recibidas = [dict(r._mapping) for r in db.execute(text("""
+        SELECT id, fecha::text AS fecha, monto_total AS monto,
+               emisor_nombre AS description
+        FROM recibidos
+        WHERE tenant_id = :tid
+          AND DATE_TRUNC('month', fecha) = DATE(:period || '-01')
+    """), {"tid": tenant_id, "period": period_fmt}).fetchall()]
+
+    # ── Capa 4: asientos del Libro Diario (fallback) ──────────────────────────
     journal_lines = [dict(r._mapping) for r in db.execute(text("""
         SELECT je.id, je.description, jl.debit, jl.credit, jl.account_code,
                je.date::text AS date
@@ -539,14 +570,73 @@ def run_match(recon_id: str, db: Session = Depends(_get_db)):
           AND jl.account_code = :account_code
     """), {
         "tenant_id":    tenant_id,
-        "period":       f"{year}-{month}",
+        "period":       period_fmt,
         "account_code": account_code,
     }).fetchall()]
 
-    matched = match_transactions(bank_txns, journal_lines)
-    solo    = find_solo_libros(matched, journal_lines)
+    # ── Matching principal: banco vs FE ───────────────────────────────────────
+    # Tolerancia: monto ±2% (más permisiva que el libro para cubrir retenciones)
+    TOLERANCIA_FE = 0.02
 
-    # Saldo en libros: suma de créditos - débitos de la cuenta en el período
+    fe_ingresos_disponibles = list(fe_emitidas)   # copia mutable
+    fe_gastos_disponibles   = list(fe_recibidas)
+
+    for txn in bank_txns:
+        txn_monto = abs(float(txn.get("monto", 0)))
+        txn_tipo  = txn.get("tipo", "DB")
+        cat       = txn.get("beneficiario_categoria", "TERCERO")
+
+        # Cargos bancarios → siempre CON_FE (no necesitan FE de tercero)
+        if cat in ("BANK_FEE", "BANK_INTEREST"):
+            txn["match_estado"]    = "CON_FE"
+            txn["match_confianza"] = 100.0
+            txn["tiene_fe"]        = True
+            txn["fe_numero"]       = "CARGO_BANCARIO"
+            continue
+
+        # Cruce contra FE según tipo
+        if txn_tipo == "CR":
+            pool = fe_ingresos_disponibles
+        else:
+            pool = fe_gastos_disponibles
+
+        best = None
+        best_diff = 1.0
+        for i, fe in enumerate(pool):
+            fe_monto = abs(float(fe.get("monto", 0) or 0))
+            if fe_monto <= 0:
+                continue
+            diff = abs(txn_monto - fe_monto) / fe_monto if fe_monto else 1.0
+            if diff < TOLERANCIA_FE and diff < best_diff:
+                best_diff = diff
+                best = (i, fe)
+
+        if best:
+            idx, fe = best
+            txn["match_estado"]    = "CON_FE"
+            txn["match_confianza"] = round((1.0 - best_diff) * 100, 1)
+            txn["tiene_fe"]        = True
+            txn["fe_numero"]       = fe.get("id", "")
+            pool.pop(idx)
+        else:
+            # Fallback: cruzar contra asientos del Libro Diario
+            fallback = match_transactions([txn], journal_lines)
+            fb = fallback[0] if fallback else txn
+            if fb.get("match_estado") in ("CONCILIADO", "PROBABLE"):
+                txn["match_estado"]    = fb["match_estado"]
+                txn["match_confianza"] = fb.get("match_confianza", 50.0)
+                txn["tiene_fe"]        = False   # libro, no FE
+                txn["fe_numero"]       = None
+            else:
+                txn["match_estado"]    = "SIN_FE"
+                txn["match_confianza"] = 0.0
+                txn["tiene_fe"]        = False
+                txn["fe_numero"]       = None
+
+    # ── Solo libros ───────────────────────────────────────────────────────────
+    solo = find_solo_libros(bank_txns, journal_lines)
+
+    # ── Saldo en libros: real desde journal_lines ─────────────────────────────
     saldo_libros_row = db.execute(text("""
         SELECT COALESCE(SUM(jl.credit), 0) - COALESCE(SUM(jl.debit), 0)
         FROM journal_lines jl
@@ -556,38 +646,41 @@ def run_match(recon_id: str, db: Session = Depends(_get_db)):
           AND je.period       = :period
           AND je.status       = 'POSTED'
     """), {
-        "tenant_id": tenant_id, "account_code": account_code,
-        "period": f"{year}-{month}"
+        "tenant_id": tenant_id, "account_code": account_code, "period": period_fmt
     }).scalar() or 0.0
     saldo_libros = float(saldo_libros_row)
 
     diff = calcular_diferencia_saldo(float(saldo_final_banco or 0), saldo_libros)
 
-    # Actualizar estados en bank_transactions
-    for txn in matched:
+    # ── Persistir estados en bank_transactions ────────────────────────────────
+    for txn in bank_txns:
         db.execute(text("""
             UPDATE bank_transactions
-            SET match_estado = :estado, match_confianza = :conf, matched_entry_id = :eid
+            SET match_estado = :estado, match_confianza = :conf,
+                tiene_fe = :tfe, fe_numero = :fnum
             WHERE id = :id
         """), {
             "estado": txn["match_estado"],
             "conf":   txn.get("match_confianza", 0),
-            "eid":    txn.get("matched_entry_id"),
+            "tfe":    txn.get("tiene_fe", False),
+            "fnum":   txn.get("fe_numero"),
             "id":     txn["id"],
         })
     db.commit()
 
     stats = {
-        "conciliados":  sum(1 for t in matched if t["match_estado"] == "CONCILIADO"),
-        "probables":    sum(1 for t in matched if t["match_estado"] == "PROBABLE"),
-        "sin_asiento":  sum(1 for t in matched if t["match_estado"] == "SIN_ASIENTO"),
-        "solo_libros":  len(solo),
-        "total_banco":  len(matched),
+        "con_fe":      sum(1 for t in bank_txns if t["match_estado"] == "CON_FE"),
+        "sin_fe":      sum(1 for t in bank_txns if t["match_estado"] == "SIN_FE"),
+        "probable":    sum(1 for t in bank_txns if t["match_estado"] == "PROBABLE"),
+        "solo_libros": len(solo),
+        "total_banco": len(bank_txns),
+        "fe_usadas":   len(fe_emitidas) - len(fe_ingresos_disponibles),
     }
 
     return {
         "ok":           True,
         "recon_id":     recon_id,
+
         "stats":        stats,
         "saldo_diff":   diff,
         "solo_libros":  solo[:20],
