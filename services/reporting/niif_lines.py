@@ -336,8 +336,55 @@ def fix_existing_mappings(tenant_id: str, db: Session) -> int:
                 is_contra=is_contra,
             ))
             updated += 1
+
+    # ── Bloque 2: corrección masiva por código COMPLETO (LIKE) ─────────
+    # El wizard de mapeo y el seeder legacy pueden crear entradas con código
+    # completo (ej: "1201.04") que sobreescriben el prefijo en el engine.
+    # El engine busca mappings.get(code) ANTES del fallback prefix4.
+    # → Necesitamos corregir TODAS las entradas que empiecen con el prefijo
+    #   incorrecto usando SQL LIKE.
+    LIKE_CORRECTIONS = [
+        # (patron_LIKE, nuevo_niif_line_code, is_contra)
+        # Activo No Corriente — PPE
+        ("1201%", "ESF.ANC.01", False),
+        ("1202%", "ESF.ANC.01", True),    # Dep. Acumulada (contra)
+        # Activo No Corriente — Intangibles
+        ("1203%", "ESF.ANC.03", False),
+        ("1601%", "ESF.ANC.03", False),
+        ("1602%", "ESF.ANC.03", False),
+        ("1690%", "ESF.ANC.03", True),
+        # Activo No Corriente — Otros
+        ("1204%", "ESF.ANC.05", False),
+        ("1205%", "ESF.ANC.07", False),
+        ("1701%", "ESF.ANC.06", False),
+        # Pasivo No Corriente
+        ("2201%", "ESF.PNC.01", False),
+        ("2202%", "ESF.PNC.03", False),
+        ("2203%", "ESF.PNC.04", False),
+        ("2701%", "ESF.PNC.02", False),
+    ]
+    for pattern, niif_code, is_contra in LIKE_CORRECTIONS:
+        result = db.execute(
+            text("""
+                UPDATE niif_mappings
+                SET niif_line_code = :niif_code,
+                    is_contra = :is_contra
+                WHERE tenant_id = :tenant_id
+                  AND account_code LIKE :pattern
+                  AND (niif_line_code != :niif_code OR is_contra != :is_contra)
+            """),
+            {
+                "niif_code":  niif_code,
+                "is_contra":  is_contra,
+                "tenant_id":  tenant_id,
+                "pattern":    pattern,
+            }
+        )
+        updated += result.rowcount
+
     db.commit()
     return updated
+
 
 
 def get_unmapped_accounts(tenant_id: str, db: Session) -> list[dict]:
