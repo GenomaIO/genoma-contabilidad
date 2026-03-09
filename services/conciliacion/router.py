@@ -958,6 +958,235 @@ def run_centinela(recon_id: str, db: Session = Depends(_get_db)):
 
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# CENTINELA CONSOLIDADO POR PERÍODO (multi-cuenta)
+# Análisis fiscal de TODAS las cuentas bancarias de un período en una pasada.
+# Rule #1 (Safe Fallback): si una cuenta falla, se omite y se continúa.
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.post("/centinela/analyze-period/{period}")
+def run_centinela_period(period: str, request: Request, db: Session = Depends(_get_db)):
+    """
+    Corre CENTINELA consolidado sobre TODAS las cuentas del período.
+
+    A diferencia de /centinela/analyze/{recon_id} (por sesión), este endpoint:
+    1. Localiza todos los bank_reconciliation del tenant para el período dado.
+    2. Lee bank_transactions SIN_FE de TODAS esas sesiones juntas.
+    3. Corre el análisis fiscal unificado (tarifa, clasificación, score).
+    4. Persiste el score en centinela_score (UPSERT por period).
+    5. Actualiza score_riesgo + estado='ANALIZADO' en cada bank_reconciliation.
+
+    Retorna score consolidado + fugas + breakdown por cuenta.
+    """
+    from services.conciliacion.fiscal_engine import (
+        clasificar_fuga, calcular_score, estimar_tarifa, calcular_iva_incluido
+    )
+    from services.conciliacion.reconciliation_engine import calcular_diferencia_saldo
+    from collections import defaultdict
+
+    tenant_id   = _get_tenant(request)
+    year        = period[:4]
+    month       = period[4:6] if len(period) >= 6 else "01"
+    period_fmt  = f"{year}-{month}"
+
+    # ── 1. Todos los recon_ids del tenant para este período ───────────────────
+    sesiones_rows = db.execute(text("""
+        SELECT id, banco, account_code, saldo_final
+        FROM bank_reconciliation
+        WHERE tenant_id = :tid AND period = :period
+        ORDER BY created_at DESC
+    """), {"tid": tenant_id, "period": period}).fetchall()
+
+    if not sesiones_rows:
+        raise HTTPException(status_code=404,
+            detail=f"No hay sesiones de conciliación para el período {period}")
+
+    sesiones   = [dict(r._mapping) for r in sesiones_rows]
+    recon_ids  = [s["id"] for s in sesiones]
+    logger.info(f"🔬 CENTINELA period={period} — {len(recon_ids)} sesiones")
+
+    # ── 2. Leer SIN_FE + todas las txns de cada sesión (Safe Fallback) ────────
+    sin_match_all: list[dict] = []
+    all_txns_all:  list[dict] = []
+    cuentas_procesadas = []
+    cuentas_fallidas   = []
+
+    for sesion in sesiones:
+        rid = sesion["id"]
+        try:
+            sin_fe = [dict(r._mapping) for r in db.execute(text("""
+                SELECT * FROM bank_transactions
+                WHERE recon_id = :id
+                  AND match_estado IN ('SIN_FE', 'SIN_ASIENTO', 'SOLO_LIBROS')
+            """), {"id": rid}).fetchall()]
+            all_txns = [dict(r._mapping) for r in db.execute(text(
+                "SELECT * FROM bank_transactions WHERE recon_id = :id"
+            ), {"id": rid}).fetchall()]
+            sin_match_all.extend(sin_fe)
+            all_txns_all.extend(all_txns)
+            cuentas_procesadas.append({
+                "recon_id": rid, "banco": sesion.get("banco"),
+                "account_code": sesion.get("account_code"),
+                "sin_fe": len(sin_fe), "total_txns": len(all_txns),
+            })
+        except Exception as e_sess:
+            logger.warning(f"⚠️  Sesión {rid} omitida: {e_sess}")
+            db.rollback()
+            cuentas_fallidas.append({"recon_id": rid, "error": str(e_sess)})
+
+    # ── 3. FE emitidas del período ────────────────────────────────────────────
+    try:
+        fe_emitidas = [dict(r._mapping) for r in db.execute(text("""
+            SELECT * FROM journal_entries
+            WHERE tenant_id = :tid AND period = :period
+              AND source IN ('FE', 'TE', 'NC', 'ND') AND status = 'POSTED'
+        """), {"tid": tenant_id, "period": period_fmt}).fetchall()]
+    except Exception:
+        db.rollback()
+        fe_emitidas = []
+
+    fe_recibidas: list = []
+
+    # ── 4. Clasificar fugas (todas las cuentas juntas) ────────────────────────
+    fugas = []
+    for txn in sin_match_all:
+        desc   = txn.get("descripcion", "")
+        cat    = txn.get("beneficiario_categoria", "TERCERO")
+        tarifa = estimar_tarifa(desc, cat)
+        calc   = calcular_iva_incluido(float(txn.get("monto", 0)), tarifa)
+        fuga   = clasificar_fuga(txn, fe_emitidas, fe_recibidas)
+        if not fuga:
+            continue
+        fuga.update({
+            "txn_id": txn["id"], "txn_descripcion": desc,
+            "txn_monto": float(txn.get("monto", 0)),
+            "txn_fecha": str(txn.get("fecha", "")),
+            "iva_riesgo": calc["iva"], "base_riesgo": calc["base"],
+        })
+        fugas.append(fuga)
+        try:
+            db.execute(text("""
+                UPDATE bank_transactions
+                SET fuga_tipo=:ft, score_puntos=:sp, iva_estimado=:iva,
+                    base_estimada=:base, d270_codigo=:d270, accion=:accion, tarifa_iva=:tarifa
+                WHERE id=:id
+            """), {
+                "ft": fuga.get("fuga_tipo"), "sp": fuga.get("score_pts", 0),
+                "iva": calc["iva"], "base": calc["base"],
+                "d270": fuga.get("d270_codigo"), "accion": fuga.get("accion"),
+                "tarifa": int(tarifa * 100), "id": txn["id"],
+            })
+        except Exception as e_upd:
+            logger.warning(f"⚠️  txn {txn.get('id')}: {e_upd}")
+            db.rollback()
+
+    # ── 5. Score consolidado ──────────────────────────────────────────────────
+    total_fe_monto = sum(float(fe.get("total_amount", 0) or 0) for fe in fe_emitidas)
+    ingresos_banco = sum(float(t.get("monto", 0)) for t in all_txns_all if t.get("tipo") == "CR")
+    try:
+        saldo_libros = float(db.execute(text("""
+            SELECT COALESCE(SUM(jl.credit), 0) - COALESCE(SUM(jl.debit), 0)
+            FROM journal_lines jl JOIN journal_entries je ON je.id = jl.entry_id
+            WHERE jl.tenant_id=:tid AND je.period=:p AND je.status='POSTED'
+        """), {"tid": tenant_id, "p": period_fmt}).scalar() or 0)
+    except Exception:
+        db.rollback()
+        saldo_libros = 0.0
+
+    saldo_final_total = sum(float(s.get("saldo_final") or 0) for s in sesiones)
+    diff   = calcular_diferencia_saldo(saldo_final_total, saldo_libros)
+    result = calcular_score(fugas, diff, ingresos_banco, total_fe_monto)
+
+    # ── 6. Acumular bank_counterparties ───────────────────────────────────────
+    por_beneficiario: dict = defaultdict(lambda: {
+        "debitos": 0.0, "creditos": 0.0, "n": 0, "tel": None, "cat": "TERCERO"
+    })
+    for txn in all_txns_all:
+        bnom = txn.get("beneficiario_nombre") or "DESCONOCIDO"
+        bcat = txn.get("beneficiario_categoria", "TERCERO")
+        if bcat in ("BANK_FEE", "BANK_INTEREST"):
+            continue
+        por_beneficiario[bnom]["n"] += 1
+        por_beneficiario[bnom]["tel"] = txn.get("beneficiario_telefono_norm") or por_beneficiario[bnom]["tel"]
+        por_beneficiario[bnom]["cat"] = bcat
+        if txn.get("tipo") == "DB":
+            por_beneficiario[bnom]["debitos"]  += float(txn.get("monto", 0))
+        else:
+            por_beneficiario[bnom]["creditos"] += float(txn.get("monto", 0))
+
+    for nombre, datos in por_beneficiario.items():
+        try:
+            ea = db.execute(text(
+                "SELECT COALESCE(d150_monto_anual,0) FROM bank_counterparties WHERE tenant_id=:t AND nombre_norm=:n"
+            ), {"t": tenant_id, "n": nombre}).scalar() or 0.0
+            nuevo_anual = float(ea) + datos["debitos"] + datos["creditos"]
+            db.execute(text("""
+                INSERT INTO bank_counterparties
+                  (tenant_id, nombre_norm, telefono, categoria, total_debitos, total_creditos,
+                   n_transacciones, primer_periodo, ultimo_periodo, d150_monto_anual, d150_flag, updated_at)
+                VALUES (:t,:n,:tel,:cat,:deb,:cred,:cnt,:p,:p,:d150a,:d150f,NOW())
+                ON CONFLICT (tenant_id, nombre_norm) DO UPDATE SET
+                  total_debitos=bank_counterparties.total_debitos+:deb,
+                  total_creditos=bank_counterparties.total_creditos+:cred,
+                  n_transacciones=bank_counterparties.n_transacciones+:cnt,
+                  ultimo_periodo=:p, d150_monto_anual=bank_counterparties.d150_monto_anual+:deb+:cred,
+                  d150_flag=:d150f, telefono=COALESCE(bank_counterparties.telefono,:tel), updated_at=NOW()
+            """), {
+                "t": tenant_id, "n": nombre, "tel": datos["tel"], "cat": datos["cat"],
+                "deb": datos["debitos"], "cred": datos["creditos"], "cnt": datos["n"],
+                "p": period, "d150a": nuevo_anual, "d150f": nuevo_anual >= 1_000_000.0,
+            })
+        except Exception as e_cp:
+            logger.warning(f"⚠️  counterparty {nombre}: {e_cp}")
+            db.rollback()
+
+    # ── 7. Guardar score + marcar sesiones ────────────────────────────────────
+    try:
+        db.execute(text("""
+            INSERT INTO centinela_score
+              (tenant_id, period, score_total, fugas_tipo_a, fugas_tipo_b, fugas_tipo_c,
+               exposicion_iva, exposicion_renta, exposicion_total, d270_regs, score_detalle)
+            VALUES (:tid,:period,:score,:a,:b,:c,:iva,:renta,:total,:d270,:det::jsonb)
+            ON CONFLICT (tenant_id, period) DO UPDATE SET
+              score_total=EXCLUDED.score_total, fugas_tipo_a=EXCLUDED.fugas_tipo_a,
+              fugas_tipo_b=EXCLUDED.fugas_tipo_b, fugas_tipo_c=EXCLUDED.fugas_tipo_c,
+              exposicion_iva=EXCLUDED.exposicion_iva, d270_regs=EXCLUDED.d270_regs,
+              score_detalle=EXCLUDED.score_detalle
+        """), {
+            "tid": tenant_id, "period": period,
+            "score": result["score_total"], "a": result["fugas_tipo_a"],
+            "b": result["fugas_tipo_b"], "c": result["fugas_tipo_c"],
+            "iva": result["exposicion_iva"], "renta": result["exposicion_renta"],
+            "total": result["exposicion_total"], "d270": result["d270_regs"],
+            "det": str({"cuentas": cuentas_procesadas, "detalle": result["detalle"]}),
+        })
+    except Exception as e_score:
+        logger.warning(f"⚠️  centinela_score: {e_score}")
+        db.rollback()
+
+    for rid in recon_ids:
+        try:
+            db.execute(text(
+                "UPDATE bank_reconciliation SET score_riesgo=:s, estado='ANALIZADO' WHERE id=:id"
+            ), {"s": result["score_total"], "id": rid})
+        except Exception:
+            pass
+
+    db.commit()
+
+    return {
+        "ok":               True,
+        "period":           period,
+        "score":            result,
+        "fugas":            fugas,
+        "saldo_diff":       diff,
+        "cuentas_analizadas": cuentas_procesadas,
+        "cuentas_fallidas": cuentas_fallidas,
+        "total_sin_fe":     len(sin_match_all),
+        "total_txns":       len(all_txns_all),
+        "n_counterparties": len(por_beneficiario),
+    }
+
 
 @router.get("/centinela/beneficiarios")
 def list_beneficiarios(request: Request, db: Session = Depends(_get_db)):

@@ -753,6 +753,8 @@ export default function Conciliacion() {
     const [stats, setStats] = useState(null)
     const [saldoDiff, setSaldoDiff] = useState(null)
     const [centinelaScore, setCentinelaScore] = useState(null)
+    const [centinelaConsolMsg, setCentinelaConsolMsg] = useState(null)
+    const [centinelaLoading, setCentinelaLoading] = useState(false)
     const [matching, setMatching] = useState(false)
     const [matchMsg, setMatchMsg] = useState(null)
     const [step, setStep] = useState('upload') // upload | review | done
@@ -789,11 +791,12 @@ export default function Conciliacion() {
         fetch(`${API}/conciliacion/sesiones`, { headers: authH(token) })
             .then(r => r.ok ? r.json() : { sesiones: [] })
             .then(d => {
-                // Una sola pill por período — queda la más reciente (primera del array)
+                // Una pill por (period + account_code) — soporta multi-cuenta
                 const vistas = new Set()
                 const unicas = (d.sesiones || []).filter(s => {
-                    if (!s.period || vistas.has(s.period)) return false
-                    vistas.add(s.period)
+                    const key = `${s.period}|${s.account_code || ''}`
+                    if (!s.period || vistas.has(key)) return false
+                    vistas.add(key)
                     return true
                 })
                 setHistorial(unicas)
@@ -923,24 +926,8 @@ export default function Conciliacion() {
                 const total = d.stats?.total_banco ?? 0
                 setMatchMsg({ ok: true, text: `✅ Conciliación completada — ${conFE} CON FE · ${sinFE} SIN FE · ${total} total` })
 
-                // Auto-CENTINELA: enriquecer resultados con análisis fiscal
-                try {
-                    const rc = await fetch(`${API}/centinela/analyze/${reconId}`, {
-                        method: 'POST', headers: authH(token)
-                    })
-                    if (rc.ok) {
-                        const dc = await rc.json()
-                        setCentinelaScore(dc.score)
-                        // Recargar txns de nuevo tras CENTINELA (agrega fuga_tipo, iva_estimado)
-                        const rd2 = await fetch(`${API}/conciliacion/sesion/${reconId}/detalle`, { headers: authH(token) })
-                        if (rd2.ok) {
-                            const dd2 = await rd2.json()
-                            if (Array.isArray(dd2.transacciones) && dd2.transacciones.length > 0) {
-                                setTxns(dd2.transacciones)
-                            }
-                        }
-                    }
-                } catch (_) { /* CENTINELA falla silenciosamente */ }
+                // CENTINELA se corre manualmente por período completo (ver botón abajo)
+                // Esto permite consolidar todas las cuentas antes del análisis fiscal
             } else {
                 setMatchMsg({ ok: false, text: d.detail || `Error ${r.status} en matching` })
             }
@@ -948,6 +935,45 @@ export default function Conciliacion() {
             setMatchMsg({ ok: false, text: `Error de conexión: ${String(e)}. ¿El servidor está corriendo?` })
         }
         setMatching(false)
+    }
+
+    // ── CENTINELA consolidado por período (todas las cuentas juntas) ──────────
+    async function runCentinelaConsolidado() {
+        if (!period) return
+        setCentinelaLoading(true); setCentinelaConsolMsg(null)
+        try {
+            const r = await fetch(`${API}/centinela/analyze-period/${period}`, {
+                method: 'POST', headers: authH(token)
+            })
+            const d = await r.json()
+            if (r.ok) {
+                setCentinelaScore(d.score)
+                const cuentas = d.cuentas_analizadas || []
+                const total = d.total_sin_fe ?? 0
+                const score = d.score?.score_total ?? 0
+                setCentinelaConsolMsg({
+                    ok: true,
+                    text: `🔬 Análisis completado — ${cuentas.length} cuenta(s) · ${total} SIN FE · Score ${score}/100`
+                })
+                // Recargar txns para que aparezca fuga_tipo e iva_estimado
+                if (reconId) {
+                    try {
+                        const rd = await fetch(`${API}/conciliacion/sesion/${reconId}/detalle`, { headers: authH(token) })
+                        if (rd.ok) {
+                            const dd = await rd.json()
+                            if (Array.isArray(dd.transacciones) && dd.transacciones.length > 0) {
+                                setTxns(dd.transacciones)
+                            }
+                        }
+                    } catch (_) { /* recarga silenciosa */ }
+                }
+            } else {
+                setCentinelaConsolMsg({ ok: false, text: d.detail || `Error ${r.status}` })
+            }
+        } catch (e) {
+            setCentinelaConsolMsg({ ok: false, text: `Error de conexión: ${String(e)}` })
+        }
+        setCentinelaLoading(false)
     }
 
     function handleApprove(txn) {
@@ -1301,7 +1327,37 @@ export default function Conciliacion() {
 
                     <StatsBar stats={stats} saldoDiff={saldoDiff} txns={txns} />
 
-                    {/* Score CENTINELA auto-generado */}
+                    {/* ── Botón CENTINELA consolidado por período ─────────── */}
+                    <div style={{ marginBottom: 16, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                        <button
+                            id="btn-centinela-period"
+                            onClick={runCentinelaConsolidado}
+                            disabled={centinelaLoading}
+                            style={{
+                                padding: '9px 20px', borderRadius: 10, fontWeight: 700,
+                                fontSize: '0.875rem', cursor: centinelaLoading ? 'wait' : 'pointer',
+                                background: centinelaLoading ? 'var(--bg-secondary)' : 'linear-gradient(135deg,#7c3aed,#6d28d9)',
+                                color: '#fff', border: 'none',
+                                boxShadow: '0 2px 8px rgba(124,58,237,0.25)',
+                                display: 'flex', alignItems: 'center', gap: 7,
+                            }}
+                        >
+                            {centinelaLoading ? '⏳ Analizando...' : '🔬 Analizar período completo'}
+                        </button>
+                        {centinelaConsolMsg && (
+                            <span style={{
+                                fontSize: '0.82rem', fontWeight: 600,
+                                color: centinelaConsolMsg.ok ? '#16a34a' : '#dc2626',
+                            }}>
+                                {centinelaConsolMsg.text}
+                            </span>
+                        )}
+                        <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                            Consolida todas las cuentas del período {period}
+                        </span>
+                    </div>
+
+                    {/* Score CENTINELA */}
                     {centinelaScore && (
                         <div style={{
                             ...cardStyle, marginBottom: 16, padding: '14px 20px',
