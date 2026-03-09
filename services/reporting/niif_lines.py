@@ -129,6 +129,14 @@ STANDARD_AUTO_MAPPING = {
     #          no CxC. CxC está en 13xx. Verificado en standard_cr.json.
     "1201": "ESF.ANC.01", # PPE: Vehículos, Terrenos, Edificios, Maquinaria
     "1202": "ESF.ANC.01", # Depreciación Acumulada PPE (contra-cuenta)
+    # Documentos financieros CP — serie 1107xx
+    "1107": "ESF.AC.02",  # Documentos por Cobrar y Efectos CP → CxC
+    # Intangibles LP — serie 1203xx (Software, Marcas, Goodwill)
+    "1203": "ESF.ANC.03", # Intangibles adquiridos (Software, Marcas, Patentes, Goodwill)
+    # Inversiones no corrientes — serie 1204xx
+    "1204": "ESF.ANC.05", # Inversiones en asociadas (Acciones, Bonos, Fondos)
+    # Documentos/CxC largo plazo — serie 1205xx
+    "1205": "ESF.ANC.07", # Otros activos no corrientes (CxC LP, Efectos LP)
     # Intangibles — serie 16xx
     "1601": "ESF.ANC.03", # Software
     "1602": "ESF.ANC.03", # Marcas y patentes
