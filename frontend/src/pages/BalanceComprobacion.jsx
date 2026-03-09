@@ -210,63 +210,64 @@ export default function BalanceComprobacion() {
                         </p>
                     </div>
 
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                        {/* Selector de período */}
-                        <select
-                            id="balance-period-select"
-                            value={period}
-                            onChange={e => setPeriod(e.target.value)}
-                            style={{
-                                padding: '7px 12px', borderRadius: 7,
-                                border: '1px solid var(--border-color)',
-                                background: 'var(--bg-card)', color: 'var(--text-primary)',
-                                fontSize: '0.85rem', cursor: 'pointer',
-                            }}
-                        >
-                            {periodOptions.map(o => <option key={o.val} value={o.val}>{o.label}</option>)}
-                        </select>
+                    {/* Lado derecho: 2 filas — filtros arriba, acciones abajo */}
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8 }}>
 
-                        {/* Nivel N4/N5 */}
-                        <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>Ver hasta:</span>
-                        {[4, 5].map(lvl => (
-                            <button
-                                key={lvl}
-                                id={`btn-nivel-${lvl}`}
-                                onClick={() => setPresentLevel(lvl)}
+                        {/* Fila 1: Período + N4/N5 */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            {/* Selector de período */}
+                            <select
+                                id="balance-period-select"
+                                value={period}
+                                onChange={e => setPeriod(e.target.value)}
                                 style={{
-                                    padding: '5px 10px', borderRadius: 6, cursor: 'pointer',
-                                    fontSize: '0.8rem', border: '1px solid var(--border-color)',
-                                    background: presentLevel === lvl ? '#7c3aed' : 'var(--bg-card)',
-                                    color: presentLevel === lvl ? 'white' : 'var(--text-secondary)',
-                                    fontWeight: presentLevel === lvl ? 700 : 400,
+                                    padding: '7px 12px', borderRadius: 7,
+                                    border: '1px solid var(--border-color)',
+                                    background: 'var(--bg-card)', color: 'var(--text-primary)',
+                                    fontSize: '0.85rem', cursor: 'pointer',
                                 }}
-                            >N{lvl}</button>
-                        ))}
-
-                        {/* ── Botón Exportar Excel ── */}
-                        {data && accounts.length > 0 && (
-                            <button
-                                id="btn-export-excel"
-                                className="no-print"
-                                onClick={exportToExcel}
-                                style={actionBtnStyle('#10b981')}
-                                title="Descargar en Excel"
                             >
-                                📥 Excel
-                            </button>
-                        )}
+                                {periodOptions.map(o => <option key={o.val} value={o.val}>{o.label}</option>)}
+                            </select>
 
-                        {/* ── Botón Imprimir ── */}
+                            {/* Nivel N4/N5 */}
+                            <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>Ver hasta:</span>
+                            {[4, 5].map(lvl => (
+                                <button
+                                    key={lvl}
+                                    id={`btn-nivel-${lvl}`}
+                                    onClick={() => setPresentLevel(lvl)}
+                                    style={{
+                                        padding: '5px 10px', borderRadius: 6, cursor: 'pointer',
+                                        fontSize: '0.8rem', border: '1px solid var(--border-color)',
+                                        background: presentLevel === lvl ? '#7c3aed' : 'var(--bg-card)',
+                                        color: presentLevel === lvl ? 'white' : 'var(--text-secondary)',
+                                        fontWeight: presentLevel === lvl ? 700 : 400,
+                                    }}
+                                >N{lvl}</button>
+                            ))}
+                        </div>
+
+                        {/* Fila 2: Excel + Imprimir — solo si hay datos */}
                         {data && accounts.length > 0 && (
-                            <button
-                                id="btn-print-balance"
-                                className="no-print"
-                                onClick={handlePrint}
-                                style={actionBtnStyle('#6366f1')}
-                                title="Imprimir balance"
-                            >
-                                🖨️ Imprimir
-                            </button>
+                            <div className="no-print" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                <button
+                                    id="btn-export-excel"
+                                    onClick={exportToExcel}
+                                    style={actionBtnStyle('#10b981')}
+                                    title="Descargar en Excel"
+                                >
+                                    📥 Excel
+                                </button>
+                                <button
+                                    id="btn-print-balance"
+                                    onClick={handlePrint}
+                                    style={actionBtnStyle('#6366f1')}
+                                    title="Imprimir balance"
+                                >
+                                    🖨️ Imprimir
+                                </button>
+                            </div>
                         )}
                     </div>
                 </div>
