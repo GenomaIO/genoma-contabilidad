@@ -343,6 +343,91 @@ def crear_sesion(req: UploadSession, request: Request, db: Session = Depends(_ge
         raise HTTPException(status_code=500, detail=str(e))
 
 
+class BulkTransactionItem(BaseModel):
+    fecha: str
+    descripcion: str
+    monto: float
+    tipo: str                          # 'CR' | 'DB'
+    moneda: Optional[str] = "CRC"
+    telefono: Optional[str] = None
+    monto_orig_usd: Optional[float] = None
+    tc_bccr: Optional[float] = None
+
+class BulkTransactionRequest(BaseModel):
+    transactions: list[BulkTransactionItem]
+
+
+@router.post("/conciliacion/sesion/{recon_id}/transactions")
+def bulk_insert_transactions(
+    recon_id: str,
+    req:     BulkTransactionRequest,
+    request: Request,
+    db:      Session = Depends(_get_db),
+):
+    """
+    Inserta las transacciones bancarias del período en una sesión de conciliación.
+
+    SEGURIDAD: valida que el recon_id pertenece al tenant autenticado.
+    Permite reemplazar transacciones previas (DELETE + INSERT) para re-cargas.
+
+    Body: { "transactions": [ {fecha, descripcion, monto, tipo, moneda?, telefono?}, ... ] }
+    """
+    import uuid as uuid_lib
+
+    tenant_id = _get_tenant(request)
+
+    # Verificar que la sesión pertenece al tenant
+    row = db.execute(text(
+        "SELECT tenant_id FROM bank_reconciliation WHERE id = :id"
+    ), {"id": recon_id}).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Sesión no encontrada")
+    if row.tenant_id != tenant_id:
+        raise HTTPException(status_code=403, detail="Acceso denegado")
+
+    try:
+        # Limpiar txns anteriores de esta sesión (permite re-cargas)
+        db.execute(text(
+            "DELETE FROM bank_transactions WHERE recon_id = :id"
+        ), {"id": recon_id})
+
+        # Insertar todas las transacciones
+        for txn in req.transactions:
+            db.execute(text("""
+                INSERT INTO bank_transactions
+                  (id, recon_id, tenant_id, fecha, descripcion, monto, tipo,
+                   moneda, telefono, monto_orig_usd, tc_bccr, match_estado)
+                VALUES
+                  (:id, :recon_id, :tenant_id, :fecha, :descripcion, :monto, :tipo,
+                   :moneda, :telefono, :monto_orig_usd, :tc_bccr, 'PENDIENTE')
+            """), {
+                "id":           str(uuid_lib.uuid4()),
+                "recon_id":     recon_id,
+                "tenant_id":    tenant_id,
+                "fecha":        txn.fecha,
+                "descripcion":  txn.descripcion,
+                "monto":        txn.monto,
+                "tipo":         txn.tipo,
+                "moneda":       txn.moneda or "CRC",
+                "telefono":     txn.telefono,
+                "monto_orig_usd": txn.monto_orig_usd,
+                "tc_bccr":      txn.tc_bccr,
+            })
+
+        db.commit()
+        logger.info(f"✅ {len(req.transactions)} txns insertadas en recon_id={recon_id}")
+        return {
+            "ok": True,
+            "recon_id":     recon_id,
+            "total_insertadas": len(req.transactions),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error bulk-insert txns: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.post("/conciliacion/match/{recon_id}")
 def run_match(recon_id: str, db: Session = Depends(_get_db)):
     """

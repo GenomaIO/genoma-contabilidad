@@ -417,26 +417,41 @@ function FileUploader({ token, onTransacciones, onPeriodChange }) {
                 return true
             })
 
-            // Ordenar por fecha
-            txnsFusionadas.sort((a, b) => (a.fecha || '').localeCompare(b.fecha || ''))
+            // ── FIX 1: Filtrar SOLO el período seleccionado ──────────────────
+            // El archivo del banco puede contener dic/ene/feb; solo pasan las del mes activo.
+            const py = period.slice(0, 4)
+            const pm = period.slice(4, 6)
+            const periodPrefix = `${py}-${pm}`
+            const txnsFiltradas = txnsFusionadas.filter(t =>
+                (t.fecha || '').startsWith(periodPrefix)
+            )
+            const excluidas = txnsFusionadas.length - txnsFiltradas.length
 
-            const periodosStr = [...todosPeriodos].sort().join(', ')
+            // Ordenar por fecha cronológicamente
+            txnsFiltradas.sort((a, b) => (a.fecha || '').localeCompare(b.fecha || ''))
+
+            const MESES_CORTOS = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic']
+            const mesLabel = (MESES_CORTOS[parseInt(pm) - 1] || pm) + ' ' + py
             const fuenteStr = usaGemini ? ' (OCR Gemini ✨)' : ''
             const errorStr = errores.length ? ` | ⚠️ ${errores.length} error(es)` : ''
+            const exclStr = excluidas > 0 ? ` | ℹ️ ${excluidas} txn(s) de otros períodos excluidas` : ''
 
-            if (txnsFusionadas.length === 0) {
-                // 0 txns: nunca avanzar al Paso 2, mostrar advertencia clara
+            if (txnsFiltradas.length === 0) {
+                // 0 txns para el período: no avanzar al Paso 2
                 const errMsg = errores.length
                     ? `Error procesando archivos: ${errores.join('; ')}`
-                    : `⚠️ Se procesaron ${files.length} archivo(s) pero no se encontraron transacciones. ` +
-                    `Verifica que el banco seleccionado (${banco}) coincide con el archivo cargado.`
+                    : txnsFusionadas.length > 0
+                        ? `⚠️ El archivo tiene ${txnsFusionadas.length} transacciones, pero ninguna es de ${mesLabel}. ` +
+                        `Verifica el período seleccionado.`
+                        : `⚠️ Se procesaron ${files.length} archivo(s) pero no se encontraron transacciones. ` +
+                        `Verifica que el banco seleccionado (${banco}) coincide con el archivo cargado.`
                 setMsg({ ok: false, text: errMsg })
             } else {
                 setMsg({
                     ok: true,
-                    text: `✅ ${txnsFusionadas.length} transacciones de ${files.length} archivo(s)${fuenteStr} | Períodos: ${periodosStr || period}${errorStr}`,
+                    text: `✅ ${txnsFiltradas.length} transacciones de ${mesLabel} | ${files.length} archivo(s)${fuenteStr}${exclStr}${errorStr}`,
                 })
-                onTransacciones(txnsFusionadas, banco, period, saldoInicial, saldoFinal)
+                onTransacciones(txnsFiltradas, banco, period, saldoInicial, saldoFinal)
             }
 
 
@@ -572,31 +587,114 @@ export default function Conciliacion() {
     const { state } = useApp()
     const token = state.token || localStorage.getItem('gc_token')
 
+    // Datos de la sesión actual
     const [txns, setTxns] = useState([])
+    const [bancoActual, setBancoActual] = useState('')
+    const [saldoSesion, setSaldoSesion] = useState({ ini: 0, fin: 0 })
     const [reconId, setReconId] = useState(null)
     const [stats, setStats] = useState(null)
     const [saldoDiff, setSaldoDiff] = useState(null)
+    const [centinelaScore, setCentinelaScore] = useState(null)
     const [matching, setMatching] = useState(false)
     const [matchMsg, setMatchMsg] = useState(null)
     const [step, setStep] = useState('upload') // upload | review | done
-    const [period, setPeriodPage] = useState(currentPeriod()) // para el banner
+    const [period, setPeriodPage] = useState(currentPeriod())
+
+    // Guardar sesión — selector de cuenta contable bancaria
+    const [accountCode, setAccountCode] = useState('')
+    const [cuentasBanco, setCuentasBanco] = useState([])
+    const [saving, setSaving] = useState(false)
+    const [saveMsg, setSaveMsg] = useState(null)
+
+    // Cargar cuentas tipo ACTIVO al montar
+    useEffect(() => {
+        if (!token) return
+        fetch(`${API}/ledger/accounts?account_type=ACTIVO`, { headers: authH(token) })
+            .then(r => r.ok ? r.json() : [])
+            .then(d => {
+                const cuentas = Array.isArray(d) ? d : (d.accounts || d.items || [])
+                setCuentasBanco(cuentas)
+                // Pre-seleccionar la primera cuenta de efectivo (código 1xxx)
+                const caja = cuentas.find(c => String(c.code || c.account_code || '').startsWith('1'))
+                if (caja) setAccountCode(caja.code || caja.account_code || '')
+            })
+            .catch(() => setCuentasBanco([]))
+    }, [token]) // eslint-disable-line
 
     function handleTransacciones(data, banco, per, saldoIni, saldoFin) {
         setTxns(data.map((t, i) => ({ ...t, id: t.id || `tmp_${i}`, match_estado: 'PENDIENTE' })))
         if (per) setPeriodPage(per)
+        setBancoActual(banco || '')
+        setSaldoSesion({ ini: saldoIni || 0, fin: saldoFin || 0 })
         setStep('review')
         setReconId(null)
         setStats(null)
         setSaldoDiff(null)
+        setCentinelaScore(null)
+        setSaveMsg(null)
     }
 
+    // ── FIX 3: Guardar sesión y transacciones ─────────────────────
+    async function saveSesion() {
+        if (!accountCode) {
+            setSaveMsg({ ok: false, text: 'Selecciona la cuenta contable bancaria primero' })
+            return
+        }
+        setSaving(true); setSaveMsg(null)
+        try {
+            // 1. Crear sesión
+            const r1 = await fetch(`${API}/conciliacion/sesion`, {
+                method: 'POST',
+                headers: authJ(token),
+                body: JSON.stringify({
+                    banco: bancoActual,
+                    period: period,
+                    account_code: accountCode,
+                    saldo_inicial: saldoSesion.ini,
+                    saldo_final: saldoSesion.fin,
+                }),
+            })
+            const d1 = await r1.json()
+            if (!r1.ok) throw new Error(d1.detail || 'Error creando sesión')
+            const rId = d1.recon_id
+
+            // 2. Insertar transacciones en bulk
+            const r2 = await fetch(`${API}/conciliacion/sesion/${rId}/transactions`, {
+                method: 'POST',
+                headers: authJ(token),
+                body: JSON.stringify({
+                    transactions: txns.map(t => ({
+                        fecha: t.fecha,
+                        descripcion: t.descripcion,
+                        monto: t.monto,
+                        tipo: t.tipo,
+                        moneda: t.moneda || 'CRC',
+                        telefono: t.telefono || null,
+                        monto_orig_usd: t.monto_orig_usd || null,
+                        tc_bccr: t.tc_bccr || null,
+                    })),
+                }),
+            })
+            const d2 = await r2.json()
+            if (!r2.ok) throw new Error(d2.detail || 'Error guardando transacciones')
+
+            setReconId(rId)
+            setSaveMsg({ ok: true, text: `✅ ${d2.total_insertadas} transacciones guardadas. Listo para conciliar.` })
+        } catch (e) {
+            setSaveMsg({ ok: false, text: String(e.message || e) })
+        }
+        setSaving(false)
+    }
+
+    // ── FIX 4: Matching + auto-CENTINELA ─────────────────────────
     async function runMatch() {
         if (!reconId) {
-            setMatchMsg({ ok: false, text: 'Guarda las transacciones primero' })
+            setMatchMsg({ ok: false, text: '💾 Guarda las transacciones primero (botón arriba)' })
             return
         }
         setMatching(true); setMatchMsg(null)
         try {
+            // Match vs Libro Diario
             const r = await fetch(`${API}/conciliacion/match/${reconId}`, {
                 method: 'POST', headers: authH(token)
             })
@@ -606,6 +704,17 @@ export default function Conciliacion() {
                 setSaldoDiff(d.saldo_diff)
                 setStep('done')
                 setMatchMsg({ ok: true, text: `Matching completado — ${d.stats.conciliados} conciliados` })
+
+                // Auto-CENTINELA: enriquecer resultados con análisis fiscal
+                try {
+                    const rc = await fetch(`${API}/centinela/analyze/${reconId}`, {
+                        method: 'POST', headers: authH(token)
+                    })
+                    if (rc.ok) {
+                        const dc = await rc.json()
+                        setCentinelaScore(dc.score)
+                    }
+                } catch (_) { /* CENTINELA falla silenciosamente, el matching ya está guardado */ }
             } else {
                 setMatchMsg({ ok: false, text: d.detail || 'Error en matching' })
             }
@@ -614,7 +723,6 @@ export default function Conciliacion() {
     }
 
     function handleApprove(txn) {
-        // Abre modal de asiento — fase siguiente
         alert(`Crear asiento para: ${txn.descripcion}\nMonto: ${formatCRC(txn.monto)}`)
     }
 
@@ -678,7 +786,7 @@ export default function Conciliacion() {
                 </div>
             )}
 
-            {/* PASO 2: Revisar */}
+            {/* PASO 2: Revisar + Guardar sesión */}
             {step === 'review' && (
                 <div style={cardStyle}>
                     <div style={{ ...cardHeader, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -689,11 +797,64 @@ export default function Conciliacion() {
                                     {matchMsg.text}
                                 </span>
                             )}
-                            <button onClick={runMatch} disabled={matching} style={btnPrimary}>
+                            <button
+                                onClick={runMatch}
+                                disabled={matching || !reconId}
+                                title={!reconId ? 'Guarda las transacciones primero' : ''}
+                                style={{ ...btnPrimary, opacity: reconId ? 1 : 0.45 }}
+                            >
                                 {matching ? '⏳ Analizando...' : '⚖️ Conciliar vs Libro Diario'}
                             </button>
                         </div>
                     </div>
+
+                    {/* Panel de guardar sesión */}
+                    <div style={{
+                        padding: '12px 20px',
+                        background: reconId ? 'rgba(16,185,129,0.06)' : 'rgba(59,130,246,0.06)',
+                        borderBottom: '1px solid var(--border-color)',
+                        display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap',
+                    }}>
+                        <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', fontWeight: 600 }}>
+                            {reconId ? '✅ Guardado' : '💾 Cuenta contable bancaria:'}
+                        </div>
+                        {!reconId && (
+                            <>
+                                <select
+                                    value={accountCode}
+                                    onChange={e => setAccountCode(e.target.value)}
+                                    style={{ ...inputStyle, width: 'auto', minWidth: 200, flex: 1, maxWidth: 340 }}
+                                >
+                                    {cuentasBanco.length === 0 && (
+                                        <option value=''>Cargando cuentas...</option>
+                                    )}
+                                    {cuentasBanco.map(c => (
+                                        <option key={c.code || c.account_code} value={c.code || c.account_code}>
+                                            {c.code || c.account_code} — {c.name}
+                                        </option>
+                                    ))}
+                                </select>
+                                <button
+                                    onClick={saveSesion}
+                                    disabled={saving || !accountCode}
+                                    style={{ ...btnPrimary, background: '#2563eb', whiteSpace: 'nowrap' }}
+                                >
+                                    {saving ? '⏳ Guardando...' : '💾 Guardar en contabilidad'}
+                                </button>
+                            </>
+                        )}
+                        {reconId && (
+                            <span style={{ fontSize: '0.78rem', color: '#16a34a' }}>
+                                {txns.length} transacciones en DB · Cuenta: {accountCode} · Listo para conciliar ⚖️
+                            </span>
+                        )}
+                        {saveMsg && (
+                            <span style={{ fontSize: '0.78rem', color: saveMsg.ok ? '#16a34a' : '#dc2626', flex: '100%' }}>
+                                {saveMsg.text}
+                            </span>
+                        )}
+                    </div>
+
                     <div style={{ padding: '16px 20px' }}>
                         <TxnTable txns={txns} onApprove={handleApprove} />
                     </div>
@@ -722,15 +883,36 @@ export default function Conciliacion() {
 
                     <StatsBar stats={stats} saldoDiff={saldoDiff} />
 
+                    {/* Score CENTINELA auto-generado */}
+                    {centinelaScore && (
+                        <div style={{
+                            ...cardStyle, marginBottom: 16, padding: '14px 20px',
+                            background: centinelaScore.score_total >= 80 ? 'rgba(239,68,68,0.08)' : 'rgba(16,185,129,0.07)',
+                            borderColor: centinelaScore.score_total >= 80 ? '#dc2626' : '#10b981',
+                        }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
+                                <span style={{ fontWeight: 700, fontSize: '0.88rem' }}>🛡️ CENTINELA Fiscal</span>
+                                <span style={{
+                                    fontSize: '1.2rem', fontWeight: 800,
+                                    color: centinelaScore.score_total >= 80 ? '#dc2626' : '#10b981',
+                                }}>
+                                    Score: {centinelaScore.score_total} / 100
+                                </span>
+                                {[['A', centinelaScore.fugas_tipo_a], ['B', centinelaScore.fugas_tipo_b], ['C', centinelaScore.fugas_tipo_c]].map(([tipo, n]) => n > 0 && (
+                                    <span key={tipo} style={{ fontSize: '0.78rem', color: '#dc2626' }}>
+                                        Fuga {tipo}: {n}
+                                    </span>
+                                ))}
+                                <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginLeft: 'auto' }}>
+                                    Exposición IVA: ₡{Math.round(centinelaScore.exposicion_iva || 0).toLocaleString()}
+                                </span>
+                            </div>
+                        </div>
+                    )}
+
                     <div style={cardStyle}>
                         <div style={{ ...cardHeader, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                             <span>📋 Detalle de transacciones</span>
-                            <a
-                                href={reconId ? `${API}/centinela/analyze/${reconId}` : '#'}
-                                style={{ ...btnAccent, textDecoration: 'none', fontSize: '0.8rem', padding: '5px 14px' }}
-                            >
-                                🛡️ Analizar con CENTINELA
-                            </a>
                         </div>
                         <div style={{ padding: '16px 20px' }}>
                             <TxnTable txns={txns} onApprove={handleApprove} />

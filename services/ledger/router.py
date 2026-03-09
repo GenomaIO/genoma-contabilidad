@@ -616,6 +616,59 @@ def revert_to_draft(
 
 
 # ─────────────────────────────────────────────────────────────────
+# GET /ledger/accounts — Catálogo de cuentas del tenant
+# ─────────────────────────────────────────────────────────────────
+
+@router.get("/accounts")
+def list_accounts(
+    account_type: Optional[str] = Query(None, description="Filtrar por tipo: ACTIVO, PASIVO, PATRIMONIO, INGRESO, GASTO"),
+    is_active:    bool          = Query(True, description="Solo cuentas activas (default: True)"),
+    current_user: dict = Depends(get_current_user),
+    db:           Session = Depends(get_session),
+):
+    """
+    Devuelve el catálogo de cuentas contables del tenant.
+    Usado por la conciliación bancaria para seleccionar la cuenta de banco.
+    """
+    tenant_id = current_user["tenant_id"]
+    try:
+        query = "SELECT code, name, account_type, es_reguladora, allow_entries FROM accounts WHERE tenant_id = :tid AND is_active = :active"
+        params = {"tid": tenant_id, "active": is_active}
+
+        if account_type:
+            query += " AND account_type = :atype"
+            params["atype"] = account_type.upper()
+
+        query += " ORDER BY code"
+        rows = db.execute(text(query), params).fetchall()
+
+        return [
+            {
+                "code":          r.code,
+                "name":          r.name,
+                "account_type":  r.account_type,
+                "es_reguladora": bool(r.es_reguladora) if hasattr(r, 'es_reguladora') else False,
+                "allow_entries": bool(r.allow_entries)  if hasattr(r, 'allow_entries')  else True,
+            }
+            for r in rows
+        ]
+    except Exception as e:
+        # Fallback sin columna es_reguladora (migración pendiente)
+        try:
+            db.rollback()
+            query2 = "SELECT code, name, account_type FROM accounts WHERE tenant_id = :tid AND is_active = :active"
+            params2 = {"tid": tenant_id, "active": is_active}
+            if account_type:
+                query2 += " AND account_type = :atype"
+                params2["atype"] = account_type.upper()
+            query2 += " ORDER BY code"
+            rows2 = db.execute(text(query2), params2).fetchall()
+            return [{"code": r.code, "name": r.name, "account_type": r.account_type} for r in rows2]
+        except Exception:
+            return []
+
+
+# ─────────────────────────────────────────────────────────────────
 # GET /ledger/entries — Listar asientos del período
 # ─────────────────────────────────────────────────────────────────
 
