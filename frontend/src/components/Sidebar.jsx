@@ -29,8 +29,8 @@ const NAV_ITEMS = [
         defaultOpen: true,
         items: [
             { icon: '🔗', label: 'Facturador', path: '/integracion' },
-            { icon: '🔄', label: 'Asientos Internos', path: '/asientos' },
         ]
+
     },
     {
         section: 'Auxiliares',
