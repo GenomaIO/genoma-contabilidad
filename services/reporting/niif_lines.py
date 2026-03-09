@@ -271,17 +271,50 @@ def seed_standard_mapping(tenant_id: str, db: Session) -> int:
 
 def fix_existing_mappings(tenant_id: str, db: Session) -> int:
     """
-    Corrige mapeos NIIF existentes que pudieran haberse sembrado con el
-    STANDARD_AUTO_MAPPING anterior (incorrecto para el catalógo standard_cr Genoma).
+    Corrige mapeos NIIF existentes que pudieran haberse sembrado incorrectamente.
 
-    Correcciones clave:
-      1201 ESF.AC.02 → ESF.ANC.01  (PPE, no CxC)
-      1202 ESF.AC.02 → ESF.ANC.01 + is_contra=True (Dep. Acumulada)
+    El seeder usa `if existing: continue` (idempotente-solo-inserción), por lo tanto
+    si la tabla STANDARD_AUTO_MAPPING tenía un valor incorrecto cuando se sembró,
+    el registro en DB queda mal para siempre. Esta función los corrige al restart.
+
+    Correcciones aplicadas (versión completa v2):
+      ── Activo No Corriente ──
+      1201 → ESF.ANC.01  (PPE: Vehículos, Terrenos, Edificios, Maquinaria)
+      1202 → ESF.ANC.01  (Depreciación Acumulada PPE — contra-cuenta)
+      1203 → ESF.ANC.03  (Intangibles: Software, Marcas, Patentes)
+      1204 → ESF.ANC.05  (Inversiones en asociadas)
+      1205 → ESF.ANC.07  (Otros activos no corrientes: CxC LP, Efectos LP)
+      1601 → ESF.ANC.03  (Software / intangibles serie 16xx)
+      1602 → ESF.ANC.03  (Marcas y patentes)
+      1690 → ESF.ANC.03  (Amortización acumulada intangibles — contra)
+      1701 → ESF.ANC.06  (Activo por ISR diferido)
+      1107 → ESF.AC.02   (Documentos por Cobrar CP — corriente, no LP)
+      ── Pasivo No Corriente ──
+      2201 → ESF.PNC.01  (Préstamos bancarios LP)
+      2202 → ESF.PNC.03  (Provisión aguinaldo/cesantía LP)
+      2203 → ESF.PNC.04  (Otros pasivos no corrientes)
+      2701 → ESF.PNC.02  (Pasivo por ISR diferido)
     """
     CORRECTIONS = [
-        # (account_code, new_niif_line, is_contra)
-        ("1201", "ESF.ANC.01", False),   # PPE raiz
-        ("1202", "ESF.ANC.01", True),    # Dep. Acumulada (contra)
+        # (account_code, new_niif_line_code, is_contra)
+        # ── Activo No Corriente (PPE y familia) ──────────────
+        ("1201", "ESF.ANC.01", False),   # PPE: Vehículos, Terrenos, Edificios
+        ("1202", "ESF.ANC.01", True),    # Depreciación Acumulada PPE (contra)
+        ("1203", "ESF.ANC.03", False),   # Intangibles adquiridos
+        ("1204", "ESF.ANC.05", False),   # Inversiones en asociadas
+        ("1205", "ESF.ANC.07", False),   # Otros A. No Corrientes (CxC LP)
+        ("1107", "ESF.AC.02",  False),   # Documentos por Cobrar CP
+        # ── Intangibles serie 16xx ────────────────────────────
+        ("1601", "ESF.ANC.03", False),   # Software
+        ("1602", "ESF.ANC.03", False),   # Marcas y patentes
+        ("1690", "ESF.ANC.03", True),    # Amortización acumulada intangibles
+        # ── Activo diferido / ISR ─────────────────────────────
+        ("1701", "ESF.ANC.06", False),   # Activo por ISR diferido
+        # ── Pasivo No Corriente ───────────────────────────────
+        ("2201", "ESF.PNC.01", False),   # Préstamos bancarios LP
+        ("2202", "ESF.PNC.03", False),   # Provisión LP (aguinaldo/cesantía)
+        ("2203", "ESF.PNC.04", False),   # Otros pasivos no corrientes
+        ("2701", "ESF.PNC.02", False),   # Pasivo por ISR diferido
     ]
     updated = 0
     for acc_code, niif_code, is_contra in CORRECTIONS:
