@@ -756,19 +756,22 @@ export default function Conciliacion() {
             {/* Steps indicator */}
             <div style={{ display: 'flex', gap: 0, marginBottom: 24, background: 'var(--bg-card)', borderRadius: 12, overflow: 'hidden', border: '1px solid var(--border)' }}>
                 {[
-                    { k: 'upload', n: 1, label: 'Cargar archivo' },
-                    { k: 'review', n: 2, label: 'Revisar transacciones' },
-                    { k: 'done', n: 3, label: 'Resultado conciliación' },
+                    { k: 'upload', n: 1, icon: '📂', label: 'Cargar archivo', sub: 'Estado de cuenta bancario' },
+                    { k: 'review', n: 2, icon: '🔗', label: 'Vincular & revisar', sub: 'Asignar cuenta contable' },
+                    { k: 'done', n: 3, icon: '⚖️', label: 'Resultado conciliación', sub: 'Diferencias vs Libro Diario' },
                 ].map((s, i, arr) => (
                     <div key={s.k} style={{
                         flex: 1, padding: '10px 16px', textAlign: 'center',
                         background: step === s.k ? 'var(--accent)' : 'transparent',
                         color: step === s.k ? '#fff' : 'var(--text-muted)',
-                        fontSize: '0.8rem', fontWeight: step === s.k ? 700 : 400,
                         borderRight: i < arr.length - 1 ? '1px solid var(--border)' : 'none',
                         transition: 'all 0.2s',
                     }}>
-                        <span style={{ opacity: 0.7, marginRight: 6 }}>{s.n}.</span>{s.label}
+                        <div style={{ fontSize: '1rem', marginBottom: 2 }}>{s.icon}</div>
+                        <div style={{ fontSize: '0.78rem', fontWeight: step === s.k ? 700 : 500 }}>
+                            <span style={{ opacity: 0.6, marginRight: 4 }}>{s.n}.</span>{s.label}
+                        </div>
+                        <div style={{ fontSize: '0.68rem', opacity: 0.65, marginTop: 1 }}>{s.sub}</div>
                     </div>
                 ))}
             </div>
@@ -786,44 +789,36 @@ export default function Conciliacion() {
                 </div>
             )}
 
-            {/* PASO 2: Revisar + Guardar sesión */}
+            {/* PASO 2: Vincular & Conciliar */}
             {step === 'review' && (
                 <div style={cardStyle}>
-                    <div style={{ ...cardHeader, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                        <span>📋 Paso 2 — Revisar {txns.length} transacciones</span>
-                        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                            {matchMsg && (
-                                <span style={{ fontSize: '0.78rem', color: matchMsg.ok ? '#16a34a' : '#dc2626' }}>
-                                    {matchMsg.text}
-                                </span>
-                            )}
-                            <button
-                                onClick={runMatch}
-                                disabled={matching || !reconId}
-                                title={!reconId ? 'Guarda las transacciones primero' : ''}
-                                style={{ ...btnPrimary, opacity: reconId ? 1 : 0.45 }}
-                            >
-                                {matching ? '⏳ Analizando...' : '⚖️ Conciliar vs Libro Diario'}
-                            </button>
-                        </div>
+                    <div style={cardHeader}>
+                        📋 Paso 2 — {txns.length} transacciones del banco listas para conciliar
                     </div>
 
-                    {/* Panel de guardar sesión */}
+                    {/* ── Sub-pasos A y B ───────────────────────────────────────── */}
                     <div style={{
-                        padding: '12px 20px',
-                        background: reconId ? 'rgba(16,185,129,0.06)' : 'rgba(59,130,246,0.06)',
+                        display: 'grid',
+                        gridTemplateColumns: reconId ? '1fr' : 'auto 1fr auto',
+                        gap: 0,
                         borderBottom: '1px solid var(--border-color)',
-                        display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap',
+                        background: reconId ? 'rgba(16,185,129,0.06)' : 'var(--bg-secondary)',
                     }}>
-                        <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', fontWeight: 600 }}>
-                            {reconId ? '✅ Sesión iniciada' : '🔗 Cuenta bancaria en el libro:'}
-                        </div>
+
+                        {/* ── A: Seleccionar cuenta contable ─────────────────────── */}
                         {!reconId && (
-                            <>
+                            <div style={{
+                                padding: '14px 20px',
+                                borderRight: '1px solid var(--border-color)',
+                                display: 'flex', flexDirection: 'column', gap: 6, minWidth: 280,
+                            }}>
+                                <div style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                                    A  ·  ¿Cuál cuenta del Libro registra este banco?
+                                </div>
                                 <select
                                     value={accountCode}
                                     onChange={e => setAccountCode(e.target.value)}
-                                    style={{ ...inputStyle, width: 'auto', minWidth: 200, flex: 1, maxWidth: 340 }}
+                                    style={{ ...inputStyle }}
                                 >
                                     {cuentasBanco.length === 0 && (
                                         <option value=''>Cargando cuentas...</option>
@@ -834,29 +829,86 @@ export default function Conciliacion() {
                                         </option>
                                     ))}
                                 </select>
-                                <button
-                                    onClick={saveSesion}
-                                    disabled={saving || !accountCode}
-                                    style={{ ...btnPrimary, background: '#2563eb', whiteSpace: 'nowrap' }}
-                                    title="Registra las transacciones bancarias en la DB para poder compararlas con el libro diario. NO crea asientos contables."
-                                >
-                                    {saving ? '⏳ Preparando...' : '🔗 Iniciar conciliación'}
-                                </button>
-                                <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', flex: '100%' }}>
-                                    ℹ️ Esto NO crea asientos — registra las transacciones del banco para compararlas con tu cuenta {accountCode || ''}
-                                </span>
-                            </>
+                                <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+                                    Ej: 1101.01 Caja General · 1101.02 BAC Colones
+                                </div>
+                                {saveMsg && saveMsg.ok === false && (
+                                    <div style={{ fontSize: '0.75rem', color: '#dc2626', marginTop: 2 }}>
+                                        {saveMsg.text}
+                                    </div>
+                                )}
+                            </div>
                         )}
-                        {reconId && (
-                            <span style={{ fontSize: '0.78rem', color: '#16a34a' }}>
-                                {txns.length} transacciones listas para comparar · Cuenta: {accountCode} · Presiona Conciliar ⚖️
-                            </span>
+
+                        {/* ── Flecha central (solo cuando aún no hay sesión) ──────── */}
+                        {!reconId && (
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 12px', color: 'var(--text-muted)', fontSize: '1.2rem' }}>
+                                →
+                            </div>
                         )}
-                        {saveMsg && saveMsg.ok === false && (
-                            <span style={{ fontSize: '0.78rem', color: '#dc2626', flex: '100%' }}>
-                                {saveMsg.text}
-                            </span>
-                        )}
+
+                        {/* ── B: Botones de acción ────────────────────────────────── */}
+                        <div style={{
+                            padding: '14px 20px',
+                            display: 'flex', flexDirection: 'column', gap: 8, justifyContent: 'center',
+                            flex: 1,
+                        }}>
+                            {reconId ? (
+                                /* Sesión ya creada: mostrar resumen y botón conciliar */
+                                <>
+                                    <div style={{ fontSize: '0.82rem', color: '#16a34a', fontWeight: 700 }}>
+                                        ✅ Sesión de conciliación registrada
+                                    </div>
+                                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                                        {txns.length} transacciones del banco · Cuenta: <strong>{accountCode}</strong>
+                                    </div>
+                                    <div>
+                                        <button
+                                            onClick={runMatch}
+                                            disabled={matching}
+                                            style={{ ...btnPrimary, marginTop: 4 }}
+                                        >
+                                            {matching ? '⏳ Analizando...' : '⚖️ Conciliar vs Libro Diario'}
+                                        </button>
+                                        {matchMsg && (
+                                            <span style={{ marginLeft: 12, fontSize: '0.78rem', color: matchMsg.ok ? '#16a34a' : '#dc2626' }}>
+                                                {matchMsg.text}
+                                            </span>
+                                        )}
+                                    </div>
+                                </>
+                            ) : (
+                                /* Aún no hay sesión: mostrar botón de guardar */
+                                <>
+                                    <div style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                                        B  ·  Registrar & comparar contra el Libro
+                                    </div>
+                                    <button
+                                        onClick={saveSesion}
+                                        disabled={saving || !accountCode}
+                                        style={{ ...btnPrimary, background: '#2563eb', alignSelf: 'flex-start' }}
+                                    >
+                                        {saving ? '⏳ Guardando...' : '🔗 Registrar sesión de conciliación'}
+                                    </button>
+                                    <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+                                        Guarda las {txns.length} transacciones bancarias vinculadas a la cuenta {accountCode || '—'} para compararlas con el Libro Diario.
+                                        <br />⚠️ <em>No crea asientos contables</em> — solo registra el estado de cuenta para el cruce.
+                                    </div>
+                                    <div style={{ marginTop: 4 }}>
+                                        <button
+                                            disabled
+                                            style={{ ...btnPrimary, opacity: 0.35, cursor: 'not-allowed' }}
+                                            title="Primero debes registrar la sesión (paso B)"
+                                        >
+                                            ⚖️ Conciliar vs Libro Diario
+                                        </button>
+                                        <span style={{ marginLeft: 8, fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                                            Se habilita después del paso B
+                                        </span>
+                                    </div>
+                                </>
+                            )}
+                        </div>
                     </div>
 
                     <div style={{ padding: '16px 20px' }}>
