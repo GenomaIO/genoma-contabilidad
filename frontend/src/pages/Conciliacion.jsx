@@ -267,8 +267,20 @@ function TxnTable({ txns, onApprove }) {
 }
 
 /* ── Estadísticas de la conciliación ────────────────────────────────── */
-function StatsBar({ stats, saldoDiff }) {
+function StatsBar({ stats, saldoDiff, txns = [] }) {
     if (!stats) return null
+
+    const [open, setOpen] = useState(null) // key del popoever abierto
+
+    // Mapa de qué transacciones muestra cada card
+    const TXN_FILTER = {
+        'Total banco': () => txns,
+        '✅ CON FE': t => t.match_estado === 'CON_FE' || t.match_estado === 'CONCILIADO',
+        '🔴 SIN FE': t => t.match_estado === 'SIN_FE' || t.match_estado === 'SIN_ASIENTO',
+        '🟡 Probable': t => t.match_estado === 'PROBABLE',
+        '📚 Solo libros': () => [], // vienen del backend, no están en txns
+    }
+
     const items = [
         { label: 'Total banco', value: stats.total_banco, color: 'var(--text-primary)' },
         { label: '✅ CON FE', value: stats.con_fe ?? stats.conciliados ?? 0, color: '#16a34a' },
@@ -276,17 +288,123 @@ function StatsBar({ stats, saldoDiff }) {
         { label: '🟡 Probable', value: stats.probable ?? stats.probables ?? 0, color: '#d97706' },
         { label: '📚 Solo libros', value: stats.solo_libros ?? 0, color: '#7c3aed' },
     ]
+
+    function toggleCard(label) {
+        setOpen(p => p === label ? null : label)
+    }
+
+    // Cerrar al clicar fuera
+    useEffect(() => {
+        if (!open) return
+        const close = () => setOpen(null)
+        document.addEventListener('click', close)
+        return () => document.removeEventListener('click', close)
+    }, [open])
+
     return (
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 20 }}>
-            {items.map(it => (
-                <div key={it.label} style={{
-                    flex: 1, minWidth: 100, background: 'var(--bg-card)', border: '1px solid var(--border)',
-                    borderRadius: 10, padding: '12px 16px', textAlign: 'center',
-                }}>
-                    <div style={{ fontSize: '1.6rem', fontWeight: 800, color: it.color }}>{it.value}</div>
-                    <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: 2 }}>{it.label}</div>
-                </div>
-            ))}
+            {items.map(it => {
+                const filterFn = TXN_FILTER[it.label]
+                const rows = typeof filterFn === 'function'
+                    ? (it.label === 'Total banco' ? txns : txns.filter(filterFn))
+                    : []
+                const isOpen = open === it.label
+
+                return (
+                    <div key={it.label} style={{ flex: 1, minWidth: 100, position: 'relative' }}>
+                        {/* Card clicable */}
+                        <div
+                            onClick={e => { e.stopPropagation(); toggleCard(it.label) }}
+                            style={{
+                                background: isOpen ? 'var(--bg-3)' : 'var(--bg-card)',
+                                border: `1px solid ${isOpen ? it.color : 'var(--border)'}`,
+                                borderRadius: 10, padding: '12px 16px', textAlign: 'center',
+                                cursor: rows.length > 0 ? 'pointer' : 'default',
+                                transition: 'all 0.15s',
+                                userSelect: 'none',
+                            }}
+                        >
+                            <div style={{ fontSize: '1.6rem', fontWeight: 800, color: it.color }}>
+                                {it.value}
+                            </div>
+                            <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: 2 }}>
+                                {it.label}
+                            </div>
+                            {rows.length > 0 && (
+                                <div style={{ fontSize: '0.6rem', color: it.color, marginTop: 3, opacity: 0.75 }}>
+                                    {isOpen ? '▲ cerrar' : '▼ ver detalle'}
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Popover */}
+                        {isOpen && rows.length > 0 && (
+                            <div
+                                onClick={e => e.stopPropagation()}
+                                style={{
+                                    position: 'absolute', top: 'calc(100% + 8px)', left: '50%',
+                                    transform: 'translateX(-50%)',
+                                    zIndex: 1000, minWidth: 320, maxWidth: 420,
+                                    background: 'var(--bg-card)',
+                                    border: `1px solid ${it.color}44`,
+                                    borderRadius: 10, boxShadow: '0 8px 32px rgba(0,0,0,0.45)',
+                                    overflow: 'hidden',
+                                }}
+                            >
+                                {/* Header del popover */}
+                                <div style={{
+                                    padding: '8px 14px', background: `${it.color}15`,
+                                    borderBottom: `1px solid ${it.color}33`,
+                                    fontSize: '0.75rem', fontWeight: 700, color: it.color,
+                                    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                                }}>
+                                    <span>{it.label} — {rows.length} transacciones</span>
+                                    <button onClick={() => setOpen(null)} style={{
+                                        background: 'none', border: 'none', color: it.color,
+                                        cursor: 'pointer', fontSize: '0.9rem', padding: '0 4px',
+                                    }}>✕</button>
+                                </div>
+                                {/* Lista de transacciones */}
+                                <div style={{ maxHeight: 280, overflowY: 'auto' }}>
+                                    {rows.slice(0, 20).map((t, i) => (
+                                        <div key={t.id || i} style={{
+                                            padding: '7px 14px',
+                                            borderBottom: '1px solid var(--border)',
+                                            display: 'flex', justifyContent: 'space-between',
+                                            alignItems: 'center', gap: 8, fontSize: '0.75rem',
+                                        }}>
+                                            <div style={{ flex: 1, overflow: 'hidden' }}>
+                                                <div style={{
+                                                    color: 'var(--text-primary)',
+                                                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                                                }}>{t.descripcion}</div>
+                                                <div style={{ color: 'var(--text-muted)', fontSize: '0.68rem', marginTop: 1 }}>
+                                                    {t.fecha}
+                                                    {t.fe_numero && <span style={{ marginLeft: 6, color: '#16a34a' }}>FE: {String(t.fe_numero).slice(0, 20)}</span>}
+                                                    {t.fuga_tipo && <span style={{ marginLeft: 6, color: '#dc2626' }}>Tipo {t.fuga_tipo}</span>}
+                                                </div>
+                                            </div>
+                                            <div style={{
+                                                fontWeight: 700, whiteSpace: 'nowrap',
+                                                color: t.tipo === 'CR' ? '#16a34a' : '#dc2626',
+                                                fontSize: '0.78rem',
+                                            }}>
+                                                {t.tipo === 'CR' ? '+' : '-'}{formatCRC(t.monto_crc || t.monto)}
+                                            </div>
+                                        </div>
+                                    ))}
+                                    {rows.length > 20 && (
+                                        <div style={{ padding: '7px 14px', fontSize: '0.7rem', color: 'var(--text-muted)', textAlign: 'center' }}>
+                                            … y {rows.length - 20} más. Usa la tabla de abajo para ver todas.
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                )
+            })}
+
             {saldoDiff && (
                 <div style={{
                     flex: 2, minWidth: 200, background: 'var(--bg-card)', border: '1px solid var(--border)',
@@ -294,7 +412,6 @@ function StatsBar({ stats, saldoDiff }) {
                 }}>
                     <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginBottom: 4, display: 'flex', alignItems: 'center', gap: 4 }}>
                         Diferencia saldo
-                        {/* 💡 Tooltip explicativo — hover */}
                         <div style={{ position: 'relative', display: 'inline-flex' }}
                             onMouseEnter={e => e.currentTarget.querySelector('.diff-tip').style.display = 'block'}
                             onMouseLeave={e => e.currentTarget.querySelector('.diff-tip').style.display = 'none'}
@@ -328,12 +445,12 @@ function StatsBar({ stats, saldoDiff }) {
                     <div style={{ fontWeight: 700, color: saldoDiff.estado === 'CUADRADO' ? '#16a34a' : '#dc2626' }}>
                         {saldoDiff.observacion}
                     </div>
-
                 </div>
             )}
         </div>
     )
 }
+
 
 /* ── Upload de archivo ───────────────────────────────────────────────── */
 function FileUploader({ token, onTransacciones, onPeriodChange }) {
@@ -1150,7 +1267,7 @@ export default function Conciliacion() {
                         </div>
                     </div>
 
-                    <StatsBar stats={stats} saldoDiff={saldoDiff} />
+                    <StatsBar stats={stats} saldoDiff={saldoDiff} txns={txns} />
 
                     {/* Score CENTINELA auto-generado */}
                     {centinelaScore && (
