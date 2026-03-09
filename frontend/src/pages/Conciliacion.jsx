@@ -267,18 +267,18 @@ function TxnTable({ txns, onApprove }) {
 }
 
 /* ── Estadísticas de la conciliación ────────────────────────────────── */
-function StatsBar({ stats, saldoDiff, txns = [] }) {
+function StatsBar({ stats, saldoDiff, txns = [], soloLibros = [] }) {
     if (!stats) return null
 
     const [open, setOpen] = useState(null) // key del popoever abierto
 
-    // Mapa de qué transacciones muestra cada card
+    // Mapa de qué filas muestra cada card
     const TXN_FILTER = {
         'Total banco': () => txns,
         '✅ CON FE': t => t.match_estado === 'CON_FE' || t.match_estado === 'CONCILIADO',
         '🔴 SIN FE': t => t.match_estado === 'SIN_FE' || t.match_estado === 'SIN_ASIENTO',
         '🟡 Probable': t => t.match_estado === 'PROBABLE',
-        '📚 Solo libros': () => [], // vienen del backend, no están en txns
+        '📚 Solo libros': null,  // usa soloLibros directamente (ver abajo)
     }
 
     const items = [
@@ -304,10 +304,14 @@ function StatsBar({ stats, saldoDiff, txns = [] }) {
     return (
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 20 }}>
             {items.map(it => {
+                // Solo libros usa el array de asientos directamente
+                const isSoloLibros = it.label === '📚 Solo libros'
                 const filterFn = TXN_FILTER[it.label]
-                const rows = typeof filterFn === 'function'
-                    ? (it.label === 'Total banco' ? txns : txns.filter(filterFn))
-                    : []
+                const rows = isSoloLibros
+                    ? soloLibros
+                    : typeof filterFn === 'function'
+                        ? (it.label === 'Total banco' ? txns : txns.filter(filterFn))
+                        : []
                 const isOpen = open === it.label
 
                 return (
@@ -364,38 +368,57 @@ function StatsBar({ stats, saldoDiff, txns = [] }) {
                                         cursor: 'pointer', fontSize: '0.9rem', padding: '0 4px',
                                     }}>✕</button>
                                 </div>
-                                {/* Lista de transacciones */}
+                                {/* Lista de rows: formato especial para asientos de Solo Libros */}
                                 <div style={{ maxHeight: 280, overflowY: 'auto' }}>
-                                    {rows.slice(0, 20).map((t, i) => (
-                                        <div key={t.id || i} style={{
-                                            padding: '7px 14px',
-                                            borderBottom: '1px solid var(--border)',
-                                            display: 'flex', justifyContent: 'space-between',
-                                            alignItems: 'center', gap: 8, fontSize: '0.75rem',
-                                        }}>
-                                            <div style={{ flex: 1, overflow: 'hidden' }}>
+                                    {rows.slice(0, 20).map((t, i) => {
+                                        const isSL = isSoloLibros
+                                        // Asientos del Libro Diario: debit/credit ya son columnas
+                                        const debe = parseFloat(t.debit || t.debe || 0)
+                                        const haber = parseFloat(t.credit || t.haber || 0)
+                                        const monto = debe || haber
+                                        const esHaber = haber > 0 && debe === 0
+                                        // Descripción: primeras 38 letras
+                                        const descRaw = isSL
+                                            ? (t.desc_asiento || t.descripcion || t.ref || '—')
+                                            : (t.descripcion || '—')
+                                        const desc = descRaw.length > 42 ? descRaw.slice(0, 40) + '…' : descRaw
+                                        const fecha = (t.fecha || t.entry_date || '').toString().slice(0, 10)
+                                        return (
+                                            <div key={t.id || t.entry_id || i} style={{
+                                                padding: '7px 14px',
+                                                borderBottom: '1px solid var(--border)',
+                                                display: 'flex', justifyContent: 'space-between',
+                                                alignItems: 'center', gap: 8, fontSize: '0.75rem',
+                                            }}>
+                                                <div style={{ flex: 1, overflow: 'hidden' }}>
+                                                    <div style={{
+                                                        color: 'var(--text-primary)',
+                                                        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                                                        fontWeight: isSL ? 500 : 400,
+                                                    }}>{desc}</div>
+                                                    <div style={{ color: 'var(--text-muted)', fontSize: '0.68rem', marginTop: 1, display: 'flex', gap: 8 }}>
+                                                        <span>{fecha}</span>
+                                                        {isSL && t.source && <span style={{ color: '#7c3aed', fontWeight: 600 }}>{t.source}</span>}
+                                                        {!isSL && t.fe_numero && <span style={{ color: '#16a34a' }}>FE: {String(t.fe_numero).slice(0, 20)}</span>}
+                                                        {!isSL && t.fuga_tipo && <span style={{ color: '#dc2626' }}>Tipo {t.fuga_tipo}</span>}
+                                                    </div>
+                                                </div>
                                                 <div style={{
-                                                    color: 'var(--text-primary)',
-                                                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                                                }}>{t.descripcion}</div>
-                                                <div style={{ color: 'var(--text-muted)', fontSize: '0.68rem', marginTop: 1 }}>
-                                                    {t.fecha}
-                                                    {t.fe_numero && <span style={{ marginLeft: 6, color: '#16a34a' }}>FE: {String(t.fe_numero).slice(0, 20)}</span>}
-                                                    {t.fuga_tipo && <span style={{ marginLeft: 6, color: '#dc2626' }}>Tipo {t.fuga_tipo}</span>}
+                                                    fontWeight: 700, whiteSpace: 'nowrap',
+                                                    color: isSL ? (esHaber ? '#16a34a' : '#dc2626') : (t.tipo === 'CR' ? '#16a34a' : '#dc2626'),
+                                                    fontSize: '0.78rem',
+                                                }}>
+                                                    {isSL
+                                                        ? `${esHaber ? '+' : '-'}${monto.toLocaleString('es-CR')}`
+                                                        : `${t.tipo === 'CR' ? '+' : '-'}${formatCRC(t.monto_crc || t.monto)}`
+                                                    }
                                                 </div>
                                             </div>
-                                            <div style={{
-                                                fontWeight: 700, whiteSpace: 'nowrap',
-                                                color: t.tipo === 'CR' ? '#16a34a' : '#dc2626',
-                                                fontSize: '0.78rem',
-                                            }}>
-                                                {t.tipo === 'CR' ? '+' : '-'}{formatCRC(t.monto_crc || t.monto)}
-                                            </div>
-                                        </div>
-                                    ))}
+                                        )
+                                    })}
                                     {rows.length > 20 && (
                                         <div style={{ padding: '7px 14px', fontSize: '0.7rem', color: 'var(--text-muted)', textAlign: 'center' }}>
-                                            … y {rows.length - 20} más. Usa la tabla de abajo para ver todas.
+                                            … y {rows.length - 20} más
                                         </div>
                                     )}
                                 </div>
@@ -755,6 +778,7 @@ export default function Conciliacion() {
     const [centinelaScore, setCentinelaScore] = useState(null)
     const [centinelaConsolMsg, setCentinelaConsolMsg] = useState(null)
     const [centinelaLoading, setCentinelaLoading] = useState(false)
+    const [soloLibros, setSoloLibros] = useState([])  // asientos en libros sin txn bancaria
     const [matching, setMatching] = useState(false)
     const [matchMsg, setMatchMsg] = useState(null)
     const [step, setStep] = useState('upload') // upload | review | done
@@ -904,6 +928,8 @@ export default function Conciliacion() {
             if (r.ok) {
                 setStats(d.stats)
                 setSaldoDiff(d.saldo_diff)
+                // Asientos en libros que no tienen txn bancaria (partidas en tránsito)
+                setSoloLibros(Array.isArray(d.solo_libros) ? d.solo_libros : [])
                 setStep('done')
 
                 // ── Recargar transacciones para actualizar Estado/Conf./Acción ──
@@ -1325,7 +1351,7 @@ export default function Conciliacion() {
                         </div>
                     </div>
 
-                    <StatsBar stats={stats} saldoDiff={saldoDiff} txns={txns} />
+                    <StatsBar stats={stats} saldoDiff={saldoDiff} txns={txns} soloLibros={soloLibros} />
 
                     {/* ── Botón CENTINELA consolidado por período ─────────── */}
                     <div style={{ marginBottom: 16, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
