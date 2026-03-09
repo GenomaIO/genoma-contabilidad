@@ -71,6 +71,35 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning(f"⚠️  Migración A0b omitida: {e}")
 
+        # ── Migración A0c: Terminación de Actividades ──────────────
+        # Campos en fiscal_years para Cierre por Terminación (Art.51 Ley 7092 / NIIF Sec.3.8).
+        # Tenant.terminated_at para marcar fecha de cese.
+        try:
+            with _engine.begin() as conn:
+                conn.execute(text(
+                    "ALTER TABLE fiscal_years ADD COLUMN IF NOT EXISTS "
+                    "termination_date VARCHAR(10) DEFAULT NULL"
+                ))
+                conn.execute(text(
+                    "ALTER TABLE fiscal_years ADD COLUMN IF NOT EXISTS "
+                    "termination_reason VARCHAR(200) DEFAULT NULL"
+                ))
+                conn.execute(text(
+                    "ALTER TABLE fiscal_years ADD COLUMN IF NOT EXISTS "
+                    "termination_by VARCHAR(36) DEFAULT NULL"
+                ))
+                conn.execute(text(
+                    "ALTER TABLE fiscal_years ADD COLUMN IF NOT EXISTS "
+                    "termination_at TIMESTAMP DEFAULT NULL"
+                ))
+                conn.execute(text(
+                    "ALTER TABLE tenants ADD COLUMN IF NOT EXISTS "
+                    "terminated_at TIMESTAMP DEFAULT NULL"
+                ))
+            logger.info("✅ Migración A0c: columnas de terminación agregadas")
+        except Exception as e:
+            logger.warning(f"⚠️  Migración A0c omitida: {e}")
+
 
         # ── Migración A1: tabla accounts (catálogo de cuentas) ────
         # CREATE TABLE IF NOT EXISTS → idempotente.

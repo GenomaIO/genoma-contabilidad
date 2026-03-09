@@ -196,15 +196,17 @@ class JournalLine(Base):
 class FiscalYearStatus(str, enum.Enum):
     """
     Estado del ejercicio fiscal anual.
-    OPEN    : año en curso — meses pueden estar OPEN/CLOSING/CLOSED.
-    CLOSING : el contador inició el proceso de cierre anual.
-    CLOSED  : todos los meses cerrados y cierre anual ejecutado.
-    LOCKED  : cierre anual APROBADO y m periodo inmutable (art. 51 Ley Renta).
+    OPEN       : año en curso — meses pueden estar OPEN/CLOSING/CLOSED.
+    CLOSING    : el contador inició el proceso de cierre anual.
+    CLOSED     : todos los meses cerrados y cierre anual ejecutado.
+    LOCKED     : cierre anual APROBADO y m periodo inmutable (art. 51 Ley Renta).
+    TERMINATED : cierre por terminación de actividades — permanente, no genera apertura.
     """
-    OPEN    = "OPEN"
-    CLOSING = "CLOSING"
-    CLOSED  = "CLOSED"
-    LOCKED  = "LOCKED"
+    OPEN       = "OPEN"
+    CLOSING    = "CLOSING"
+    CLOSED     = "CLOSED"
+    LOCKED     = "LOCKED"
+    TERMINATED = "TERMINATED"   # Cierre definitivo por cese de actividades
 
 
 class FiscalYear(Base):
@@ -244,6 +246,13 @@ class FiscalYear(Base):
 
     # IDs JSON de los 3 asientos de cierre anual
     closing_entries  = Column(Text, nullable=True)   # '["uuid1","uuid2","uuid3"]'
+
+    # ── Terminación de Actividades (NIIF PYMES Sec.3.8 / Art.51 Ley 7092) ──
+    # Solo se pobla cuando status = TERMINATED.
+    termination_date   = Column(String(10),  nullable=True)   # '2026-10-15'
+    termination_reason = Column(String(200), nullable=True)   # motivo libre
+    termination_by     = Column(String(36),  nullable=True)   # user_id
+    termination_at     = Column(DateTime(timezone=True), nullable=True)
 
     created_at  = Column(DateTime(timezone=True), default=now_utc, nullable=False)
 

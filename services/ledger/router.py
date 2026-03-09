@@ -154,6 +154,22 @@ def create_entry(
 
     tenant_id = current_user["tenant_id"]
 
+    # ── Guard: empresa en TERMINACIÓN — libros en modo lectura total ──────
+    # Art. 51 Ley 7092: libros inamovibles tras cese. (MH-DGT-RES-0037-2025)
+    _tenant_row = db.execute(
+        text("SELECT status FROM tenants WHERE id = :tid"),
+        {"tid": tenant_id}
+    ).fetchone()
+    if _tenant_row and _tenant_row[0] == "terminated":
+        raise HTTPException(
+            status_code=423,
+            detail={
+                "error": "EMPRESA_TERMINADA",
+                "message": "Esta empresa está TERMINADA (cese de actividades). "
+                           "Libros en modo SOLO LECTURA. Para reabrir, use POST /ledger/reactivate.",
+            }
+        )
+
     # ── Guard: período bloqueado (art. 51 Ley Renta CR — inalterabilidad) ──
     _ym = req.date[:7]  # 'YYYY-MM'
     _lock = db.execute(
@@ -2012,3 +2028,306 @@ def list_fiscal_years(
                            "closed_at": None, "opening_entry_id": None, "closing_entries": []})
 
     return {"fiscal_years": result, "total": len(result)}
+
+
+# ─────────────────────────────────────────────────────────────────
+# POST /ledger/close-termination — Cierre por Terminación de Actividades
+# ─────────────────────────────────────────────────────────────────
+from pydantic import BaseModel as _BaseModel
+from typing import Optional as _Opt
+
+class TerminationRequest(_BaseModel):
+    year:             str
+    termination_date: str           # 'YYYY-MM-DD' — fecha de cese libre
+    reason:           _Opt[str] = "Terminación de actividades"
+
+class ReactivationRequest(_BaseModel):
+    reactivation_date: str          # 'YYYY-MM-DD' — fecha de nueva inscripción
+    reason:            _Opt[str] = "Reactivación de actividades"
+
+
+@router.post("/close-termination")
+def close_termination(
+    req:          TerminationRequest,
+    current_user: dict    = Depends(get_current_user),
+    db:           Session = Depends(get_session),
+):
+    """
+    Cierre por Terminación de Actividades — Art. 51 Ley 7092 / NIIF PYMES Sec.3.8.
+
+    Diferencias vs close-year:
+    1. La fecha de cierre es libre (no forzosamente Dec 31).
+    2. Solo exige CLOSED los meses con asientos (no los 12).
+    3. NO genera apertura del año siguiente.
+    4. Marca FiscalYear = TERMINATED y Tenant = terminated.
+    """
+    _require_role(current_user["role"], ["admin", "contador"])
+    tenant_id = current_user["tenant_id"]
+    uid = _uid(current_user)
+    now = datetime.now(timezone.utc)
+    import json as _j
+
+    # Validar año
+    try:
+        year_int = int(req.year)
+        if not (2000 <= year_int <= 2100): raise ValueError
+    except ValueError:
+        raise HTTPException(400, f"Año inválido: '{req.year}'")
+
+    # Validar fecha de terminación
+    import re as _re
+    if not _re.match(r"^\d{4}-\d{2}-\d{2}$", req.termination_date):
+        raise HTTPException(400, f"termination_date inválida: '{req.termination_date}'. Use YYYY-MM-DD.")
+
+    term_year = req.termination_date[:4]
+    if term_year != req.year:
+        raise HTTPException(400, f"termination_date ({req.termination_date}) debe ser del año {req.year}.")
+
+    # Guard: no re-terminar
+    existing_fy = db.execute(
+        text("SELECT id, status FROM fiscal_years WHERE tenant_id=:tid AND year=:yr"),
+        {"tid": tenant_id, "yr": req.year}
+    ).fetchone()
+    if existing_fy and existing_fy.status in ("LOCKED", "TERMINATED"):
+        raise HTTPException(409, f"El ejercicio {req.year} ya fue cerrado (status: {existing_fy.status}).")
+
+    # Solo cerrar los meses que tienen asientos (diferencia clave vs cierre anual)
+    term_month = int(req.termination_date[5:7])
+    active_months = []
+    for m in range(1, term_month + 1):
+        ym = f"{req.year}-{str(m).zfill(2)}"
+        count = db.execute(
+            text("SELECT COUNT(*) FROM journal_entries WHERE tenant_id=:tid AND period=:p AND status='POSTED'"),
+            {"tid": tenant_id, "p": ym}
+        ).scalar() or 0
+        if count > 0:
+            pl = db.execute(
+                text("SELECT status FROM period_locks WHERE tenant_id=:tid AND year_month=:ym"),
+                {"tid": tenant_id, "ym": ym}
+            ).fetchone()
+            lock_status = pl.status if pl else "OPEN"
+            active_months.append({"ym": ym, "lock_status": lock_status, "entries": count})
+
+    # Verificar que todos los meses activos estén CLOSED
+    open_active = [m["ym"] for m in active_months if m["lock_status"] != "CLOSED"]
+    if open_active:
+        raise HTTPException(400,
+            f"Períodos con asientos no CLOSED: {', '.join(open_active)}. "
+            "Cierra esos períodos antes de ejecutar la terminación.")
+
+    # ── Calcular saldos nominales del período de terminación ────────
+    rows = db.execute(text("""
+        SELECT jl.account_code, a.account_type, a.name,
+               SUM(jl.debit) - SUM(jl.credit) AS saldo
+        FROM journal_lines jl
+        JOIN journal_entries je ON je.id = jl.entry_id
+        LEFT JOIN accounts a ON a.tenant_id=je.tenant_id AND a.code=jl.account_code
+        WHERE je.tenant_id=:tid AND je.date <= :tdate AND je.status='POSTED'
+          AND a.account_type IN ('INGRESO','GASTO')
+          AND je.source != 'CIERRE_ANUAL'
+        GROUP BY jl.account_code, a.account_type, a.name
+        HAVING ABS(SUM(jl.debit)-SUM(jl.credit)) > 0.00001
+    """), {"tid": tenant_id, "tdate": req.termination_date}).fetchall()
+
+    lines_ing, lines_gas = [], []
+    total_ing = total_gas = 0.0
+    for r in rows:
+        saldo = float(r.saldo or 0)
+        if r.account_type == "INGRESO" and saldo < 0:
+            lines_ing.append({"account_code": r.account_code,
+                              "description": f"Terminación {req.year} ingreso: {r.name}",
+                              "debit": abs(saldo), "credit": 0.0})
+            total_ing += abs(saldo)
+        elif r.account_type == "GASTO" and saldo > 0:
+            lines_gas.append({"account_code": r.account_code,
+                              "description": f"Terminación {req.year} gasto: {r.name}",
+                              "debit": 0.0, "credit": saldo})
+            total_gas += saldo
+
+    net_income = round(total_ing - total_gas, 2)
+    closing_ids = []
+    close_period = req.termination_date[:7]   # 'YYYY-MM'
+    close_date   = req.termination_date        # fecha libre
+
+    def _save_term_entry(desc, all_lines):
+        eid = str(uuid.uuid4())
+        je = JournalEntry(
+            id=eid, tenant_id=tenant_id, period=close_period,
+            date=close_date, description=desc,
+            status=EntryStatus.POSTED, source=EntrySource.CIERRE_ANUAL,
+            created_by=uid, approved_by=uid, approved_at=now, created_at=now)
+        db.add(je)
+        for l in all_lines:
+            db.add(JournalLine(
+                id=str(uuid.uuid4()), entry_id=eid, tenant_id=tenant_id,
+                account_code=l["account_code"].upper(),
+                description=l.get("description", ""),
+                debit=round(float(l.get("debit", 0)), 5),
+                credit=round(float(l.get("credit", 0)), 5),
+                deductible_status=DeductibleStatus.EXEMPT, created_at=now))
+        return eid
+
+    # Asiento A: Ingresos → 3304
+    if lines_ing:
+        closing_ids.append(_save_term_entry(
+            f"Terminación {req.year} — Ingresos a Resumen de Resultado",
+            lines_ing + [{"account_code": "3304", "description": "Resumen de Resultado — Ingresos",
+                          "debit": 0.0, "credit": round(total_ing, 5)}]))
+    # Asiento B: Gastos → 3304
+    if lines_gas:
+        closing_ids.append(_save_term_entry(
+            f"Terminación {req.year} — Gastos a Resumen de Resultado",
+            lines_gas + [{"account_code": "3304", "description": "Resumen de Resultado — Gastos",
+                          "debit": round(total_gas, 5), "credit": 0.0}]))
+    # Asiento C: 3304 → Patrimonio
+    if net_income != 0:
+        if net_income > 0:
+            lc = [{"account_code": "3304", "description": "Cancelar Resumen", "debit": round(net_income, 5), "credit": 0.0},
+                  {"account_code": "3303", "description": f"Utilidad — Terminación {req.year}", "debit": 0.0, "credit": round(net_income, 5)}]
+        else:
+            loss = abs(net_income)
+            lc = [{"account_code": "3302", "description": f"Pérdida — Terminación {req.year}", "debit": round(loss, 5), "credit": 0.0},
+                  {"account_code": "3304", "description": "Cancelar Resumen", "debit": 0.0, "credit": round(loss, 5)}]
+        closing_ids.append(_save_term_entry(f"Terminación {req.year} — Traspaso Patrimonio", lc))
+
+    # ── Upsert FiscalYear como TERMINATED ────────────────────────────
+    ce_json = _j.dumps(closing_ids)
+    if existing_fy:
+        db.execute(text("""
+            UPDATE fiscal_years
+            SET status='TERMINATED', net_income=:ni,
+                closed_by=:uid, closed_at=:ts, locked_by=:uid, locked_at=:ts,
+                closing_entries=:ce, termination_date=:td, termination_reason=:tr,
+                termination_by=:uid, termination_at=:ts
+            WHERE tenant_id=:tid AND year=:yr
+        """), {"ni": net_income, "uid": uid, "ts": now, "ce": ce_json,
+               "td": req.termination_date, "tr": req.reason or "Terminación de actividades",
+               "tid": tenant_id, "yr": req.year})
+    else:
+        db.execute(text("""
+            INSERT INTO fiscal_years
+              (id, tenant_id, year, status, net_income, closed_by, closed_at,
+               locked_by, locked_at, closing_entries, created_at,
+               termination_date, termination_reason, termination_by, termination_at)
+            VALUES (:id,:tid,:yr,'TERMINATED',:ni,:uid,:ts,:uid,:ts,:ce,:ts,:td,:tr,:uid,:ts)
+        """), {"id": str(uuid.uuid4()), "tid": tenant_id, "yr": req.year,
+               "ni": net_income, "uid": uid, "ts": now, "ce": ce_json,
+               "td": req.termination_date, "tr": req.reason or "Terminación de actividades"})
+
+    # ── Marcar tenant como terminated ────────────────────────────────
+    db.execute(text("""
+        UPDATE tenants SET status='terminated', terminated_at=:ts WHERE id=:tid
+    """), {"ts": now, "tid": tenant_id})
+
+    log_action(db, tenant_id, current_user, AuditAction.ENTRY_CREATED,
+        entity_type="fiscal_year", entity_id=req.year,
+        after={"status": "TERMINATED", "net_income": net_income, "termination_date": req.termination_date},
+        note=f"Terminación de actividades {req.year} al {req.termination_date}")
+    db.commit()
+
+    label = "UTILIDAD" if net_income >= 0 else "PÉRDIDA"
+    return {
+        "ok": True,
+        "year": req.year,
+        "status": "TERMINATED",
+        "termination_date": req.termination_date,
+        "reason": req.reason,
+        "net_income": net_income,
+        "result_label": label,
+        "closing_entries": closing_ids,
+        "active_months_closed": [m["ym"] for m in active_months],
+        "legal_reminders": {
+            "rut_desinscripcion": "Desinscripción RUT en TRIBU-CR: 10 días hábiles (MH-DGT-RES-0037-2025)",
+            "d101_final": "D-101 período parcial: 30 días naturales (Art. 51 Ley 7092)",
+            "d104_iva": f"Última D-104 IVA del mes {req.termination_date[:7]}",
+            "d140": "D-140 Notificación cese al Registro de Contribuyentes",
+        },
+        "message": (f"Terminación de actividades {req.year} al {req.termination_date}. "
+                    f"{label}: {abs(net_income):,.2f}. Libros en SOLO LECTURA."),
+        "niif_note": "NIIF PYMES Sec. 3.8 — Empresa no es empresa en marcha.",
+    }
+
+
+# ─────────────────────────────────────────────────────────────────
+# POST /ledger/reactivate — Reactivar empresa tras terminación
+# ─────────────────────────────────────────────────────────────────
+
+@router.post("/reactivate")
+def reactivate_company(
+    req:          ReactivationRequest,
+    current_user: dict    = Depends(get_current_user),
+    db:           Session = Depends(get_session),
+):
+    """
+    Reactiva un tenant en estado TERMINATED.
+
+    Casos de uso:
+    - Persona Física que cesa y vuelve a inscribirse ante Hacienda.
+    - Sociedad Anónima que revoca su disolución (Código de Comercio CR).
+
+    Resultado:
+    - Tenant.status = 'active' nuevamente.
+    - Se crea un nuevo FiscalYear OPEN para el año de reactivación.
+    - Los años anteriores (LOCKED/TERMINATED) permanecen INMUTABLES.
+    """
+    _require_role(current_user["role"], ["admin", "contador"])
+    tenant_id = current_user["tenant_id"]
+    uid = _uid(current_user)
+    now = datetime.now(timezone.utc)
+
+    # Guard: solo puede reactivar TERMINATED
+    tenant_row = db.execute(
+        text("SELECT status FROM tenants WHERE id = :tid"),
+        {"tid": tenant_id}
+    ).fetchone()
+    if not tenant_row or tenant_row[0] != "terminated":
+        raise HTTPException(409,
+            f"Solo se puede reactivar una empresa TERMINATED. Estado actual: {tenant_row[0] if tenant_row else 'N/A'}")
+
+    # Validar fecha
+    import re as _re
+    if not _re.match(r"^\d{4}-\d{2}-\d{2}$", req.reactivation_date):
+        raise HTTPException(400, f"reactivation_date inválida: '{req.reactivation_date}'. Use YYYY-MM-DD.")
+
+    new_year = req.reactivation_date[:4]
+
+    # Guard: no debe existir ya un ejercicio abierto para ese año
+    existing = db.execute(
+        text("SELECT id, status FROM fiscal_years WHERE tenant_id=:tid AND year=:yr"),
+        {"tid": tenant_id, "yr": new_year}
+    ).fetchone()
+    if existing and existing.status not in ("TERMINATED", "LOCKED"):
+        raise HTTPException(409, f"Ya existe un ejercicio {new_year} en estado {existing.status}.")
+
+    # Reactivar tenant
+    db.execute(text("""
+        UPDATE tenants SET status='active', terminated_at=NULL WHERE id=:tid
+    """), {"tid": tenant_id})
+
+    # Crear nuevo FiscalYear OPEN para el año de reactivación
+    new_fy_id = str(uuid.uuid4())
+    db.execute(text("""
+        INSERT INTO fiscal_years
+          (id, tenant_id, year, status, created_at)
+        VALUES (:id, :tid, :yr, 'OPEN', :ts)
+        ON CONFLICT (tenant_id, year) DO UPDATE SET status='OPEN'
+    """), {"id": new_fy_id, "tid": tenant_id, "yr": new_year, "ts": now})
+
+    log_action(db, tenant_id, current_user, AuditAction.ENTRY_CREATED,
+        entity_type="tenant", entity_id=tenant_id,
+        after={"status": "active", "reactivation_date": req.reactivation_date},
+        note=f"Reactivación de empresa desde {req.reactivation_date}: {req.reason}")
+    db.commit()
+
+    return {
+        "ok": True,
+        "status": "active",
+        "reactivation_date": req.reactivation_date,
+        "new_fiscal_year": new_year,
+        "reason": req.reason,
+        "message": (f"Empresa reactivada desde {req.reactivation_date}. "
+                    f"Nuevo ejercicio {new_year} abierto. "
+                    f"Libros anteriores permanecen INMUTABLES."),
+        "next_action": f"POST /ledger/opening-entry para crear el asiento de apertura {new_year}.",
+    }
+

@@ -48,9 +48,11 @@ class UserRole(str, enum.Enum):
 
 
 class TenantStatus(str, enum.Enum):
-    active    = "active"
-    suspended = "suspended"
-    trial     = "trial"
+    active       = "active"
+    suspended    = "suspended"
+    trial        = "trial"
+    terminated   = "terminated"    # Empresa cesa actividades — libros en modo lectura
+    reactivated  = "reactivated"   # Empresa reabre tras terminación — mismo que active operacionalmente
 
 
 class EntityType(str, enum.Enum):
