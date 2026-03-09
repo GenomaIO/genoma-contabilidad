@@ -16,6 +16,8 @@ import ActivosFijos from './pages/ActivosFijos'
 import LibrosDigitales from './pages/LibrosDigitales'
 import PerfilFiscal from './pages/PerfilFiscal'
 import EstadosFinancieros from './pages/EstadosFinancieros'
+import Conciliacion from './pages/Conciliacion'
+import Centinela from './pages/Centinela'
 import { useApp } from './context/AppContext'
 
 // Guard de ruta — espera hidratación antes de decidir
@@ -90,6 +92,8 @@ function AppLayout() {
                     <Route path="/config" element={<Navigate to="/config/apertura" replace />} />
                     <Route path="/config/apertura" element={<Apertura />} />
                     <Route path="/config/perfil-fiscal" element={<PerfilFiscal />} />
+                    <Route path="/conciliacion" element={<Conciliacion />} />
+                    <Route path="/centinela" element={<Centinela />} />
                     <Route path="*" element={<ComingSoon name="Página no encontrada" />} />
                 </Routes>
             </main>
