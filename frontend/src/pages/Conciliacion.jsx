@@ -424,8 +424,13 @@ function FileUploader({ token, onTransacciones, onPeriodChange }) {
             const fuenteStr = usaGemini ? ' (OCR Gemini ✨)' : ''
             const errorStr = errores.length ? ` | ⚠️ ${errores.length} error(es)` : ''
 
-            if (txnsFusionadas.length === 0 && errores.length) {
-                setMsg({ ok: false, text: `Error procesando archivos: ${errores.join('; ')}` })
+            if (txnsFusionadas.length === 0) {
+                // 0 txns: nunca avanzar al Paso 2, mostrar advertencia clara
+                const errMsg = errores.length
+                    ? `Error procesando archivos: ${errores.join('; ')}`
+                    : `⚠️ Se procesaron ${files.length} archivo(s) pero no se encontraron transacciones. ` +
+                    `Verifica que el banco seleccionado (${banco}) coincide con el archivo cargado.`
+                setMsg({ ok: false, text: errMsg })
             } else {
                 setMsg({
                     ok: true,
@@ -433,6 +438,7 @@ function FileUploader({ token, onTransacciones, onPeriodChange }) {
                 })
                 onTransacciones(txnsFusionadas, banco, period, saldoInicial, saldoFinal)
             }
+
 
         } catch (e) {
             setMsg({ ok: false, text: String(e.message || e) })
