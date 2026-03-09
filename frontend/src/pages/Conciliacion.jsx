@@ -114,11 +114,16 @@ function currentPeriod() {
 
 /* ── Semáforo de estado ──────────────────────────────────────────────── */
 const ESTADO_COLOR = {
-    CONCILIADO: { bg: 'rgba(34,197,94,0.12)', color: '#16a34a', label: '✅ Conciliado' },
+    // V2 (actuales)
+    CON_FE: { bg: 'rgba(34,197,94,0.12)', color: '#16a34a', label: '✅ CON FE' },
+    SIN_FE: { bg: 'rgba(239,68,68,0.12)', color: '#dc2626', label: '🔴 SIN FE' },
     PROBABLE: { bg: 'rgba(251,191,36,0.15)', color: '#d97706', label: '🟡 Probable' },
-    SIN_ASIENTO: { bg: 'rgba(239,68,68,0.12)', color: '#dc2626', label: '🔴 Sin asiento' },
-    SOLO_LIBROS: { bg: 'rgba(139,92,246,0.12)', color: '#7c3aed', label: '🟣 Solo libros' },
+    SOLO_LIBROS: { bg: 'rgba(139,92,246,0.12)', color: '#7c3aed', label: '📚 Solo libros' },
     PENDIENTE: { bg: 'rgba(148,163,184,0.15)', color: '#64748b', label: '⏳ Pendiente' },
+    // V1 (sesiones antiguas)
+    CONCILIADO: { bg: 'rgba(34,197,94,0.12)', color: '#16a34a', label: '✅ Conciliado' },
+    SIN_ASIENTO: { bg: 'rgba(239,68,68,0.12)', color: '#dc2626', label: '🔴 Sin asiento' },
+    SIN_MATCH: { bg: 'rgba(148,163,184,0.15)', color: '#64748b', label: '⏳ Sin match' },
 }
 function Badge({ estado }) {
     const cfg = ESTADO_COLOR[estado] || ESTADO_COLOR.PENDIENTE
@@ -142,10 +147,13 @@ function TxnTable({ txns, onApprove }) {
 
     const tabs = [
         { k: 'TODOS', label: 'Todos', color: 'var(--text-secondary)' },
-        { k: 'CONCILIADO', label: '✅ Conciliados', color: '#16a34a' },
-        { k: 'PROBABLE', label: '🟡 Probables', color: '#d97706' },
-        { k: 'SIN_ASIENTO', label: '🔴 Sin asiento', color: '#dc2626' },
-    ]
+        { k: 'CON_FE', label: '✅ CON FE', color: '#16a34a' },
+        { k: 'SIN_FE', label: '🔴 SIN FE', color: '#dc2626' },
+        { k: 'PROBABLE', label: '🟡 Probable', color: '#d97706' },
+        // V1 compat
+        { k: 'CONCILIADO', label: '✅ Conciliados (v1)', color: '#16a34a' },
+        { k: 'SIN_ASIENTO', label: '🔴 Sin asiento (v1)', color: '#dc2626' },
+    ].filter(t => t.k === 'TODOS' || txns.some(tx => tx.match_estado === t.k))
 
     return (
         <div>
@@ -240,7 +248,7 @@ function TxnTable({ txns, onApprove }) {
                                     )}
                                 </td>
                                 <td style={td}>
-                                    {t.match_estado === 'SIN_ASIENTO' && (
+                                    {(t.match_estado === 'SIN_FE' || t.match_estado === 'SIN_ASIENTO') && (
                                         <button
                                             onClick={() => onApprove(t)}
                                             style={{ ...btnPrimary, fontSize: '0.72rem', padding: '3px 8px' }}
