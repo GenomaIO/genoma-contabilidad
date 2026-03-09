@@ -58,6 +58,20 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning(f"⚠️  Migración A0 omitida: {e}")
 
+        # ── Migración A0b: entity_type en tenants ─────────────────
+        # PERSONA_JURIDICA = default (empresas); PERSONA_FISICA = propietario único.
+        # Controla el label "Capital Social" vs "Capital Personal" en el ECP (NIIF Sec.22).
+        try:
+            with _engine.begin() as conn:
+                conn.execute(text(
+                    "ALTER TABLE tenants ADD COLUMN IF NOT EXISTS "
+                    "entity_type VARCHAR(30) DEFAULT 'PERSONA_JURIDICA'"
+                ))
+            logger.info("✅ Migración A0b: entity_type agregado a tenants")
+        except Exception as e:
+            logger.warning(f"⚠️  Migración A0b omitida: {e}")
+
+
         # ── Migración A1: tabla accounts (catálogo de cuentas) ────
         # CREATE TABLE IF NOT EXISTS → idempotente.
         # La tabla se crea con create_all, pero los índices adicionales

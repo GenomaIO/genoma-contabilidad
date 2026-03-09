@@ -53,6 +53,16 @@ class TenantStatus(str, enum.Enum):
     trial     = "trial"
 
 
+class EntityType(str, enum.Enum):
+    """
+    Tipo de entidad legal:
+    PERSONA_JURIDICA : Sociedad Anónima, SRL, etc. → Capital Social (NIIF Sec.22)
+    PERSONA_FISICA   : Propietario único / comerciante → Capital Personal (NIIF Sec.22.2)
+    """
+    PERSONA_JURIDICA = "PERSONA_JURIDICA"
+    PERSONA_FISICA   = "PERSONA_FISICA"
+
+
 class CatalogMode(str, enum.Enum):
     """
     Modo de catálogo de cuentas del tenant.
@@ -94,6 +104,12 @@ class Tenant(Base):
     facturador_api_key = Column(Text, nullable=True)
 
     status         = Column(Enum(TenantStatus), nullable=False, default=TenantStatus.trial)
+
+    # Tipo de entidad legal (Persona Física vs Jurídica) — afecta labels del ECP
+    entity_type    = Column(
+        Enum(EntityType), nullable=False,
+        default=EntityType.PERSONA_JURIDICA
+    )
 
     # Modo de catálogo contable — NULL = no elegido aún (trigger onboarding)
     catalog_mode   = Column(Enum(CatalogMode), nullable=True, default=None)

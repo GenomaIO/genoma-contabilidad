@@ -193,6 +193,7 @@ def get_eeff(
     Prerrequisito: tenant debe tener mapeos NIIF configurados.
     Si no los tiene, retorna 400 con instrucciones.
     """
+    from sqlalchemy import text as _text
     tenant_id = user["tenant_id"]
 
     # Verificar que existan mapeos
@@ -211,6 +212,17 @@ def get_eeff(
     if db.query(NiifLineDef).count() == 0:
         seed_niif_lines(db)
 
+    # ── Leer entity_type del tenant (PERSONA_JURIDICA / PERSONA_FISICA) ──
+    # Fallback a PERSONA_JURIDICA para tenants existentes sin el campo.
+    try:
+        row = db.execute(
+            _text("SELECT entity_type FROM tenants WHERE id = :tid"),
+            {"tid": tenant_id}
+        ).fetchone()
+        entity_type = (row[0] if row and row[0] else "PERSONA_JURIDICA")
+    except Exception:
+        entity_type = "PERSONA_JURIDICA"
+
     # Calcular EEFF
     engine = EeffEngine(
         tenant_id=tenant_id,
@@ -218,6 +230,7 @@ def get_eeff(
         db=db,
         from_date=from_date,
         to_date=to_date,
+        entity_type=entity_type,
     )
     result = engine.compute()
 

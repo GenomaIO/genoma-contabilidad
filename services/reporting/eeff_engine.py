@@ -35,13 +35,21 @@ class EeffEngine:
 
     def __init__(self, tenant_id: str, year: str, db: Session,
                  from_date: Optional[str] = None,
-                 to_date: Optional[str] = None):
-        self.tenant_id = tenant_id
-        self.year = year
-        self.db = db
-        # Si no se especifican fechas, usar el año completo
-        self.from_date = from_date or f"{year}-01-01"
-        self.to_date   = to_date   or f"{year}-12-31"
+                 to_date: Optional[str] = None,
+                 entity_type: str = "PERSONA_JURIDICA"):
+        self.tenant_id   = tenant_id
+        self.year        = year
+        self.db          = db
+        self.from_date   = from_date or f"{year}-01-01"
+        self.to_date     = to_date   or f"{year}-12-31"
+        # NIIF Sec.22: Persona Jurídica → "Capital Social"
+        #              Persona Física   → "Capital Personal"
+        self.entity_type = entity_type
+        self.capital_label = (
+            "Capital Personal"
+            if entity_type == "PERSONA_FISICA"
+            else "Capital Social / Capital del propietario"
+        )
 
     # ─────────────────────────────────────────────────────────────
     # 1. Obtener saldos del Balance de Comprobación
@@ -205,6 +213,55 @@ class EeffEngine:
 
 
     # ─────────────────────────────────────────────────────────────
+    # 3b. Saldos de cuentas de APERTURA del año actual
+    # ─────────────────────────────────────────────────────────────
+    def _get_opening_buckets(self, mappings: dict) -> dict:
+        """
+        Acumula los saldos de los asientos marcados como APERTURA (source='APERTURA')
+        del año en curso. Estos representan el patrimonio al inicio del período
+        y deben mostrarse como 'saldo_inicial' en el ECP (NIIF Sec.6),
+        no como 'movimiento'.
+
+        Solo aplica para cuentas de PATRIMONIO (prefijos 3xxx) para no
+        contaminar el ESF con saldos de apertura dobles.
+        """
+        rows = self.db.execute(text("""
+            SELECT
+                jl.account_code,
+                a.account_type,
+                a.name AS account_name,
+                COALESCE(SUM(jl.debit),  0) AS total_debit,
+                COALESCE(SUM(jl.credit), 0) AS total_credit
+            FROM journal_lines jl
+            JOIN journal_entries je ON jl.entry_id = je.id
+            JOIN accounts a ON a.code = jl.account_code AND a.tenant_id = je.tenant_id
+            WHERE je.tenant_id = :tenant_id
+              AND je.status    = 'POSTED'
+              AND je.source    = 'APERTURA'
+              AND je.date     >= :from_date
+              AND je.date     <= :to_date
+              AND a.account_type IN ('PATRIMONIO', 'ACTIVO', 'PASIVO')
+            GROUP BY jl.account_code, a.account_type, a.name
+            HAVING (SUM(jl.debit) != 0 OR SUM(jl.credit) != 0)
+        """), {
+            "tenant_id": self.tenant_id,
+            "from_date": self.from_date,
+            "to_date":   self.to_date,
+        }).fetchall()
+
+        if not rows:
+            return {}
+
+        opening_tb = {r[0]: {
+            "account_code": r[0], "account_type": r[1], "account_name": r[2],
+            "debit":  Decimal(str(r[3])), "credit": Decimal(str(r[4])),
+            "balance": Decimal(str(r[3])) - Decimal(str(r[4])),
+        } for r in rows}
+        oa = self._accumulate(opening_tb, mappings)
+        return {k: Decimal(str(v)) for k, v in oa["buckets"].items()}
+
+
+    # ─────────────────────────────────────────────────────────────
     # 4. Construir ESF
     # ─────────────────────────────────────────────────────────────
     def _build_esf(self, buckets: dict[str, Decimal], detail: dict) -> dict:
@@ -330,13 +387,22 @@ class EeffEngine:
     # 6. Construir ECP — Estado de Cambios en el Patrimonio
     # ─────────────────────────────────────────────────────────────
     def _build_ecp(self, buckets_current: dict, buckets_prior: dict,
+                   buckets_opening: dict,
                    utilidad_neta: Decimal) -> dict:
         """
         Estado de Cambios en el Patrimonio — Sección 6 NIIF PYMES 3ª Ed.
-        Columnas: Capital | Reservas | Utilidades Acumuladas | Resultado | ORI | TOTAL
+
+        Lógica de Saldo Inicial:
+        - Si hay saldos del año N-1 (buckets_prior): usar esos como saldo_inicial (año normal)
+        - Si NO hay saldos N-1 (primer año): usar buckets_opening (asiento de apertura)
+          como saldo_inicial y RESTAR del movimiento para no duplicar
         """
+        has_prior = bool(buckets_prior)
+        # Para primer año: el saldo inicial viene del asiento de apertura
+        saldo_base = buckets_prior if has_prior else buckets_opening
+
         PAT_COLUMNS = [
-            {"key": "capital",       "label": "Capital Social",         "codes": ["ESF.PAT.01"]},
+            {"key": "capital",       "label": self.capital_label,       "codes": ["ESF.PAT.01"]},
             {"key": "reservas",      "label": "Reservas",               "codes": ["ESF.PAT.02"]},
             {"key": "utilidades_ac", "label": "Utilidades Acumuladas",  "codes": ["ESF.PAT.03"]},
             {"key": "resultado",     "label": "Resultado del Período",  "codes": ["ESF.PAT.04"]},
@@ -352,18 +418,27 @@ class EeffEngine:
 
         rows = []
         for col in PAT_COLUMNS:
-            prior   = get_bucket(buckets_prior,   col["codes"])
-            current = get_bucket(buckets_current, col["codes"])
-            change  = current - prior
+            inicial  = get_bucket(saldo_base,      col["codes"])
+            current  = get_bucket(buckets_current, col["codes"])
+
+            # Movimiento = variación respecto al inicio (excluye el saldo de apertura)
+            if not has_prior:
+                # Primer año: movimiento = total acumulado MENOS el saldo de apertura
+                opening_amt = get_bucket(buckets_opening, col["codes"])
+                movimiento = current - opening_amt
+            else:
+                movimiento = current - inicial
+
             row = {
                 "key":           col["key"],
                 "label":         col["label"],
-                "saldo_inicial": float(prior),
-                "movimiento":    float(change),
+                "saldo_inicial": float(inicial),
+                "movimiento":    float(movimiento),
                 "saldo_final":   float(current),
             }
             if col["key"] == "resultado":
                 row["movimiento"] = float(utilidad_neta)
+                row["saldo_inicial"] = 0.0   # resultado del período comienza en 0
                 row["nota"] = "Según Estado de Resultado Integral"
             rows.append(row)
 
@@ -532,7 +607,8 @@ class EeffEngine:
         detail   = accum["detail"]
         unmapped = accum["unmapped_codes"]
 
-        buckets_prior = self._get_prior_year_buckets(mappings)
+        buckets_prior   = self._get_prior_year_buckets(mappings)
+        buckets_opening = self._get_opening_buckets(mappings)
 
         esf = self._build_esf(buckets, detail)
         eri = self._build_eri(buckets, detail)
@@ -551,6 +627,7 @@ class EeffEngine:
         ecp = self._build_ecp(
             buckets_current=buckets,
             buckets_prior=buckets_prior,
+            buckets_opening=buckets_opening,
             utilidad_neta=Decimal(str(eri["totals"]["utilidad_neta"])),
         )
         efe = self._build_efe(
