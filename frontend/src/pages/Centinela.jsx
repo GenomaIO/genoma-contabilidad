@@ -71,10 +71,12 @@ function ScoreGauge({ score, nivel, emoji }) {
     const offset = circ * (1 - pct)
 
     const colorMap = {
-        SALUDABLE: ['#16a34a', '#22c55e'],
+        VERDE: ['#16a34a', '#22c55e'],
+        BAJO: ['#0ea5e9', '#38bdf8'],
         MODERADO: ['#d97706', '#f59e0b'],
         EN_RIESGO: ['#ea580c', '#f97316'],
         CRITICO: ['#dc2626', '#ef4444'],
+        SALUDABLE: ['#16a34a', '#22c55e'],
         SIN_DATOS: ['#64748b', '#94a3b8'],
     }
     const [c1, c2] = colorMap[nivel] || colorMap.SIN_DATOS
@@ -291,9 +293,41 @@ export default function Centinela() {
     const [scoreData, setScoreData] = useState(null)
     const [fugas, setFugas] = useState([])
     const [d270, setD270] = useState(null)
+    const [sesionTxns, setSesionTxns] = useState([])   // F8: tabla CON_FE/SIN_FE
     const [loading, setLoading] = useState(false)
     const [analyzing, setAnalyzing] = useState(false)
-    const [tab, setTab] = useState('score') // score | fugas | d270
+    const [exportingCSV, setExportingCSV] = useState(false)
+    const [tab, setTab] = useState('score') // score | tabla | fugas | d270
+
+    /* Export CSV de la sesión (F7) */
+    async function exportarResultado(recon_id) {
+        if (!recon_id) return
+        setExportingCSV(true)
+        try {
+            const r = await fetch(`${API}/centinela/resultado/${recon_id}/export`, { headers: authH(token) })
+            const text = await r.text()
+            const blob = new Blob([text], { type: 'text/csv' })
+            const url = URL.createObjectURL(blob)
+            const a = document.createElement('a')
+            a.href = url; a.download = `Conciliacion_${period}.csv`; a.click()
+            URL.revokeObjectURL(url)
+        } catch (e) { console.error('Export error', e) }
+        setExportingCSV(false)
+    }
+
+    /* Export D-150 (F7) */
+    async function exportarD150() {
+        try {
+            const year = period.slice(0, 4)
+            const r = await fetch(`${API}/centinela/d150/${year}/export`, { headers: authH(token) })
+            const text = await r.text()
+            const blob = new Blob([text], { type: 'text/csv' })
+            const url = URL.createObjectURL(blob)
+            const a = document.createElement('a')
+            a.href = url; a.download = `D150_${year}.csv`; a.click()
+            URL.revokeObjectURL(url)
+        } catch (e) { console.error('D150 export error', e) }
+    }
 
     const loadScore = useCallback(async (p) => {
         setLoading(true)
@@ -324,6 +358,9 @@ export default function Centinela() {
     const exposicionIva = scoreData?.exposicion_iva || 0
     const nivelScore = scoreData?.nivel || 'SIN_DATOS'
     const score = scoreData?.score_total ?? 0
+    const isV2 = scoreData?.version === 'v2'
+    const indicadores = scoreData?.indicadores || {}
+    const totalesV2 = scoreData?.totales || {}
 
     return (
         <div style={{ maxWidth: 1100, margin: '0 auto', padding: '24px 20px' }}>
@@ -332,10 +369,10 @@ export default function Centinela() {
             <div style={{ marginBottom: 24, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 12 }}>
                 <div>
                     <h1 style={{ fontSize: '1.4rem', fontWeight: 800, color: 'var(--text-primary)', margin: 0 }}>
-                        🛡️ CENTINELA Fiscal
+                        🛡️ CENTINELA Fiscal {isV2 && <span style={{ fontSize: '0.7rem', background: 'rgba(34,197,94,0.15)', color: '#16a34a', borderRadius: 6, padding: '2px 8px', marginLeft: 8, fontWeight: 700 }}>Score V2</span>}
                     </h1>
                     <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: 5 }}>
-                        Detector de fugas fiscales · Scoring normativo CR · Generador D-270
+                        CON_FE / SIN_FE · 5 indicadores DGT · D-150 automático · Export CSV
                     </p>
                 </div>
 
@@ -396,16 +433,17 @@ export default function Centinela() {
                             bg: 'rgba(139,92,246,0.06)', emoji: '⚡'
                         },
                         {
-                            label: 'Fugas detectadas',
-                            value: `${(scoreData?.fugas_tipo_a || 0) + (scoreData?.fugas_tipo_b || 0) + (scoreData?.fugas_tipo_c || 0)}`,
-                            sub: `A:${scoreData?.fugas_tipo_a || 0} B:${scoreData?.fugas_tipo_b || 0} C:${scoreData?.fugas_tipo_c || 0}`,
-                            color: '#0ea5e9', bg: 'rgba(14,165,233,0.06)', emoji: '🔍'
+                            label: isV2 ? 'CON FE' : 'Fugas detectadas',
+                            value: isV2 ? `${totalesV2.con_fe || 0}` : `${(scoreData?.fugas_tipo_a || 0) + (scoreData?.fugas_tipo_b || 0) + (scoreData?.fugas_tipo_c || 0)}`,
+                            sub: isV2 ? `${totalesV2.total_txns || 0} txns totales` : `A:${scoreData?.fugas_tipo_a || 0} B:${scoreData?.fugas_tipo_b || 0} C:${scoreData?.fugas_tipo_c || 0}`,
+                            color: '#16a34a', bg: 'rgba(34,197,94,0.06)', emoji: '✅'
                         },
                         {
-                            label: 'Registros D-270',
-                            value: `${scoreData?.d270_regs || d270?.resumen?.total_registros || 0}`,
-                            sub: 'A declarar antes del día 10', color: '#16a34a',
-                            bg: 'rgba(34,197,94,0.06)', emoji: '📋'
+                            label: isV2 ? 'SIN FE (riesgo)' : 'Registros D-270',
+                            value: isV2 ? `${totalesV2.sin_fe || 0}` : `${scoreData?.d270_regs || d270?.resumen?.total_registros || 0}`,
+                            sub: isV2 ? 'Sin comprobante fiscal' : 'A declarar antes del día 10',
+                            color: totalesV2.sin_fe > 0 ? '#dc2626' : '#64748b',
+                            bg: totalesV2.sin_fe > 0 ? 'rgba(239,68,68,0.06)' : 'rgba(100,116,139,0.06)', emoji: totalesV2.sin_fe > 0 ? '🔴' : '📋'
                         },
                     ].map(m => (
                         <div key={m.label} style={{
@@ -459,22 +497,40 @@ export default function Centinela() {
                 </div>
             </div>
 
-            {/* Tabs: Fugas / D-270 */}
-            <div style={{ display: 'flex', gap: 4, marginBottom: 16 }}>
-                {[
-                    { k: 'score', label: '📊 Detalle score' },
-                    { k: 'fugas', label: '🔴 Fugas detectadas' },
-                    { k: 'd270', label: '📋 Borrador D-270' },
-                ].map(t => (
-                    <button key={t.k} onClick={() => setTab(t.k)} style={{
-                        ...btnChoice,
-                        background: tab === t.k ? 'var(--accent)' : 'var(--bg-secondary)',
-                        color: tab === t.k ? '#fff' : 'var(--text-muted)',
-                        borderColor: tab === t.k ? 'var(--accent)' : 'var(--border)',
+            {/* Tabs: Score / Tabla / Fugas / D-270 */}
+            <div style={{ display: 'flex', gap: 4, marginBottom: 16, flexWrap: 'wrap', alignItems: 'center' }}>
+                <div style={{ display: 'flex', gap: 4, flex: 1, flexWrap: 'wrap' }}>
+                    {[
+                        { k: 'score', label: '📊 Score V2' },
+                        { k: 'tabla', label: '📄 Conciliación' },
+                        { k: 'fugas', label: '🔴 Fugas' },
+                        { k: 'd270', label: '📋 D-270' },
+                    ].map(t => (
+                        <button key={t.k} onClick={() => setTab(t.k)} style={{
+                            ...btnChoice,
+                            background: tab === t.k ? 'var(--accent)' : 'var(--bg-secondary)',
+                            color: tab === t.k ? '#fff' : 'var(--text-muted)',
+                            borderColor: tab === t.k ? 'var(--accent)' : 'var(--border)',
+                        }}>
+                            {t.label}
+                        </button>
+                    ))}
+                </div>
+                {/* Botones de export rápido */}
+                <div style={{ display: 'flex', gap: 8 }}>
+                    <button onClick={() => exportarResultado(scoreData?.recon_id)} disabled={exportingCSV} style={{
+                        ...btnChoice, background: 'rgba(14,165,233,0.1)', color: '#0ea5e9',
+                        borderColor: '#0ea5e9', fontSize: '0.75rem',
                     }}>
-                        {t.label}
+                        {exportingCSV ? '⏳' : '⬇️ Excel'}
                     </button>
-                ))}
+                    <button onClick={exportarD150} style={{
+                        ...btnChoice, background: 'rgba(124,58,237,0.1)', color: '#7c3aed',
+                        borderColor: '#7c3aed', fontSize: '0.75rem',
+                    }}>
+                        📑 D-150
+                    </button>
+                </div>
             </div>
 
             {/* Contenido de tabs */}
@@ -484,42 +540,119 @@ export default function Centinela() {
                         {!scoreData || nivelScore === 'SIN_DATOS' ? (
                             <div style={{ textAlign: 'center', padding: '28px', color: 'var(--text-muted)' }}>
                                 <div style={{ fontSize: '3rem', marginBottom: 12 }}>🛡️</div>
-                                <div style={{ fontSize: '0.9rem', marginBottom: 8 }}>
-                                    No hay análisis CENTINELA para este período aún.
+                                <div style={{ fontSize: '0.9rem', marginBottom: 8 }}>No hay análisis CENTINELA para este período aún.</div>
+                                <div style={{ fontSize: '0.8rem' }}>Primero realiza la <strong>Conciliación Bancaria</strong> y luego haz clic en "Analizar con CENTINELA".</div>
+                            </div>
+                        ) : isV2 ? (
+                            /* ── Score V2: 5 indicadores DGT ─────────────────────────── */
+                            <div>
+                                <div style={{ marginBottom: 14, fontSize: '0.85rem', color: 'var(--text-secondary)', fontWeight: 700 }}>
+                                    5 indicadores DGT · {periodLabel(period)} · Score inverso (100=sin riesgo)
                                 </div>
-                                <div style={{ fontSize: '0.8rem' }}>
-                                    Primero realiza la <strong>Conciliación Bancaria</strong> y luego haz clic en "Analizar con CENTINELA".
+                                <div style={{ display: 'grid', gap: 10 }}>
+                                    {[
+                                        { key: 'I1_cobertura_documental', peso: '30%', label: 'Cobertura documental', desc: 'Txns CON_FE ÷ total. 100 = todas tienen FE.' },
+                                        { key: 'I2_exposicion_iva', peso: '25%', label: 'Exposición IVA', desc: 'IVA estimado en riesgo ÷ ingresos. 100 = sin IVA expuesto.' },
+                                        { key: 'I3_concentracion_sinfe', peso: '20%', label: 'Concentración sin FE', desc: 'Top-3 proveedores sin FE ÷ total débitos. 100 = disperso.' },
+                                        { key: 'I4_sin_referencia', peso: '15%', label: 'Sin referencia trazable', desc: 'SINPE/transfer sin FE ÷ total. 100 = todas trazables.' },
+                                        { key: 'I5_discrepancia_d101', peso: '10%', label: 'Brecha banco vs FE-D101', desc: 'Diferencia ingresos banco vs FE emitidas. 100 = cuadran.' },
+                                    ].map(ind => {
+                                        const val = indicadores[ind.key] ?? 0
+                                        const color = val >= 90 ? '#16a34a' : val >= 70 ? '#0ea5e9' : val >= 40 ? '#d97706' : '#dc2626'
+                                        return (
+                                            <div key={ind.key} style={{ padding: '10px 14px', background: `${color}08`, borderRadius: 10, border: `1px solid ${color}20` }}>
+                                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                                                    <div>
+                                                        <span style={{ fontWeight: 700, fontSize: '0.82rem', color }}>{ind.label}</span>
+                                                        <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginLeft: 8 }}>({ind.peso})</span>
+                                                    </div>
+                                                    <span style={{ fontWeight: 800, fontSize: '1.05rem', color }}>{val}</span>
+                                                </div>
+                                                {/* Barra de progreso del indicador */}
+                                                <div style={{ height: 6, background: 'var(--bg-secondary)', borderRadius: 4, overflow: 'hidden', marginBottom: 4 }}>
+                                                    <div style={{ height: '100%', width: `${val}%`, background: color, borderRadius: 4, transition: 'width 0.8s ease' }} />
+                                                </div>
+                                                <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>{ind.desc}</div>
+                                            </div>
+                                        )
+                                    })}
                                 </div>
                             </div>
                         ) : (
+                            /* ── Score V1 legado ──── */
                             <div>
-                                <div style={{ marginBottom: 12, fontSize: '0.85rem', color: 'var(--text-secondary)', fontWeight: 700 }}>
-                                    Interpretación del score para {periodLabel(period)}
-                                </div>
+                                <div style={{ marginBottom: 12, fontSize: '0.85rem', color: 'var(--text-secondary)', fontWeight: 700 }}>Interpretación del score para {periodLabel(period)}</div>
                                 <div style={{ display: 'grid', gap: 8 }}>
                                     {[
-                                        { rango: '0–30', nivel: 'SALUDABLE', desc: 'Situación bajo control. Riesgo mínimo de observaciones de Hacienda.', color: '#16a34a' },
-                                        { rango: '31–60', nivel: 'MODERADO', desc: 'Hay observaciones. Se recomienda corregir antes del cierre.', color: '#d97706' },
-                                        { rango: '61–80', nivel: 'EN RIESGO', desc: 'Exposición relevante. Corrección urgente antes del día 10.', color: '#ea580c' },
                                         { rango: '81–100', nivel: 'CRÍTICO', desc: 'Alta probabilidad de reparo por Hacienda. Acción inmediata.', color: '#dc2626' },
+                                        { rango: '61–80', nivel: 'EN RIESGO', desc: 'Exposición relevante. Corrección urgente antes del día 10.', color: '#ea580c' },
+                                        { rango: '31–60', nivel: 'MODERADO', desc: 'Hay observaciones. Se recomienda corregir antes del cierre.', color: '#d97706' },
+                                        { rango: '0–30', nivel: 'SALUDABLE', desc: 'Situación bajo control. Riesgo mínimo.', color: '#16a34a' },
                                     ].map(row => (
-                                        <div key={row.nivel} style={{
-                                            display: 'flex', gap: 12, alignItems: 'center', padding: '10px 14px',
-                                            background: score >= parseInt(row.rango) || (row.nivel === 'SALUDABLE' && score <= 30) ? `${row.color}10` : 'transparent',
-                                            borderRadius: 8, border: `1px solid ${score >= parseInt(row.rango) && nivelScore === row.nivel.includes(' ') ? row.nivel.split(' ')[0] : 'transparent'}`,
-                                        }}>
-                                            <span style={{ fontSize: '0.75rem', fontWeight: 800, color: row.color, minWidth: 40 }}>
-                                                {row.rango}
-                                            </span>
-                                            <span style={{ fontSize: '0.75rem', fontWeight: 700, color: row.color, minWidth: 80 }}>
-                                                {row.nivel}
-                                            </span>
-                                            <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
-                                                {row.desc}
-                                            </span>
+                                        <div key={row.nivel} style={{ display: 'flex', gap: 12, alignItems: 'center', padding: '10px 14px', borderRadius: 8 }}>
+                                            <span style={{ fontSize: '0.75rem', fontWeight: 800, color: row.color, minWidth: 44 }}>{row.rango}</span>
+                                            <span style={{ fontSize: '0.75rem', fontWeight: 700, color: row.color, minWidth: 90 }}>{row.nivel}</span>
+                                            <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>{row.desc}</span>
                                         </div>
                                     ))}
                                 </div>
+                            </div>
+                        )}
+                    </div>
+                )}
+
+                {tab === 'tabla' && (
+                    /* ── Tabla CON_FE / SIN_FE por sesión ────────────────────── */
+                    <div style={{ padding: '20px' }}>
+                        <div style={{ marginBottom: 12, font: '0.82rem/1.4 inherit', color: 'var(--text-muted)' }}>
+                            Resultado de conciliación: cada transacción del PDF con su estado fiscal.
+                            <strong style={{ color: '#16a34a' }}> CON_FE</strong> = comprobante verificado ·
+                            <strong style={{ color: '#dc2626' }}> SIN_FE</strong> = riesgo fiscal
+                        </div>
+                        {sesionTxns.length === 0 ? (
+                            <div style={{ textAlign: 'center', padding: '28px', color: 'var(--text-muted)', fontSize: '0.84rem' }}>
+                                <div style={{ fontSize: '2rem', marginBottom: 8 }}>📄</div>
+                                Corra CENTINELA desde la conciliación bancaria para ver los resultados aquí.
+                            </div>
+                        ) : (
+                            <div style={{ overflowX: 'auto' }}>
+                                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.78rem' }}>
+                                    <thead>
+                                        <tr style={{ background: 'var(--bg-secondary)', fontSize: '0.7rem' }}>
+                                            <th style={{ padding: '6px 10px', textAlign: 'left' }}>Fecha</th>
+                                            <th style={{ padding: '6px 10px', textAlign: 'left' }}>Descripción</th>
+                                            <th style={{ padding: '6px 10px', textAlign: 'right' }}>Monto</th>
+                                            <th style={{ padding: '6px 10px', textAlign: 'center' }}>FE</th>
+                                            <th style={{ padding: '6px 10px', textAlign: 'center' }}>Tarifa</th>
+                                            <th style={{ padding: '6px 10px', textAlign: 'right' }}>IVA est.</th>
+                                            <th style={{ padding: '6px 10px', textAlign: 'center' }}>Estado</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {sesionTxns.map((t, i) => {
+                                            const conFE = t.match_estado === 'CON_FE'
+                                            return (
+                                                <tr key={i} style={{ borderBottom: '1px solid var(--border)', background: i % 2 === 0 ? 'transparent' : 'var(--bg-secondary)05' }}>
+                                                    <td style={{ padding: '6px 10px', color: 'var(--text-muted)' }}>{String(t.fecha || '').slice(0, 10)}</td>
+                                                    <td style={{ padding: '6px 10px', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={t.descripcion}>{t.descripcion}</td>
+                                                    <td style={{ padding: '6px 10px', textAlign: 'right', fontWeight: 600 }}>{formatCRC(t.monto)}</td>
+                                                    <td style={{ padding: '6px 10px', textAlign: 'center' }}>
+                                                        <span style={{ fontSize: '0.7rem', fontWeight: 700, padding: '2px 7px', borderRadius: 5, background: conFE ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.12)', color: conFE ? '#16a34a' : '#dc2626' }}>
+                                                            {conFE ? 'SI' : 'NO'}
+                                                        </span>
+                                                    </td>
+                                                    <td style={{ padding: '6px 10px', textAlign: 'center', color: 'var(--text-muted)' }}>{t.tarifa_iva ?? '—'}%</td>
+                                                    <td style={{ padding: '6px 10px', textAlign: 'right', color: t.iva_estimado > 0 ? '#dc2626' : 'var(--text-muted)' }}>{t.iva_estimado > 0 ? formatCRC(t.iva_estimado) : '—'}</td>
+                                                    <td style={{ padding: '6px 10px', textAlign: 'center' }}>
+                                                        <span style={{ fontSize: '0.68rem', fontWeight: 700, padding: '2px 6px', borderRadius: 5, background: conFE ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.1)', color: conFE ? '#16a34a' : '#dc2626' }}>
+                                                            {t.match_estado}
+                                                        </span>
+                                                    </td>
+                                                </tr>
+                                            )
+                                        })}
+                                    </tbody>
+                                </table>
                             </div>
                         )}
                     </div>
