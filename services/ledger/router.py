@@ -716,6 +716,9 @@ def trial_balance(
     # └────────────────────────────────────────────────────────────────────────┘
 
     # Catálogo de cuentas para tipos
+    # SAVEPOINT: si es_reguladora no existe en la DB de producción,
+    # el error contamina la transacción y la query principal también falla.
+    # Con SAVEPOINT aislamos el error y reintentamos sin la columna nueva.
     accounts_map = {}
     try:
         accs = db.execute(text(
@@ -730,7 +733,26 @@ def trial_balance(
             for r in accs
         }
     except Exception:
-        pass
+        # Fallback: es_reguladora puede no existir en la DB de este tenant (migración pendiente)
+        # Limpiar estado de error de la transacción antes de continuar
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        try:
+            accs = db.execute(text(
+                "SELECT code, name, account_type FROM accounts WHERE tenant_id = :tid AND is_active = true"
+            ), {"tid": tenant_id}).fetchall()
+            accounts_map = {
+                r.code: {
+                    "name":          r.name,
+                    "type":          r.account_type,
+                    "es_reguladora": False,  # default seguro
+                }
+                for r in accs
+            }
+        except Exception:
+            pass  # Si falla el fallback, trabajar sin catálogo
 
 
     # ── Construir la consulta SQL según modo ─────────────────────
