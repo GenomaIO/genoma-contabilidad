@@ -512,7 +512,23 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning(f"⚠️  Migración M_CONC_V2 omitida: {e}")
 
-        # ── Migración M_CLEANUP_5900_01: eliminar cuenta fantasma ────
+        # ── Migración M_CATALOG_V2: columna es_reguladora en accounts ──────
+        # La columna existe en el modelo SQLAlchemy (catalog/models.py) pero
+        # nunca se agregó en producción con ALTER TABLE.
+        # Sin ella, GET /catalog/accounts lanza un InternalError 500 y el
+        # frontend muestra "Failed to fetch".
+        # ALTER ... ADD COLUMN IF NOT EXISTS es idempotente — seguro cada arranque.
+        try:
+            with _engine.begin() as conn:
+                conn.execute(text(
+                    "ALTER TABLE accounts "
+                    "ADD COLUMN IF NOT EXISTS es_reguladora BOOLEAN NOT NULL DEFAULT FALSE"
+                ))
+            logger.info("✅ Migración M_CATALOG_V2: columna es_reguladora agregada a accounts")
+        except Exception as e:
+            logger.warning(f"⚠️  Migración M_CATALOG_V2 omitida: {e}")
+
+
         # La cuenta '5900.01' fue creada accidentalmente por el bug de
         # nextChildCode (generaba prefijo-string en lugar de parent_code).
         # Solo se elimina si existe y NO tiene asientos → 100% seguro.

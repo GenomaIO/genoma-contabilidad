@@ -284,10 +284,43 @@ function StatsBar({ stats, saldoDiff }) {
                     flex: 2, minWidth: 200, background: 'var(--bg-card)', border: '1px solid var(--border)',
                     borderRadius: 10, padding: '12px 16px',
                 }}>
-                    <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginBottom: 4 }}>Diferencia saldo</div>
+                    <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginBottom: 4, display: 'flex', alignItems: 'center', gap: 4 }}>
+                        Diferencia saldo
+                        {/* 💡 Tooltip explicativo — hover */}
+                        <div style={{ position: 'relative', display: 'inline-flex' }}
+                            onMouseEnter={e => e.currentTarget.querySelector('.diff-tip').style.display = 'block'}
+                            onMouseLeave={e => e.currentTarget.querySelector('.diff-tip').style.display = 'none'}
+                        >
+                            <span style={{ cursor: 'help', opacity: 0.65, fontSize: '0.85rem', lineHeight: 1 }}>💡</span>
+                            <div className="diff-tip" style={{
+                                display: 'none', position: 'absolute', bottom: '130%', left: '50%',
+                                transform: 'translateX(-50%)', zIndex: 999,
+                                background: '#1e293b', border: '1px solid rgba(148,163,184,0.2)',
+                                borderRadius: 8, padding: '10px 13px', width: 270,
+                                boxShadow: '0 8px 24px rgba(0,0,0,0.5)', fontSize: '0.72rem',
+                                color: '#cbd5e1', lineHeight: 1.55, whiteSpace: 'normal',
+                                pointerEvents: 'none',
+                            }}>
+                                <div style={{ fontWeight: 700, marginBottom: 6, color: '#e2e8f0' }}>¿Cómo se calcula?</div>
+                                <div style={{ fontFamily: 'monospace', background: 'rgba(255,255,255,0.06)', borderRadius: 5, padding: '6px 8px', marginBottom: 7, fontSize: '0.7rem' }}>
+                                    Diferencia = Banco − Libros
+                                </div>
+                                <div style={{ marginBottom: 4 }}>
+                                    <span style={{ color: '#7dd3fc' }}>Banco:</span> saldo final reportado en el PDF del estado de cuenta.
+                                </div>
+                                <div style={{ marginBottom: 4 }}>
+                                    <span style={{ color: '#86efac' }}>Libros:</span> SUM(créditos) − SUM(débitos) de los asientos contabilizados en la cuenta del período.
+                                </div>
+                                <div style={{ color: '#fca5a5', borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: 6, marginTop: 4, fontSize: '0.68rem' }}>
+                                    Una diferencia distinta de ₡0 puede indicar: transacciones no registradas, errores de captura, o cheques pendientes de cobro (Solo Libros).
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                     <div style={{ fontWeight: 700, color: saldoDiff.estado === 'CUADRADO' ? '#16a34a' : '#dc2626' }}>
                         {saldoDiff.observacion}
                     </div>
+
                 </div>
             )}
         </div>
