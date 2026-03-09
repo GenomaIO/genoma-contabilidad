@@ -99,39 +99,41 @@ NIIF_LINES = [
 # Regla: prefix numérico de la cuenta → partida NIIF por defecto
 # El contador puede refinarlo después desde el wizard.
 STANDARD_AUTO_MAPPING = {
-    # ── ACTIVOS ──
+    # ── ACTIVOS CORRIENTES (Sec. 4 NIIF PYMES) ──
+    # Efectivo y equivalentes — serie 11xx
     "1101": "ESF.AC.01",  # Caja General
     "1102": "ESF.AC.01",  # Caja Chica
     "1103": "ESF.AC.01",  # Bancos CRC
     "1104": "ESF.AC.01",  # Bancos USD
     "1105": "ESF.AC.01",  # Inversiones < 3 meses (equivalente efectivo)
     "1106": "ESF.AC.01",  # Otras disponibilidades
-    "1201": "ESF.AC.02",  # CxC Clientes
-    "1202": "ESF.AC.02",  # Documentos por cobrar
-    "1203": "ESF.AC.02",  # CxC empleados (anticipos)
-    "1204": "ESF.AC.02",  # Otras CxC
-    "1205": "ESF.AC.02",  # Provisión cuentas incobrables (contra)
-    "1206": "ESF.AC.02",  # IVA Crédito Fiscal
-    "1207": "ESF.AC.02",  # Impuesto renta anticipado
-    "1301": "ESF.AC.03",  # Inventario mercadería
-    "1302": "ESF.AC.03",  # Producto en proceso
-    "1303": "ESF.AC.03",  # Materia prima
-    "1304": "ESF.AC.03",  # Material de empaque
-    "1401": "ESF.AC.07",  # Gastos pagados por adelantado
-    "1402": "ESF.AC.07",  # Otros activos corrientes
-    # PPE y Depreciación
-    "1501": "ESF.ANC.01", # Terrenos
-    "1502": "ESF.ANC.01", # Edificios
-    "1503": "ESF.ANC.01", # Maquinaria
-    "1504": "ESF.ANC.01", # Vehículos
-    "1505": "ESF.ANC.01", # Mobiliario y equipo
-    "1506": "ESF.ANC.01", # Equipo de cómputo
-    "1590": "ESF.ANC.01", # Depreciación acumulada (contra → is_contra=True)
-    # Intangibles
+    # Deudores comerciales y CxC — serie 13xx (catálogo standard_cr Genoma)
+    "1301": "ESF.AC.02",  # CxC Clientes
+    "1302": "ESF.AC.02",  # CxC empleados (anticipos)
+    "1303": "ESF.AC.02",  # Documentos por cobrar
+    "1304": "ESF.AC.02",  # Otras CxC
+    "1305": "ESF.AC.02",  # Provisión cuentas incobrables (contra-CxC)
+    "1306": "ESF.AC.02",  # IVA Crédito Fiscal
+    "1307": "ESF.AC.02",  # Impuesto renta anticipado
+    # Inventarios — serie 14xx
+    "1401": "ESF.AC.03",  # Inventario mercadería
+    "1402": "ESF.AC.03",  # Producto en proceso
+    "1403": "ESF.AC.03",  # Materia prima
+    "1404": "ESF.AC.03",  # Material de empaque
+    # Otros activos corrientes — serie 15xx
+    "1501": "ESF.AC.07",  # Gastos pagados por adelantado
+    "1502": "ESF.AC.07",  # Otros activos corrientes
+    # ── ACTIVOS NO CORRIENTES (Sec. 17 NIIF PYMES) ──
+    # PPE: Propiedad, Planta y Equipo — serie 12xx (catálogo standard_cr Genoma)
+    # ⚠️ NOTA: En el catálogo Genoma standard_cr, la serie 12xx es PPE,
+    #          no CxC. CxC está en 13xx. Verificado en standard_cr.json.
+    "1201": "ESF.ANC.01", # PPE: Vehículos, Terrenos, Edificios, Maquinaria
+    "1202": "ESF.ANC.01", # Depreciación Acumulada PPE (contra-cuenta)
+    # Intangibles — serie 16xx
     "1601": "ESF.ANC.03", # Software
     "1602": "ESF.ANC.03", # Marcas y patentes
     "1690": "ESF.ANC.03", # Amortización acumulada intangibles (contra)
-    # Activo diferido
+    # Activo diferido — serie 17xx
     "1701": "ESF.ANC.06", # Activo por ISR diferido
     # ── PASIVOS ──
     "2101": "ESF.PC.01",  # CxP proveedores
@@ -201,8 +203,12 @@ EXCLUDE_FROM_MAPPING = {"3304", "3000", "4000", "5000", "1000", "2000", "1100", 
                         "3300", "3400", "4100", "4200", "4900", "5100", "5200", "5300",
                         "5400", "5900"}
 
-# Cuentas complementarias (contra-cuentas)
-CONTRA_ACCOUNTS = {"1205", "1590", "1690", "4104"}
+# Cuentas complementarias (contra-cuentas = se restan de su partida NIIF)
+# 1202: Depreciación Acumulada PPE (contra de 1201)
+# 1305: Provisión incobrables (contra de CxC)
+# 1690/1790: Amortización Acumulada Intangibles
+# 4104: Descuentos sobre ventas (contra-ingreso)
+CONTRA_ACCOUNTS = {"1202", "1305", "1590", "1690", "1790", "4104"}
 
 
 def seed_niif_lines(db: Session) -> int:
@@ -253,6 +259,44 @@ def seed_standard_mapping(tenant_id: str, db: Session) -> int:
         inserted += 1
     db.commit()
     return inserted
+
+
+def fix_existing_mappings(tenant_id: str, db: Session) -> int:
+    """
+    Corrige mapeos NIIF existentes que pudieran haberse sembrado con el
+    STANDARD_AUTO_MAPPING anterior (incorrecto para el catalógo standard_cr Genoma).
+
+    Correcciones clave:
+      1201 ESF.AC.02 → ESF.ANC.01  (PPE, no CxC)
+      1202 ESF.AC.02 → ESF.ANC.01 + is_contra=True (Dep. Acumulada)
+    """
+    CORRECTIONS = [
+        # (account_code, new_niif_line, is_contra)
+        ("1201", "ESF.ANC.01", False),   # PPE raiz
+        ("1202", "ESF.ANC.01", True),    # Dep. Acumulada (contra)
+    ]
+    updated = 0
+    for acc_code, niif_code, is_contra in CORRECTIONS:
+        existing = db.query(NiifMapping).filter_by(
+            tenant_id=tenant_id, account_code=acc_code
+        ).first()
+        if existing and existing.niif_line_code != niif_code:
+            existing.niif_line_code = niif_code
+            existing.is_contra = is_contra
+            existing.updated_at = datetime.now(timezone.utc)
+            updated += 1
+        elif not existing:
+            # Crear si no existe
+            db.add(NiifMapping(
+                id=str(uuid.uuid4()),
+                tenant_id=tenant_id,
+                account_code=acc_code,
+                niif_line_code=niif_code,
+                is_contra=is_contra,
+            ))
+            updated += 1
+    db.commit()
+    return updated
 
 
 def get_unmapped_accounts(tenant_id: str, db: Session) -> list[dict]:

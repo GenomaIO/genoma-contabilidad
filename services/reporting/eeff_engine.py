@@ -134,14 +134,17 @@ class EeffEngine:
             is_contra  = mapping["is_contra"]
             acct_type  = saldo["account_type"]
 
-            # Saldo neto según naturaleza de la cuenta
+            # Saldo neto según naturaleza de la cuenta (NIIF Sec. 4)
+            # ACTIVO/GASTO: saldo normal Deudor  → Debe - Haber = positivo
+            # PASIVO/PAT/INGRESO: saldo normal Acreedor → Haber - Debe = positivo
+            # ⚠️ NO aplicar -net: credit-debit ya devuelve positivo.
+            # El contexto (Pasivos/Patrimonio/Ingresos) da el signo en la presentación.
             if acct_type in ("ACTIVO", "GASTO"):
                 net = saldo["debit"] - saldo["credit"]   # DR normal
             else:
-                net = saldo["credit"] - saldo["debit"]   # CR normal
-                net = -net  # Lo convertimos a positivo para presentación CR
+                net = saldo["credit"] - saldo["debit"]   # CR normal → ya es positivo
 
-            # Las contra-cuentas se restan de la partida
+            # Las contra-cuentas (ej. Dep. Acumulada) se restan de su partida NIIF
             if is_contra:
                 net = -abs(net)
 
@@ -491,6 +494,18 @@ class EeffEngine:
 
         esf = self._build_esf(buckets, detail)
         eri = self._build_eri(buckets, detail)
+
+        # ── Inyectar Resultado del Período en ESF.PAT.04 ─────────────
+        # Durante el año (sin asiento de cierre) la utilidad/pérdida vive en
+        # las cuentas 4xxx/5xxx (ERI). ESF.PAT.04 queda en ¢0 hasta el cierre.
+        # Para que el ESF cierre (A = P + PAT) se inyecta la utilidad del ERI.
+        # Idéntico al comportamiento de SAP B1, Defontana, QuickBooks Avanzado:
+        # el motor ES quien "pre-cierra" el resultado en el Balance.
+        utilidad_neta_eri = Decimal(str(eri["totals"]["utilidad_neta"]))
+        if buckets.get("ESF.PAT.04", Decimal("0")) == Decimal("0") and utilidad_neta_eri != Decimal("0"):
+            buckets["ESF.PAT.04"] = utilidad_neta_eri
+            esf = self._build_esf(buckets, detail)   # reconstruir con bucket actualizado
+
         ecp = self._build_ecp(
             buckets_current=buckets,
             buckets_prior=buckets_prior,
