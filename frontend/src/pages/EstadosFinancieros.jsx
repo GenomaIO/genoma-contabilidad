@@ -1295,60 +1295,62 @@ export default function EstadosFinancieros() {
                         NIIF PYMES 3ª Edición · Feb 2025 · IASB
                     </p>
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                    {/* Selector de año */}
-                    <select
-                        id="eeff-year-select"
-                        value={year}
-                        onChange={e => setYear(e.target.value)}
-                        style={{
-                            background: 'var(--bg-card)', color: 'var(--text-primary)',
-                            border: '1px solid var(--border)', borderRadius: 8,
-                            padding: '7px 12px', fontSize: '0.85rem', cursor: 'pointer',
-                        }}
-                    >
-                        {years.map(y => (
-                            <option key={y} value={y}>Año {y}</option>
-                        ))}
-                    </select>
-                    {/* Toggle comparativo N-1 — NIIF Sec. 3.14: siempre visible */}
-                    <button
-                        id="eeff-comparar-btn"
-                        onClick={() => setShowCompar(s => !s)}
-                        title={data?.has_prior
-                            ? `Comparar con ${data.prior_year}`
-                            : `Mostrar columna ${data ? parseInt(data.year || year) - 1 : parseInt(year) - 1} (primer año — valores en cero)`}
-                        style={{
-                            background: showCompar ? 'rgba(6,182,212,0.15)' : 'var(--bg-card)',
-                            border: `1px solid ${showCompar ? 'rgba(6,182,212,0.4)' : 'var(--border)'}`,
-                            color: showCompar ? '#06b6d4' : 'var(--text-muted)',
-                            borderRadius: 8, padding: '7px 14px',
-                            fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer',
-                        }}
-                    >
-                        {showCompar
-                            ? (data?.has_prior ? '📊 Comparativo ON' : '📊 Comparativo (primer año)')
-                            : '📊 Comparativo'}
-                    </button>
-
-                    {/* Botón regenerar */}
-                    <button
-                        id="eeff-reload-btn"
-                        onClick={loadEeff}
-                        disabled={loading}
-                        style={{
-                            background: loading ? 'var(--bg-card)' : 'rgba(139,92,246,0.15)',
-                            border: '1px solid rgba(139,92,246,0.35)',
-                            color: loading ? 'var(--text-muted)' : '#a78bfa',
-                            borderRadius: 8, padding: '7px 16px',
-                            fontSize: '0.82rem', fontWeight: 600, cursor: loading ? 'default' : 'pointer',
-                        }}
-                    >
-                        {loading ? '⏳ Calculando...' : '🔄 Generar EEFF'}
-                    </button>
-                    {/* ── Botones Excel + Imprimir — estilo Balance de Comprobación ── */}
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8 }}>
+                    {/* ── Fila 1: Año + Comparativo + Generar ── */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                        {/* Selector de año */}
+                        <select
+                            id="eeff-year-select"
+                            value={year}
+                            onChange={e => setYear(e.target.value)}
+                            style={{
+                                background: 'var(--bg-card)', color: 'var(--text-primary)',
+                                border: '1px solid var(--border)', borderRadius: 8,
+                                padding: '7px 12px', fontSize: '0.85rem', cursor: 'pointer',
+                            }}
+                        >
+                            {years.map(y => (
+                                <option key={y} value={y}>Año {y}</option>
+                            ))}
+                        </select>
+                        {/* Toggle comparativo N-1 — NIIF Sec. 3.14: siempre visible */}
+                        <button
+                            id="eeff-comparar-btn"
+                            onClick={() => setShowCompar(s => !s)}
+                            title={data?.has_prior
+                                ? `Comparar con ${data.prior_year}`
+                                : `Mostrar columna ${data ? parseInt(data.year || year) - 1 : parseInt(year) - 1} (primer año — valores en cero)`}
+                            style={{
+                                background: showCompar ? 'rgba(6,182,212,0.15)' : 'var(--bg-card)',
+                                border: `1px solid ${showCompar ? 'rgba(6,182,212,0.4)' : 'var(--border)'}`,
+                                color: showCompar ? '#06b6d4' : 'var(--text-muted)',
+                                borderRadius: 8, padding: '7px 14px',
+                                fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer',
+                            }}
+                        >
+                            {showCompar
+                                ? (data?.has_prior ? '📊 Comparativo ON' : '📊 Comparativo (primer año)')
+                                : '📊 Comparativo'}
+                        </button>
+                        {/* Botón regenerar */}
+                        <button
+                            id="eeff-reload-btn"
+                            onClick={loadEeff}
+                            disabled={loading}
+                            style={{
+                                background: loading ? 'var(--bg-card)' : 'rgba(139,92,246,0.15)',
+                                border: '1px solid rgba(139,92,246,0.35)',
+                                color: loading ? 'var(--text-muted)' : '#a78bfa',
+                                borderRadius: 8, padding: '7px 16px',
+                                fontSize: '0.82rem', fontWeight: 600, cursor: loading ? 'default' : 'pointer',
+                            }}
+                        >
+                            {loading ? '⏳ Calculando...' : '🔄 Generar EEFF'}
+                        </button>
+                    </div>
+                    {/* ── Fila 2: Excel + Imprimir (solo si hay datos) ── */}
                     {data && (
-                        <>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                             <button
                                 id="eeff-excel-btn"
                                 onClick={exportToExcel}
@@ -1379,9 +1381,9 @@ export default function EstadosFinancieros() {
                             >
                                 🖨️ Imprimir
                             </button>
-                        </>
+                        </div>
                     )}
-                </div>
+                </div>                </div>
             </div>
 
             {/* ── Warning de cuentas sin mapear ───────────────── */}
