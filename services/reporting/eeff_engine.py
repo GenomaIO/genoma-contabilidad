@@ -115,34 +115,75 @@ class EeffEngine:
           ACTIVO / GASTO:     balance = Debit - Credit (saldo normal DR)
           PASIVO / PAT / ING: balance = Credit - Debit (saldo normal CR)
         """
+        # ── Overrides de prefijo: corrección de último recurso ────────────
+        # Aplica ANTES de consultar niif_mappings. Garantiza que los prefijos
+        # críticos siempre aterricen en la línea NIIF correcta,
+        # independientemente de lo que haya en la tabla niif_mappings.
+        #
+        # Causa raíz: seed_standard_mapping() y el wizard pueden haber
+        # creado entradas con niif_line_code incorrecto (ej: 1201.04 →
+        # ESF.AC.02) que sobreviven reinicios porque el try/except del
+        # lifespan puede silenciar el fix de DB.
+        #
+        # Clave: código normalizado sin punto, 4 dígitos (ej: "1201.04" → "1201")
+        NIIF_PREFIX_OVERRIDE: dict[str, tuple[str, bool]] = {
+            # (niif_line_code, is_contra)
+            # ── Activo No Corriente — PPE (Sec. 17) ──
+            "1201": ("ESF.ANC.01", False),  # Vehículos, Terrenos, Edificios, Maquinaria
+            "1202": ("ESF.ANC.01", True),   # Depreciación Acumulada PPE (contra)
+            # ── Activo No Corriente — Intangibles (Sec. 18) ──
+            "1203": ("ESF.ANC.03", False),  # Intangibles adquiridos
+            "1601": ("ESF.ANC.03", False),  # Software
+            "1602": ("ESF.ANC.03", False),  # Marcas y patentes
+            "1690": ("ESF.ANC.03", True),   # Amortización acumulada intangibles
+            # ── Activo No Corriente — Otros ──
+            "1204": ("ESF.ANC.05", False),  # Inversiones en asociadas (Sec. 14)
+            "1205": ("ESF.ANC.07", False),  # Otros ANC (CxC LP, Efectos LP)
+            "1701": ("ESF.ANC.06", False),  # Activo por ISR diferido (Sec. 29)
+            # ── Pasivo No Corriente ──
+            "2201": ("ESF.PNC.01", False),  # Préstamos bancarios LP
+            "2202": ("ESF.PNC.03", False),  # Provisión aguinaldo/cesantía LP
+            "2203": ("ESF.PNC.04", False),  # Otros pasivos no corrientes
+            "2701": ("ESF.PNC.02", False),  # Pasivo por ISR diferido
+        }
+
         # Inicializar acumuladores para cada partida
         buckets: dict[str, Decimal] = defaultdict(Decimal)
         detail:  dict[str, list]    = defaultdict(list)
         unmapped_codes = []
 
         for code, saldo in trial_balance.items():
-            mapping = mappings.get(code)
-            if not mapping:
-                # Intentar mapeo por prefijo (primeros 4 dígitos)
-                prefix4 = code[:4] if len(code) >= 4 else code
-                mapping = mappings.get(prefix4)
-            if not mapping:
-                unmapped_codes.append(code)
-                continue
+            # 1. Normalizar código: eliminar punto y tomar los primeros 4 dígitos
+            #    "1201.04" → "120104"[:4] → "1201"
+            #    "1202.03" → "120203"[:4] → "1202"
+            prefix4_norm = code.replace(".", "")[:4]
 
-            niif_code  = mapping["niif_line_code"]
-            is_contra  = mapping["is_contra"]
-            acct_type  = saldo["account_type"]
+            # 2. Aplicar override si el prefijo está en la tabla de correcciones
+            if prefix4_norm in NIIF_PREFIX_OVERRIDE:
+                niif_code, is_contra = NIIF_PREFIX_OVERRIDE[prefix4_norm]
+            else:
+                # 3. Buscar en niif_mappings (código exacto → prefijo con punto)
+                mapping = mappings.get(code)
+                if not mapping:
+                    # Fallback: prefijo de 4 caracteres con punto (ej: "1201" de "1201.04")
+                    prefix4_dot = code[:4] if len(code) >= 4 else code
+                    mapping = mappings.get(prefix4_dot)
+                if not mapping:
+                    unmapped_codes.append(code)
+                    continue
+
+                niif_code = mapping["niif_line_code"]
+                is_contra = mapping["is_contra"]
+
+            acct_type = saldo["account_type"]
 
             # Saldo neto según naturaleza de la cuenta (NIIF Sec. 4)
             # ACTIVO/GASTO: saldo normal Deudor  → Debe - Haber = positivo
             # PASIVO/PAT/INGRESO: saldo normal Acreedor → Haber - Debe = positivo
-            # ⚠️ NO aplicar -net: credit-debit ya devuelve positivo.
-            # El contexto (Pasivos/Patrimonio/Ingresos) da el signo en la presentación.
             if acct_type in ("ACTIVO", "GASTO"):
                 net = saldo["debit"] - saldo["credit"]   # DR normal
             else:
-                net = saldo["credit"] - saldo["debit"]   # CR normal → ya es positivo
+                net = saldo["credit"] - saldo["debit"]   # CR normal
 
             # Las contra-cuentas (ej. Dep. Acumulada) se restan de su partida NIIF
             if is_contra:
@@ -161,6 +202,7 @@ class EeffEngine:
             "detail":         dict(detail),
             "unmapped_codes": unmapped_codes,
         }
+
 
     # ─────────────────────────────────────────────────────────────
     # 4. Construir ESF
