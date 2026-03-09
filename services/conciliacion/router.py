@@ -1001,6 +1001,7 @@ def get_d270_preview(period: str, request: Request, db: Session = Depends(_get_d
     }
 
 
+
 @router.get("/centinela/d270/{period}/export", response_class=PlainTextResponse)
 def export_d270(period: str, db: Session = Depends(_get_db)):
     """Exporta el CSV del D-270 en formato Tribu-CR."""
@@ -1022,7 +1023,140 @@ def export_d270(period: str, db: Session = Depends(_get_db)):
     )
 
 
+# ── D-150 — Declaración informativa anual ────────────────────────────────────
+
+@router.get("/centinela/d150/{year}")
+def get_d150_preview(year: str, request: Request, db: Session = Depends(_get_db)):
+    """
+    Pre-forma D-150: beneficiarios con transacciones acumuladas ≥ ₡1,000,000 en el año.
+
+    La D-150 es una declaración informativa anual (Formulario D-150) que deben
+    presentar contribuyentes que paguen a un mismo proveedor/persona más de
+    ₡1,000,000 en el año calendario.
+
+    SEGURIDAD: tenant_id del JWT.
+    """
+    tenant_id = _get_tenant(request)
+
+    rows = db.execute(text("""
+        SELECT nombre_norm, telefono, categoria,
+               total_debitos, total_creditos,
+               d150_monto_anual,
+               n_transacciones, primer_periodo, ultimo_periodo
+        FROM bank_counterparties
+        WHERE tenant_id = :tid
+          AND d150_flag = TRUE
+          AND d150_monto_anual >= 1000000
+        ORDER BY d150_monto_anual DESC
+    """), {"tid": tenant_id}).fetchall()
+
+    partidas = []
+    for r in rows:
+        row = dict(r._mapping)
+        row["cedula"] = "PENDIENTE"   # El usuario debe completar la cédula
+        row["aviso"]  = "⚠️ Verifique cédula del beneficiario antes de presentar el D-150"
+        partidas.append(row)
+
+    return {
+        "year":           year,
+        "partidas":       partidas,
+        "total_partidas": len(partidas),
+        "umbral":         1_000_000,
+        "moneda":         "CRC",
+        "plazo_limite":   "Enero del año siguiente (consulte Hacienda para fecha exacta)",
+        "nota":           "Las cédulas aparecen como PENDIENTE — complete antes de declarar",
+    }
+
+
+@router.get("/centinela/d150/{year}/export", response_class=PlainTextResponse)
+def export_d150(year: str, request: Request, db: Session = Depends(_get_db)):
+    """Exporta el D-150 pre-forma como CSV descargable."""
+    tenant_id = _get_tenant(request)
+
+    rows = db.execute(text("""
+        SELECT nombre_norm, telefono, d150_monto_anual, n_transacciones
+        FROM bank_counterparties
+        WHERE tenant_id = :tid
+          AND d150_flag = TRUE
+          AND d150_monto_anual >= 1000000
+        ORDER BY d150_monto_anual DESC
+    """), {"tid": tenant_id}).fetchall()
+
+    lines = ["beneficiario,cedula,telefono,monto_total_crc,n_transacciones,aviso"]
+    for r in rows:
+        row = dict(r._mapping)
+        lines.append(
+            f"{row['nombre_norm']},PENDIENTE,{row.get('telefono','')or''},"
+            f"{row['d150_monto_anual']:.2f},{row['n_transacciones']},"
+            f"Completar cédula antes de declarar"
+        )
+
+    csv_content = "\n".join(lines)
+    return PlainTextResponse(
+        content=csv_content,
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename=D150_{year}.csv"}
+    )
+
+
+@router.get("/centinela/resultado/{recon_id}/export", response_class=PlainTextResponse)
+def export_resultado(recon_id: str, request: Request, db: Session = Depends(_get_db)):
+    """
+    Exporta el resultado completo de una sesión de conciliación como CSV.
+    Incluye: fecha, descripcion, monto, tipo, tiene_fe, tarifa_iva, iva_estimado,
+             beneficiario_nombre, match_estado.
+
+    Equivalente a un Excel — permite análisis externo y revisión del contador.
+    SEGURIDAD: verifica tenant_id del JWT.
+    """
+    tenant_id = _get_tenant(request)
+
+    sesion = db.execute(text(
+        "SELECT banco, period FROM bank_reconciliation WHERE id = :id AND tenant_id = :tid"
+    ), {"id": recon_id, "tid": tenant_id}).fetchone()
+    if not sesion:
+        raise HTTPException(status_code=404, detail="Sesión no encontrada")
+
+    rows = db.execute(text("""
+        SELECT fecha, descripcion, monto, tipo, moneda,
+               tiene_fe, fe_numero, tarifa_iva, iva_estimado, base_estimada,
+               match_estado, beneficiario_nombre, beneficiario_categoria,
+               d270_codigo, accion
+        FROM bank_transactions
+        WHERE recon_id = :id
+        ORDER BY fecha, tipo DESC
+    """), {"id": recon_id}).fetchall()
+
+    lines = [
+        "fecha,descripcion,monto,tipo,moneda,tiene_fe,tarifa_iva_pct,"
+        "iva_estimado,base_estimada,match_estado,beneficiario,categoria,d270,accion"
+    ]
+    for r in rows:
+        rd = dict(r._mapping)
+        tiene_fe_str = "SI" if rd.get("tiene_fe") else "NO"
+        lines.append(
+            f"{rd.get('fecha','')},{rd.get('descripcion','').replace(',',';')},"
+            f"{rd.get('monto','')},{rd.get('tipo','')},{rd.get('moneda','CRC')},"
+            f"{tiene_fe_str},{rd.get('tarifa_iva','')},{rd.get('iva_estimado','') or 0},"
+            f"{rd.get('base_estimada','') or 0},{rd.get('match_estado','')},"
+            f"{(rd.get('beneficiario_nombre','') or '').replace(',',';')},"
+            f"{rd.get('beneficiario_categoria','')},"
+            f"{rd.get('d270_codigo','') or ''},{(rd.get('accion','') or '').replace(',',';')}"
+        )
+
+    csv_content = "\n".join(lines)
+    banco = sesion.banco or "BANCO"
+    period = sesion.period or "periodo"
+    return PlainTextResponse(
+        content=csv_content,
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename=Conciliacion_{banco}_{period}.csv"}
+    )
+
+
 # ── Bank Rules ───────────────────────────────────────────────────────────────
+
+
 
 @router.post("/conciliacion/rule")
 def save_rule(rule: BankRule, request: Request, db: Session = Depends(_get_db)):
