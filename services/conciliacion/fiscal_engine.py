@@ -1,0 +1,368 @@
+"""
+fiscal_engine.py — Motor CENTINELA: Detector de Fugas Fiscales
+
+Analiza las transacciones bancarias contra la normativa CR vigente y genera:
+- Score de riesgo fiscal (0-100)
+- Clasificación de fugas Tipo A/B/C
+- Estimación de IVA y renta en riesgo
+- Pre-llenado del D-270
+
+Normativa base:
+  - Decreto 44739-H: SINPE comercial debe tener FE con código 06
+  - D-270: Declarar mensualmente gastos sin FE (vigente enero 2026)
+  - Ley 7092 Art. 8: Gastos deducibles solo con FE o D-270
+"""
+from __future__ import annotations
+import re
+import logging
+from typing import Optional
+
+logger = logging.getLogger(__name__)
+
+IVA_RATE = 0.13
+
+# ── Diccionario de keywords CR ───────────────────────────────────────────────
+# Mapa: keyword → {tipo_transaccion, d270_codigo, clasificacion, nota}
+CR_KEYWORDS: dict[str, dict] = {
+    # Instituciones públicas (exentas de FE pero van en D-270)
+    "CCSS":          {"tipo": "DB", "d270": "C",  "clasificacion": "CARGA_SOCIAL",    "nota": "Pago CCSS — puede ir en D-270"},
+    "INS":           {"tipo": "DB", "d270": "C",  "clasificacion": "SEGURO",          "nota": "Seguro INS — verificar FE o D-270"},
+    "AYA":           {"tipo": "DB", "d270": "C",  "clasificacion": "SERVICIO_PUBLICO", "nota": "Agua AyA — exenta, verificar documento"},
+    "ICE":           {"tipo": "DB", "d270": "C",  "clasificacion": "SERVICIO_PUBLICO", "nota": "Servicio ICE — verificar FE"},
+    "RECOPE":        {"tipo": "DB", "d270": "C",  "clasificacion": "COMBUSTIBLE",     "nota": "Combustible RECOPE"},
+    "HACIENDA":      {"tipo": "DB", "d270": None, "clasificacion": "PAGO_IMPUESTO",   "nota": "Pago a Hacienda — no deducible como gasto"},
+    "MUNICIPALIDAD": {"tipo": "DB", "d270": "C",  "clasificacion": "IMPUESTO_LOCAL",  "nota": "Pago municipalidad — verificar D-270"},
+    "CONAVI":        {"tipo": "DB", "d270": "C",  "clasificacion": "SERVICIO_PUBLICO", "nota": "CONAVI — entidad pública"},
+    "COSEVI":        {"tipo": "DB", "d270": None, "clasificacion": "MULTA",           "nota": "COSEVI — posible multa, no deducible"},
+    # Servicios de telecomunicaciones (emiten FE)
+    "KOLBI":         {"tipo": "DB", "d270": None, "clasificacion": "TELEFONO",        "nota": "KOLBI — verificar FE recibida"},
+    "CLARO":         {"tipo": "DB", "d270": None, "clasificacion": "TELEFONO",        "nota": "CLARO — verificar FE recibida"},
+    "MOVISTAR":      {"tipo": "DB", "d270": None, "clasificacion": "TELEFONO",        "nota": "MOVISTAR — verificar FE recibida"},
+    "LIBERTY":       {"tipo": "DB", "d270": None, "clasificacion": "INTERNET",        "nota": "Liberty — verificar FE"},
+    "CABLETICA":     {"tipo": "DB", "d270": None, "clasificacion": "INTERNET",        "nota": "Cabletica — verificar FE"},
+    # Gastos laborales
+    "PLANILLA":      {"tipo": "DB", "d270": None, "clasificacion": "SALARIO",         "nota": "Pago planilla — requiere comprobante patronal"},
+    "SALARIO":       {"tipo": "DB", "d270": None, "clasificacion": "SALARIO",         "nota": "Salario — verificar planilla CCSS"},
+    "NOMINA":        {"tipo": "DB", "d270": None, "clasificacion": "SALARIO",         "nota": "Nómina — verificar planilla CCSS"},
+    # Alquileres y préstamos
+    "ALQUILER":      {"tipo": "DB", "d270": "A",  "clasificacion": "ALQUILER",        "nota": "Alquiler — si no hay FE, incluir en D-270 (A)"},
+    "ARRENDAMIENTO": {"tipo": "DB", "d270": "A",  "clasificacion": "ALQUILER",        "nota": "Arrendamiento — D-270 tipo A"},
+    "CUOTA":         {"tipo": "DB", "d270": "I",  "clasificacion": "PRESTAMO",        "nota": "Cuota préstamo — intereses en D-270 (I)"},
+    "INTERES":       {"tipo": "DB", "d270": "I",  "clasificacion": "INTERES",         "nota": "Interés bancario — D-270 tipo I"},
+    "CREDITO":       {"tipo": "DB", "d270": "I",  "clasificacion": "PRESTAMO",        "nota": "Crédito — verificar capital vs intereses"},
+    # Profesionales (requieren FE o van en D-270 SP)
+    "HONORARIO":     {"tipo": "DB", "d270": "SP", "clasificacion": "SERV_PROF",       "nota": "Honorario — si sin FE, incluir en D-270 (SP)"},
+    "ABOGADO":       {"tipo": "DB", "d270": "SP", "clasificacion": "SERV_PROF",       "nota": "Abogado — D-270 tipo SP si sin FE"},
+    "CONTADOR":      {"tipo": "DB", "d270": "SP", "clasificacion": "SERV_PROF",       "nota": "Contador — D-270 tipo SP si sin FE"},
+    "MEDICO":        {"tipo": "DB", "d270": "SP", "clasificacion": "SERV_PROF",       "nota": "Médico — D-270 tipo SP si sin FE"},
+    "CONSULTOR":     {"tipo": "DB", "d270": "SP", "clasificacion": "SERV_PROF",       "nota": "Consultor — D-270 tipo SP si sin FE"},
+    # Comisiones
+    "COMISION":      {"tipo": "DB", "d270": "M",  "clasificacion": "COMISION",        "nota": "Comisión — D-270 tipo M si sin FE"},
+    # Ingresos típicos
+    "SINPE":         {"tipo": "CR", "d270": None, "clasificacion": "INGRESO_SINPE",   "nota": "SINPE — verificar FE emitida (Decreto 44739-H)"},
+    "DEPOSITO":      {"tipo": "CR", "d270": None, "clasificacion": "INGRESO",         "nota": "Depósito — verificar origen y FE"},
+    "TRANSFERENCIA": {"tipo": "CR", "d270": None, "clasificacion": "TRANSFERENCIA",   "nota": "Transferencia — verificar si es ingreso gravable"},
+}
+
+
+# ── Funciones de cálculo IVA ─────────────────────────────────────────────────
+
+def calcular_iva_incluido(monto_bruto: float) -> dict:
+    """
+    Desglosa un monto que ya incluye el IVA del 13%.
+    
+    monto_bruto = base + IVA = base * 1.13
+    base = monto_bruto / 1.13
+    IVA  = monto_bruto - base = monto_bruto * (0.13/1.13)
+    """
+    base = round(monto_bruto / (1 + IVA_RATE), 2)
+    iva  = round(monto_bruto - base, 2)
+    return {"base": base, "iva": iva, "bruto": monto_bruto}
+
+
+# ── Clasificación de fugas ───────────────────────────────────────────────────
+
+def clasificar_fuga(txn: dict, fe_emitidas: list[dict], fe_recibidas: list[dict]) -> dict:
+    """
+    Determina el tipo de fuga fiscal de una transacción sin match en libros.
+
+    Tipo A: INGRESO sin FE emitida correspondiente
+    Tipo B: GASTO sin FE recibida (y sin D-270)
+    Tipo C: SINPE sin código 06 en FE emitida
+    """
+    monto  = float(txn.get("monto", 0))
+    tipo   = txn.get("tipo", "")
+    desc   = (txn.get("descripcion") or "").upper()
+
+    calc = calcular_iva_incluido(monto)
+
+    if tipo == "CR":
+        # Buscar FE emitida por monto similar en el período
+        fecha = txn.get("fecha", "")
+        period = fecha[:7].replace("-", "") if fecha else ""
+        fe_match = _find_fe_match(monto, period, fe_emitidas)
+
+        if "SINPE" in desc:
+            if fe_match and fe_match.get("medio_pago") != "06":
+                return {
+                    "fuga_tipo":   "C",
+                    "descripcion": "SINPE cobrado pero FE tiene medio de pago incorrecto (no es código 06)",
+                    "accion":      "Corregir FE: cambiar medio de pago a SINPE Móvil (código 06)",
+                    "iva_riesgo":  0.0,
+                    "base_riesgo": 0.0,
+                    "d270_codigo": None,
+                    "score_pts":   5,
+                }
+            elif not fe_match:
+                return {
+                    "fuga_tipo":   "A",
+                    "descripcion": "SINPE recibido sin FE emitida correspondiente — Decreto 44739-H",
+                    "accion":      "Emitir FE con medio de pago SINPE Móvil (código 06)",
+                    "iva_riesgo":  calc["iva"],
+                    "base_riesgo": calc["base"],
+                    "d270_codigo": None,
+                    "score_pts":   15,
+                }
+        else:
+            if not fe_match:
+                return {
+                    "fuga_tipo":   "A",
+                    "descripcion": "Ingreso recibido (no SINPE) sin FE correspondiente",
+                    "accion":      "Emitir FE o justificar como ingreso no gravable",
+                    "iva_riesgo":  calc["iva"],
+                    "base_riesgo": calc["base"],
+                    "d270_codigo": None,
+                    "score_pts":   15,
+                }
+        return {}  # OK — tiene FE
+
+    elif tipo == "DB":
+        # Buscar FE recibida por monto similar
+        fecha = txn.get("fecha", "")
+        period = fecha[:7].replace("-", "") if fecha else ""
+        fe_match = _find_fe_match(monto, period, fe_recibidas)
+
+        if fe_match:
+            return {}  # OK — tiene FE de respaldo
+
+        # Determinar código D-270 por keyword
+        d270_codigo = _detectar_d270_codigo(desc)
+
+        if d270_codigo:
+            return {
+                "fuga_tipo":   "B",
+                "descripcion": f"Gasto sin FE recibida — debe incluirse en D-270 como tipo {d270_codigo}",
+                "accion":      f"Incluir en D-270 mensual (código {d270_codigo}) antes del día 10",
+                "iva_riesgo":  calc["iva"],  # IVA acreditable perdido
+                "base_riesgo": calc["base"],
+                "d270_codigo": d270_codigo,
+                "score_pts":   12,
+            }
+        else:
+            return {
+                "fuga_tipo":   "B",
+                "descripcion": "Gasto sin FE recibida — tipo D-270 por determinar",
+                "accion":      "Verificar si aplica D-270 y bajo qué código",
+                "iva_riesgo":  calc["iva"],
+                "base_riesgo": calc["base"],
+                "d270_codigo": None,
+                "score_pts":   10,
+            }
+
+    return {}
+
+
+def _find_fe_match(monto: float, period: str, fe_list: list[dict]) -> Optional[dict]:
+    """Busca una FE con monto similar (±2%) en el período dado."""
+    for fe in fe_list:
+        fe_period = str(fe.get("period", fe.get("periodo", "")))
+        if period and fe_period and fe_period[:6] != period[:6]:
+            continue
+        fe_monto = float(fe.get("total", fe.get("monto_total", 0)) or 0)
+        if fe_monto > 0 and abs(fe_monto - monto) / max(fe_monto, 1) <= 0.02:
+            return fe
+    return None
+
+
+def _detectar_d270_codigo(descripcion: str) -> Optional[str]:
+    """Detecta el código D-270 apropiado por keywords en la descripción."""
+    desc = descripcion.upper()
+    for kw, info in CR_KEYWORDS.items():
+        if kw in desc and info.get("d270"):
+            return info["d270"]
+    return None
+
+
+# ── Motor de scoring CENTINELA ───────────────────────────────────────────────
+
+REGLAS_SCORE = [
+    # (id, descripción, puntos_max, función_evaluadora)
+    ("R01", "SINPE sin FE emitida",                    40),
+    ("R02", "Gasto por transfer sin FE recibida",       30),
+    ("R03", "Gasto sin FE y sin D-270",                 30),
+    ("R04", "Depósito ≥ ₡500K sin FE",                 40),
+    ("R05", "Diferencia saldo banco vs libros > ₡50K",   8),
+    ("R06", "Mismo teléfono ≥3 pagos sin FE emitida",   15),
+    ("R07", "Cuotas bancarias sin D-270 (I)",             5),
+    ("R10", "Ingresos banco > FE emitidas × 1.10",      25),
+]
+
+
+def calcular_score(
+    fugas: list[dict],
+    saldo_diff: dict,
+    ingresos_banco: float,
+    total_fe_emitidas: float,
+) -> dict:
+    """
+    Calcula el score de riesgo CENTINELA (0-100).
+
+    Args:
+        fugas: Lista de fugas detectadas (output de clasificar_fuga)
+        saldo_diff: Output de calcular_diferencia_saldo
+        ingresos_banco: Total de créditos (ingresos) en banco
+        total_fe_emitidas: Total de FE emitidas en el período
+
+    Returns:
+        dict con score_total, detalle, exposicion_iva, exposicion_total
+    """
+    score = 0
+    detalle = []
+    exposicion_iva   = 0.0
+    exposicion_renta = 0.0
+    fugas_a = fugas_b = fugas_c = 0
+    d270_items = []
+
+    for fuga in fugas:
+        if not fuga:
+            continue
+        pts = min(fuga.get("score_pts", 0), 40)
+        score += pts
+        tipo = fuga.get("fuga_tipo", "")
+        if tipo == "A": fugas_a += 1
+        if tipo == "B": fugas_b += 1
+        if tipo == "C": fugas_c += 1
+        exposicion_iva   += float(fuga.get("iva_riesgo", 0))
+        base = float(fuga.get("base_riesgo", 0))
+        exposicion_renta += base * 0.15  # tasa estimada conservadora
+
+        detalle.append({
+            "regla":  f"R0{1 if tipo=='A' else 2 if tipo=='B' else 3}",
+            "tipo":   tipo,
+            "puntos": pts,
+            "desc":   fuga.get("descripcion", ""),
+        })
+
+        # Si tiene código D-270, va al borrador
+        if fuga.get("d270_codigo") and tipo == "B":
+            d270_items.append({
+                "descripcion":  fuga.get("txn_descripcion", "Sin descripción"),
+                "monto":        fuga.get("base_riesgo", 0),
+                "d270_codigo":  fuga["d270_codigo"],
+                "observacion":  fuga.get("accion", ""),
+            })
+
+    # R05 — diferencia saldo
+    if saldo_diff.get("estado") == "DIFERENCIA_SIGNIFICATIVA":
+        score += 8
+        detalle.append({"regla": "R05", "puntos": 8, "desc": saldo_diff.get("observacion")})
+
+    # R10 — ingresos banco >> FE emitidas
+    if total_fe_emitidas > 0 and ingresos_banco > total_fe_emitidas * 1.10:
+        score += 25
+        detalle.append({
+            "regla": "R10", "puntos": 25,
+            "desc": f"Ingresos banco ₡{ingresos_banco:,.0f} > FE ₡{total_fe_emitidas:,.0f} × 1.10"
+        })
+
+    score = min(score, 100)
+
+    if score <= 30:
+        nivel, emoji = "SALUDABLE", "🟢"
+    elif score <= 60:
+        nivel, emoji = "MODERADO",  "🟡"
+    elif score <= 80:
+        nivel, emoji = "EN_RIESGO", "🟠"
+    else:
+        nivel, emoji = "CRITICO",   "🔴"
+
+    return {
+        "score_total":      score,
+        "nivel":            nivel,
+        "emoji":            emoji,
+        "fugas_tipo_a":     fugas_a,
+        "fugas_tipo_b":     fugas_b,
+        "fugas_tipo_c":     fugas_c,
+        "exposicion_iva":   round(exposicion_iva, 2),
+        "exposicion_renta": round(exposicion_renta, 2),
+        "exposicion_total": round(exposicion_iva + exposicion_renta, 2),
+        "d270_regs":        len(d270_items),
+        "d270_items":       d270_items,
+        "detalle":          detalle,
+    }
+
+
+# ── Generador D-270 ──────────────────────────────────────────────────────────
+
+D270_CODIGOS = {
+    "V":  "Ventas a clientes sin comprobante electrónico",
+    "C":  "Compras a proveedores sin comprobante electrónico",
+    "SP": "Servicios profesionales sin comprobante electrónico",
+    "A":  "Alquileres sin comprobante electrónico",
+    "M":  "Comisiones sin comprobante electrónico",
+    "I":  "Intereses a entidades financieras",
+}
+
+
+def generar_d270_csv(
+    tenant_id: str,
+    identificacion: str,
+    nombre: str,
+    period: str,          # YYYYMM
+    items: list[dict],    # {d270_codigo, monto, descripcion, contact_name}
+) -> str:
+    """
+    Genera el CSV de la D-270 en el formato esperado por Tribu-CR.
+    period: YYYYMM (ej: 202602 para febrero 2026)
+
+    Formato CSV:
+    periodo,tipo_id_contraparte,num_id_contraparte,nombre_contraparte,tipo_txn,monto
+    """
+    lines = ["periodo,tipo_id_contraparte,num_id_contraparte,nombre_contraparte,tipo_transaccion,monto_total"]
+
+    totales = {cod: 0.0 for cod in D270_CODIGOS}
+
+    for item in items:
+        codigo = item.get("d270_codigo", "C")
+        monto  = float(item.get("monto", 0))
+        nombre_cp = item.get("contact_name") or item.get("descripcion", "SIN IDENTIFICAR")
+        id_cp     = item.get("id_contraparte", "000000000")
+        tipo_id   = "01"  # 01=cédula física, 02=cédula jurídica, 03=DIMEX
+
+        if monto <= 0:
+            continue
+
+        totales[codigo] = totales.get(codigo, 0) + monto
+        lines.append(f"{period},{tipo_id},{id_cp},{nombre_cp},{codigo},{monto:.2f}")
+
+    return "\n".join(lines)
+
+
+def generar_d270_resumen(items: list[dict]) -> dict:
+    """Genera el resumen por tipo para mostrar en el frontend."""
+    totales = {cod: 0.0 for cod in D270_CODIGOS}
+    conteos = {cod: 0    for cod in D270_CODIGOS}
+
+    for item in items:
+        cod = item.get("d270_codigo", "C")
+        if cod in totales:
+            totales[cod] += float(item.get("monto", 0))
+            conteos[cod] += 1
+
+    return {
+        "totales": totales,
+        "conteos": conteos,
+        "total_registros": sum(conteos.values()),
+        "total_monto": sum(totales.values()),
+        "codigos": D270_CODIGOS,
+    }
