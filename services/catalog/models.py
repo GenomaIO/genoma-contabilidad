@@ -98,6 +98,13 @@ class Account(Base):
     # Modo NONE: cuentas genéricas precargadas por el sistema
     is_generic    = Column(Boolean,     nullable=False, default=False)
 
+    # Cuenta reguladora (contra-account): su naturaleza es OPUESTA al tipo.
+    # Ej: Dep. Acumulada (ACTIVO) → naturaleza HABER → es_reguladora=True
+    # Ej: Devoluciones s/Ventas (INGRESO) → naturaleza DEBE → es_reguladora=True
+    # Cuando es True, la Balanza no emite alarma_naturaleza aunque el saldo
+    # esté en la columna "contraria" al tipo ORM.
+    es_reguladora = Column(Boolean,     nullable=False, default=False)
+
     created_at    = Column(DateTime(timezone=True), default=now_utc, nullable=False)
     updated_at    = Column(DateTime(timezone=True), default=now_utc, onupdate=now_utc)
 

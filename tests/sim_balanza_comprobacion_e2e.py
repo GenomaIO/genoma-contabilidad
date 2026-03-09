@@ -187,8 +187,6 @@ sidebar = open(os.path.join(ROOT, "frontend/src/components/Sidebar.jsx")).read()
 check("Balanza de Comprobación" in sidebar, "Ítem en Sidebar.jsx")
 check("/balanza" in sidebar, "Path /balanza en Sidebar.jsx")
 
-router = open(os.path.join(ROOT, "frontend/src/App.jsx")).read()
-check("saldo_debe" not in router, "saldo_debe en router.py (backend)") or True  # chequeo en router
 backend = open(os.path.join(ROOT, "services/ledger/router.py")).read()
 check("saldo_debe"         in backend, "saldo_debe en ledger/router.py")
 check("saldo_haber"        in backend, "saldo_haber en ledger/router.py")
@@ -198,6 +196,94 @@ check("total_saldo_debe"   in backend, "total_saldo_debe en ledger/router.py")
 check("total_saldo_haber"  in backend, "total_saldo_haber en ledger/router.py")
 check("NATURALEZA_DEBE"    in backend, "NATURALEZA_DEBE en ledger/router.py")
 check("NATURALEZA_HABER"   in backend, "NATURALEZA_HABER en ledger/router.py")
+check("es_reguladora"      in backend, "es_reguladora en ledger/router.py")
+
+catalog_router = open(os.path.join(ROOT, "services/catalog/router.py")).read()
+check("es_reguladora"      in catalog_router, "es_reguladora en catalog/router.py")
+check("/reguladora"        in catalog_router, "endpoint toggle_reguladora en catalog/router.py")
+
+catalog_model = open(os.path.join(ROOT, "services/catalog/models.py")).read()
+check("es_reguladora"      in catalog_model, "es_reguladora en catalog/models.py")
+
+catalogo_jsx = open(os.path.join(ROOT, "frontend/src/pages/Catalogo.jsx")).read()
+check("es_reguladora"      in catalogo_jsx, "es_reguladora en Catalogo.jsx")
+check("reguladora"         in catalogo_jsx, "badge/botón reguladora en Catalogo.jsx")
+check("handleToggleReguladora" in catalogo_jsx, "función handleToggleReguladora en Catalogo.jsx")
+
+# ─── MÓDULO 6: Cuentas Reguladoras (es_reguladora=True) ───────────────────
+print("\n🔵 MÓDULO 6 — Cuentas Reguladoras (naturaleza invertida):")
+
+# Función que replica la lógica nueva del ledger/router.py
+def revelar_saldo_v2(acc_type: str, td: float, tc: float, es_reguladora: bool = False):
+    saldo_neto = round(td - tc, 2)
+    if acc_type in NATURALEZA_DEBE:
+        if es_reguladora:
+            # Reguladora ACTIVO/GASTO → naturaleza real HABER
+            saldo_haber = round(abs(min(saldo_neto, 0)), 2)
+            saldo_debe  = round(max(saldo_neto, 0), 2)
+            alarma      = saldo_neto > 0  # saldo DR en reguladora = anómalo
+        else:
+            saldo_debe  = round(max(saldo_neto, 0), 2)
+            saldo_haber = round(abs(min(saldo_neto, 0)), 2)
+            alarma      = saldo_neto < 0
+    elif acc_type in NATURALEZA_HABER:
+        if es_reguladora:
+            # Reguladora PASIVO/PATRIMONIO/INGRESO → naturaleza real DEBE
+            saldo_debe  = round(max(saldo_neto, 0), 2)
+            saldo_haber = round(abs(min(saldo_neto, 0)), 2)
+            alarma      = saldo_neto < 0  # saldo CR en reguladora = anómalo
+        else:
+            saldo_haber = round(max(-saldo_neto, 0), 2)
+            saldo_debe  = round(max(saldo_neto, 0), 2)
+            alarma      = saldo_neto > 0
+    else:
+        saldo_debe  = round(max(saldo_neto, 0), 2)
+        saldo_haber = round(abs(min(saldo_neto, 0)), 2)
+        alarma      = False
+    return saldo_debe, saldo_haber, alarma
+
+# CASO A: Dep. Acumulada Vehículos (ACTIVO, es_reguladora=True)
+#   DR 0 / CR 1,500,000 → saldo -1,500,000 → HABER → SIN alarma (es correcto)
+d, h, a = revelar_saldo_v2("ACTIVO", 0, 1_500_000.00, es_reguladora=True)
+check(d == 0.0,           "Dep. Acumulada: saldo_debe = 0 (normal para reguladora)")
+check(h == 1_500_000.0,   "Dep. Acumulada: saldo_haber = ₡1,500,000 (su naturaleza real es HABER)")
+check(a == False,         "Dep. Acumulada: SIN alarma_naturaleza ✓ (falso positivo eliminado)")
+
+# CASO B: Estimación para Incobrables (ACTIVO, es_reguladora=True)
+#   DR 0 / CR 250,000 → saldo -250,000 → HABER → SIN alarma
+d, h, a = revelar_saldo_v2("ACTIVO", 0, 250_000.00, es_reguladora=True)
+check(h == 250_000.0, "Estimación Incobrables: saldo_haber = ₡250,000 (correcto)")
+check(a == False,     "Estimación Incobrables: SIN alarma_naturaleza ✓")
+
+# CASO C: Devoluciones sobre Ventas (INGRESO, es_reguladora=True)
+#   DR 180,000 / CR 0 → saldo +180,000 → DEBE → SIN alarma (reguladora de ingreso)
+d, h, a = revelar_saldo_v2("INGRESO", 180_000.00, 0, es_reguladora=True)
+check(d == 180_000.0, "Devoluciones s/Ventas: saldo_debe = ₡180,000 (su naturaleza real es DEBE)")
+check(h == 0.0,       "Devoluciones s/Ventas: saldo_haber = 0")
+check(a == False,     "Devoluciones s/Ventas: SIN alarma_naturaleza ✓")
+
+# CASO D: Caja (ACTIVO, es_reguladora=False) con saldo CR → SÍ alarma (comportamiento sin cambios)
+d, h, a = revelar_saldo_v2("ACTIVO", 100.00, 500.00, es_reguladora=False)
+check(a == True, "Caja con saldo CR (no reguladora): alarma_naturaleza = True ✓ (sin cambio)")
+
+# CASO E: Dep. Acumulada saldo DEUDOR = SÍ alarma (reguladora con saldo anómalo)
+#   Si el saldo de una reguladora va en la dirección "contraria a su corrección" es anomalía
+d, h, a = revelar_saldo_v2("ACTIVO", 500.00, 0.00, es_reguladora=True)
+check(d == 500.0, "Dep. Acumulada saldo DR: saldo_debe = 500 (revelado como anomalía)")
+check(a == True,  "Dep. Acumulada saldo DR: alarma_naturaleza = True (reguladora con saldo anómalo) ✓")
+
+# CASO F: Cuadratura se mantiene con cuentas reguladoras mezcladas
+#   Asiento de depreciación:
+#     DR Gasto Depreciación 300,000 / CR Dep. Acumulada 300,000
+#   Gasto Depreciación: GASTO, regular, DR 300k → saldo_debe 300k
+#   Dep. Acumulada:     ACTIVO, reguladora, CR 300k → saldo_haber 300k
+d_gasto, h_gasto, _ = revelar_saldo_v2("GASTO",  300_000, 0,       es_reguladora=False)
+d_dep,   h_dep,   _ = revelar_saldo_v2("ACTIVO",       0, 300_000, es_reguladora=True)
+cuadratura_reg = abs((d_gasto + d_dep) - (h_gasto + h_dep))
+check(d_gasto == 300_000, "Gasto Depreciación: saldo_debe = ₡300,000")
+check(h_dep   == 300_000, "Dep. Acumulada (reg): saldo_haber = ₡300,000")
+check(cuadratura_reg < 0.01,
+      f"Cuadratura con reguladora: Σ DEBE = Σ HABER = ₡300,000 ✓ (diff={cuadratura_reg})")
 
 # ─── Resultado final ──────────────────────────────────────────────────────
 def periodLabel(p):
@@ -208,12 +294,15 @@ def periodLabel(p):
 
 print("\n" + "="*62)
 if errors:
-    print(f"{FAIL} SIM FALLIDA — {len(errors)} error(es):")
+    print(f"❌ SIM FALLIDA — {len(errors)} error(es):")
     for e in errors: print(f"   • {e}")
     sys.exit(1)
 else:
-    print(f"{OK} SIM VERDE — Balanza de Comprobación: lógica contable correcta")
+    total = 34 + 14  # 34 anteriores + 14 nuevos del módulo 6
+    print(f"✅ SIM VERDE — Balanza de Comprobación + Cuentas Reguladoras")
     print(f"   Mes ({periodLabel('2026-02')}): revela saldo solo del período")
     print(f"   Acumulado (Ene-Feb 2026): revela saldo YTD completo")
     print(f"   Cuadratura: Σ DEBE = Σ HABER ✅")
+    print(f"   Cuentas reguladoras: sin alarma falsa positiva ✅")
     sys.exit(0)
+

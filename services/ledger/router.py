@@ -719,11 +719,19 @@ def trial_balance(
     accounts_map = {}
     try:
         accs = db.execute(text(
-            "SELECT code, name, account_type FROM accounts WHERE tenant_id = :tid AND is_active = true"
+            "SELECT code, name, account_type, es_reguladora FROM accounts WHERE tenant_id = :tid AND is_active = true"
         ), {"tid": tenant_id}).fetchall()
-        accounts_map = {r.code: {"name": r.name, "type": r.account_type} for r in accs}
+        accounts_map = {
+            r.code: {
+                "name":          r.name,
+                "type":          r.account_type,
+                "es_reguladora": bool(r.es_reguladora),
+            }
+            for r in accs
+        }
     except Exception:
         pass
+
 
     # ── Construir la consulta SQL según modo ─────────────────────
     if mode == "period":
@@ -800,20 +808,37 @@ def trial_balance(
         #   ACTIVO / GASTO     → naturaleza deudora   → saldo en columna DEBE
         #   PASIVO / PATRIMONIO / INGRESO
         #                      → naturaleza acreedora → saldo en columna HABER
-        # Si el saldo va contra la naturaleza (ej: una Caja con saldo CR)
-        # se marca con alarma_naturaleza=True para que el frontend lo resalte.
-        saldo_neto = round(td - tc, 2)  # + = deudor, - = acreedor
+        # EXCEPCIÓN: cuentas reguladoras (es_reguladora=True)
+        #   Su naturaleza lógica es LA INVERSA del tipo ORM.
+        #   Ej: Dep. Acumulada (ACTIVO) → naturaleza HABER → saldo CR = NORMAL
+        #   Ej: Devoluciones s/Ventas (INGRESO) → naturaleza DEBE → saldo DR = NORMAL
+        saldo_neto    = round(td - tc, 2)  # + = deudor, - = acreedor
+        es_reguladora = acc_info.get("es_reguladora", False)
 
         if acc_type in NATURALEZA_DEBE:
-            # Cuentas de naturaleza DEUDORA
-            saldo_debe  = round(max(saldo_neto, 0), 2)
-            saldo_haber = round(abs(min(saldo_neto, 0)), 2)
-            alarma_naturaleza = saldo_neto < 0  # saldo CR en cuenta deudora = anómalo
+            if es_reguladora:
+                # Reguladora de ACTIVO/GASTO → naturaleza real HABER
+                # saldo CR (saldo_neto < 0) es NORMAL → sin alarma
+                saldo_haber = round(abs(min(saldo_neto, 0)), 2)
+                saldo_debe  = round(max(saldo_neto, 0), 2)
+                alarma_naturaleza = saldo_neto > 0  # saldo DR en reguladora = anómalo
+            else:
+                # Cuenta de naturaleza DEUDORA normal
+                saldo_debe  = round(max(saldo_neto, 0), 2)
+                saldo_haber = round(abs(min(saldo_neto, 0)), 2)
+                alarma_naturaleza = saldo_neto < 0  # saldo CR en cuenta deudora = anómalo
         elif acc_type in NATURALEZA_HABER:
-            # Cuentas de naturaleza ACREEDORA
-            saldo_haber = round(max(-saldo_neto, 0), 2)  # saldo_neto negativo = acreedora
-            saldo_debe  = round(max(saldo_neto, 0), 2)
-            alarma_naturaleza = saldo_neto > 0  # saldo DR en cuenta acreedora = anómalo
+            if es_reguladora:
+                # Reguladora de PASIVO/PATRIMONIO/INGRESO → naturaleza real DEBE
+                # saldo DR (saldo_neto > 0) es NORMAL → sin alarma
+                saldo_debe  = round(max(saldo_neto, 0), 2)
+                saldo_haber = round(abs(min(saldo_neto, 0)), 2)
+                alarma_naturaleza = saldo_neto < 0  # saldo CR en reguladora = anómalo
+            else:
+                # Cuentas de naturaleza ACREEDORA normal
+                saldo_haber = round(max(-saldo_neto, 0), 2)
+                saldo_debe  = round(max(saldo_neto, 0), 2)
+                alarma_naturaleza = saldo_neto > 0  # saldo DR en cuenta acreedora = anómalo
         else:
             # Tipo desconocido: inferir por prefijo del código
             c0 = str(r.account_code)[0] if r.account_code else "0"
@@ -832,6 +857,7 @@ def trial_balance(
             "account_code":      r.account_code,
             "account_name":      acc_info.get("name", r.account_code),
             "account_type":      acc_type,
+            "es_reguladora":     es_reguladora,
             "total_debit":       round(td, 2),
             "total_credit":      round(tc, 2),
             "saldo":             saldo_neto,
@@ -839,6 +865,7 @@ def trial_balance(
             "saldo_haber":       saldo_haber,   # ← columna HABER de la balanza
             "alarma_naturaleza": alarma_naturaleza,  # saldo contra natura
         })
+
 
     # ── Invariante: Debe = Haber ──────────────────────────────────
     # La cuadratura se verifica en los SALDOS revelados (no solo en sumas)

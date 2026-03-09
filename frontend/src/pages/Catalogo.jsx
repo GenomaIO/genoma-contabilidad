@@ -54,6 +54,7 @@ export default function Catalogo() {
     const [expanded, setExpanded] = useState({})
     const [showForm, setShowForm] = useState(false)
     const [toggling, setToggling] = useState(null)
+    const [togglingReg, setTogglingReg] = useState(null)  // toggle es_reguladora
     const [seeding, setSeeding] = useState(false)
     const [error, setError] = useState(null)
     // Botón ⊕ inline
@@ -138,6 +139,24 @@ export default function Catalogo() {
             }
         } finally {
             setToggling(null)
+        }
+    }
+
+    async function handleToggleReguladora(code) {
+        setTogglingReg(code)
+        try {
+            const res = await fetch(`${apiUrl}/catalog/accounts/${code}/reguladora`, {
+                method: 'PATCH',
+                headers: { Authorization: `Bearer ${token}` }
+            })
+            if (!res.ok) {
+                const err = await res.json()
+                alert(err.detail || 'Error al cambiar estado reguladora')
+            } else {
+                await fetchAccounts()
+            }
+        } finally {
+            setTogglingReg(null)
         }
     }
 
@@ -524,6 +543,9 @@ export default function Catalogo() {
                                                 {acc.is_generic && (
                                                     <span style={{ fontSize: '0.7rem', padding: '1px 7px', background: 'rgba(124,58,237,0.15)', borderRadius: 10, color: '#7c3aed', flexShrink: 0 }}>genérica</span>
                                                 )}
+                                                {acc.es_reguladora && (
+                                                    <span title="Cuenta reguladora: naturaleza opuesta al tipo (ej: Dep. Acumulada)" style={{ fontSize: '0.7rem', padding: '1px 7px', background: 'rgba(6,182,212,0.15)', borderRadius: 10, color: '#06b6d4', flexShrink: 0, cursor: 'help' }}>reguladora</span>
+                                                )}
                                                 {!acc.is_active && (
                                                     <span style={{ fontSize: '0.7rem', padding: '1px 7px', background: 'rgba(239,68,68,0.15)', borderRadius: 10, color: '#ef4444', flexShrink: 0 }}>inactiva</span>
                                                 )}
@@ -532,7 +554,7 @@ export default function Catalogo() {
                                             {/* Acciones */}
                                             {canWrite && !acc.is_generic && (
                                                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
-                                                    {/* ⊕ Agregar sub-cuenta — en CUALQUIER cuenta activa, crea una hija directa (lógica DGCN) */}
+                                                    {/* ⊕ Agregar sub-cuenta */}
                                                     {acc.is_active && (
                                                         <button
                                                             id={`add-child-${acc.code}`}
@@ -554,6 +576,27 @@ export default function Catalogo() {
                                                             }}
                                                         >⊕</button>
                                                     )}
+                                                    {/* ⇄ Toggle reguladora — visible al hover */}
+                                                    <button
+                                                        id={`toggle-reg-${acc.code}`}
+                                                        onClick={() => handleToggleReguladora(acc.code)}
+                                                        disabled={togglingReg === acc.code}
+                                                        title={acc.es_reguladora
+                                                            ? 'Quitar marca de cuenta reguladora'
+                                                            : 'Marcar como cuenta reguladora (naturaleza opuesta al tipo: Dep. Acumulada, Estimación Incobrables, etc.)'}
+                                                        style={{
+                                                            padding: '4px 8px',
+                                                            fontSize: '0.72rem',
+                                                            background: acc.es_reguladora ? 'rgba(6,182,212,0.15)' : 'transparent',
+                                                            color: acc.es_reguladora ? '#06b6d4' : 'var(--text-muted)',
+                                                            border: `1px solid ${acc.es_reguladora ? 'rgba(6,182,212,0.4)' : 'var(--border-color)'}`,
+                                                            borderRadius: 6, cursor: 'pointer', whiteSpace: 'nowrap',
+                                                            opacity: hoveredRow === acc.code || acc.es_reguladora ? 1 : 0,
+                                                            transition: 'opacity 0.2s',
+                                                        }}
+                                                    >
+                                                        {togglingReg === acc.code ? '...' : '⇄ R'}
+                                                    </button>
                                                     {/* Desactivar / Reactivar */}
                                                     <button
                                                         id={`toggle-${acc.code}`}

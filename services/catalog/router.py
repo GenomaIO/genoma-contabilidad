@@ -40,6 +40,7 @@ class AccountOut(BaseModel):
     allow_entries:   bool
     is_active:       bool
     is_generic:      bool
+    es_reguladora:   bool = False
 
     class Config:
         from_attributes = True
@@ -56,6 +57,7 @@ class AccountCreate(BaseModel):
     # Wizard NIIF: solo aplica cuando se crea una serie nueva (prefijo no en STANDARD_AUTO_MAPPING)
     niif_line_code:  Optional[str] = None   # ej: "ESF.ANC.01"
     is_contra:       bool = False            # True para contra-cuentas (Dep. Acumulada, etc.)
+    es_reguladora:   bool = False            # True = cuenta reguladora (naturaleza invertida)
 
     @field_validator("code")
     @classmethod
@@ -416,6 +418,7 @@ def create_account(
         parent_code=req.parent_code,
         allow_entries=req.allow_entries,
         is_generic=False,
+        es_reguladora=req.es_reguladora,
     )
     db.add(account)
     db.commit()
@@ -537,6 +540,42 @@ def toggle_account(
         )
 
     account.is_active = not account.is_active
+    account.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(account)
+    return account
+
+
+# ──────────────────────────────────────────────────────────────────
+# PATCH /catalog/accounts/{code}/reguladora
+# Toggle es_reguladora — el contador decide si la cuenta es reguladora
+# ──────────────────────────────────────────────────────────────────
+
+@router.patch("/accounts/{code}/reguladora", response_model=AccountOut)
+def toggle_reguladora(
+    code: str,
+    current_user: dict = Depends(get_current_user),
+    db:           Session = Depends(get_session),
+):
+    """
+    Marca o desmarca una cuenta como 'reguladora' (cuenta contravalor).
+    Las cuentas reguladoras tienen naturaleza opuesta a su tipo ORM:
+      - ACTIVO reguladora → naturaleza HABER (ej: Dep. Acumulada, Estimación Incobrables)
+      - INGRESO reguladora → naturaleza DEBE  (ej: Devoluciones s/Ventas)
+    Cuando es_reguladora=True la Balanza de Comprobación no genera alarma_naturaleza.
+    Solo admin y contador pueden modificar este flag.
+    """
+    _require_write_role(current_user["role"])
+    tenant_id = current_user["tenant_id"]
+
+    account = db.query(Account).filter(
+        Account.tenant_id == tenant_id,
+        Account.code == code.upper()
+    ).first()
+    if not account:
+        raise HTTPException(status_code=404, detail="Cuenta no encontrada")
+
+    account.es_reguladora = not account.es_reguladora
     account.updated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(account)
