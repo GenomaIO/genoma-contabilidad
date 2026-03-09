@@ -21,13 +21,30 @@ import { useApp } from '../context/AppContext'
 // ── CSS de impresión ─────────────────────────────────────────────
 const PRINT_STYLE = `
 @media print {
-    body { background: #fff !important; color: #000 !important; }
-    nav, aside, header, .no-print, button, select { display: none !important; }
+    body { background: #fff !important; color: #000 !important; font-size: 9pt !important; }
+    nav, aside, header, .no-print, button, select,
+    [id*="btn"], [id*="toggle"] { display: none !important; }
     #eeff-tab-content { display: block !important; }
-    table { page-break-inside: avoid; }
-    @page { margin: 1.5cm; size: A4; }
-    .print-page-break { page-break-before: always; }
+
+    /* NIIF Sección 3.14: presentación comparativa obligatoria */
+    /* Forzar visibilidad de la columna N-1 en impresión */
+    td[data-prior], th[data-prior] { display: table-cell !important; }
+    .niif-prior-col { display: table-cell !important; }
+    .niif-print-header { display: block !important; margin-bottom: 12pt; }
+    .niif-comparativo-nota { display: block !important; font-size: 7pt; color: #555; }
+
+    /* Tabla de 3 columnas: Descripción | N-1 (Año anterior) | N (Año actual) */
+    table { width: 100%; border-collapse: collapse; page-break-inside: avoid; }
+    td, th { padding: 3pt 6pt !important; font-size: 8pt !important; }
     tr { page-break-inside: avoid; }
+
+    /* Fondo blanco en bloques de color del dark mode */
+    [style*="background"] { background: transparent !important; }
+    [style*="color: var"] { color: #000 !important; }
+    [style*="border-radius"] { border-radius: 0 !important; }
+
+    @page { margin: 1.5cm; size: A4 portrait; }
+    .print-page-break { page-break-before: always; }
 }
 `
 
@@ -130,15 +147,23 @@ function NiifLine({ label, amount, priorAmount, niifCode, detail = [], color, is
                         </span>
                     )}
                 </td>
-                {/* Monto N-1 (comparativo) */}
+                {/* Monto N-1 (comparativo) — NIIF Sec. 3.14: obligatorio siempre */}
                 {showCompar && (
-                    <td style={{
-                        padding: '6px 8px', textAlign: 'right',
-                        fontFamily: 'monospace', fontSize: '0.75rem',
-                        color: 'var(--text-muted)', whiteSpace: 'nowrap',
-                        borderRight: '1px solid rgba(255,255,255,0.06)',
-                    }}>
-                        {priorAmount !== undefined ? fmt(priorAmount) : '—'}
+                    <td
+                        data-prior="true"
+                        className="niif-prior-col"
+                        style={{
+                            padding: '6px 8px', textAlign: 'right',
+                            fontFamily: 'monospace', fontSize: '0.75rem',
+                            color: priorAmount ? 'var(--text-muted)' : 'var(--text-muted)',
+                            whiteSpace: 'nowrap',
+                            borderRight: '1px solid rgba(255,255,255,0.06)',
+                            fontStyle: !priorAmount ? 'italic' : 'normal',
+                        }}
+                    >
+                        {priorAmount !== undefined && priorAmount !== null
+                            ? fmt(priorAmount)
+                            : '¢0'}
                     </td>
                 )}
                 {/* Monto N */}
@@ -349,12 +374,16 @@ function TabESF({ esf, year, priorYear, showCompar }) {
                                 lines={esf.pasivo_corriente}
                                 total={t.total_pasivo_corriente}
                                 totalLabel="Total Pasivo Corriente"
+                                showCompar={showCompar}
+                                priorTotal={p?.total_pasivo_corriente}
                             />
                             <StatementSection
                                 title="Pasivo No Corriente" color={COLORS.pasivo}
                                 lines={esf.pasivo_no_corriente}
                                 total={t.total_pasivo_no_corriente}
                                 totalLabel="Total Pasivo No Corriente"
+                                showCompar={showCompar}
+                                priorTotal={p?.total_pasivo_no_corriente}
                             />
                         </table>
                     </div>
@@ -370,6 +399,8 @@ function TabESF({ esf, year, priorYear, showCompar }) {
                             <StatementSection
                                 title="Patrimonio" color={COLORS.patrimonio}
                                 lines={esf.patrimonio}
+                                showCompar={showCompar}
+                                priorTotal={p?.total_patrimonio}
                             />
                         </table>
                     </div>
@@ -390,9 +421,17 @@ function TabESF({ esf, year, priorYear, showCompar }) {
                 </div>
             </div>
 
-            {/* Nota NIIF */}
-            <div style={{ marginTop: 12, padding: '8px 12px', borderRadius: 8, background: 'rgba(139,92,246,0.07)', fontSize: '0.68rem', color: 'var(--text-muted)' }}>
-                📖 NIIF PYMES 3ª Ed. (Feb 2025) · Sección 4 · Clasificación Corriente/No Corriente · Haga clic en una partida para ver el detalle de cuentas
+            {/* Nota NIIF — Sec. 3.14 comparativo */}
+            <div className="niif-comparativo-nota" style={{ marginTop: 12, padding: '8px 12px', borderRadius: 8, background: 'rgba(139,92,246,0.07)', fontSize: '0.68rem', color: 'var(--text-muted)' }}>
+                📖 NIIF PYMES 3ª Ed. (Feb 2025) · Sección 4 · Clasificación Corriente/No Corriente
+                {showCompar && !priorYear && (
+                    <span style={{ marginLeft: 8, color: '#f59e0b', fontStyle: 'italic' }}>
+                        · ⚠️ Primer año de operación — columna {parseInt(year) - 1} presentada en cero (Sec. 3.14 NIIF PYMES)
+                    </span>
+                )}
+                {!showCompar && (
+                    <span style={{ marginLeft: 8 }}>· Haga clic en una partida para ver el detalle de cuentas</span>
+                )}
             </div>
         </div>
     )
@@ -1054,22 +1093,26 @@ export default function EstadosFinancieros() {
                             <option key={y} value={y}>Año {y}</option>
                         ))}
                     </select>
-                    {/* Toggle comparativo N-1 */}
-                    {data?.has_prior && (
-                        <button
-                            id="eeff-comparar-btn"
-                            onClick={() => setShowCompar(s => !s)}
-                            style={{
-                                background: showCompar ? 'rgba(6,182,212,0.15)' : 'var(--bg-card)',
-                                border: `1px solid ${showCompar ? 'rgba(6,182,212,0.4)' : 'var(--border)'}`,
-                                color: showCompar ? '#06b6d4' : 'var(--text-muted)',
-                                borderRadius: 8, padding: '7px 14px',
-                                fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer',
-                            }}
-                        >
-                            {showCompar ? '📊 Comparativo ON' : '📊 Comparativo'}
-                        </button>
-                    )}
+                    {/* Toggle comparativo N-1 — NIIF Sec. 3.14: siempre visible */}
+                    <button
+                        id="eeff-comparar-btn"
+                        onClick={() => setShowCompar(s => !s)}
+                        title={data?.has_prior
+                            ? `Comparar con ${data.prior_year}`
+                            : `Mostrar columna ${data ? parseInt(data.year || year) - 1 : parseInt(year) - 1} (primer año — valores en cero)`}
+                        style={{
+                            background: showCompar ? 'rgba(6,182,212,0.15)' : 'var(--bg-card)',
+                            border: `1px solid ${showCompar ? 'rgba(6,182,212,0.4)' : 'var(--border)'}`,
+                            color: showCompar ? '#06b6d4' : 'var(--text-muted)',
+                            borderRadius: 8, padding: '7px 14px',
+                            fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer',
+                        }}
+                    >
+                        {showCompar
+                            ? (data?.has_prior ? '📊 Comparativo ON' : '📊 Comparativo (primer año)')
+                            : '📊 Comparativo'}
+                    </button>
+
                     {/* Botón regenerar */}
                     <button
                         id="eeff-reload-btn"
@@ -1197,10 +1240,10 @@ export default function EstadosFinancieros() {
                 )}
 
                 {!loading && data && activeTab === 'esf' && (
-                    <TabESF esf={data.esf} year={year} priorYear={data.prior_year} showCompar={data.has_prior && showCompar} />
+                    <TabESF esf={data.esf} year={year} priorYear={data.prior_year} showCompar={showCompar} />
                 )}
                 {!loading && data && activeTab === 'eri' && (
-                    <TabERI eri={data.eri} year={year} priorYear={data.prior_year} showCompar={data.has_prior && showCompar} />
+                    <TabERI eri={data.eri} year={year} priorYear={data.prior_year} showCompar={showCompar} />
                 )}
                 {!loading && data && activeTab === 'ecp' && (
                     <TabECP ecp={data.ecp} year={year} />
