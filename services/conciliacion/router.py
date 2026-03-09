@@ -21,7 +21,7 @@ import logging
 from datetime import datetime, date
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File, Form
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -302,7 +302,7 @@ async def ocr_image(
         raise HTTPException(status_code=500, detail=f"Error OCR: {str(e)}")
 
 @router.post("/conciliacion/sesion")
-def crear_sesion(req: UploadSession, request, db: Session = Depends(_get_db)):
+def crear_sesion(req: UploadSession, request: Request, db: Session = Depends(_get_db)):
     """
     Crea una sesión de conciliación (sin transacciones aún).
     Devuelve el recon_id para agregar transacciones después.
@@ -546,7 +546,7 @@ def run_centinela(recon_id: str, db: Session = Depends(_get_db)):
 
 
 @router.get("/centinela/score/{period}")
-def get_score(period: str, request, db: Session = Depends(_get_db)):
+def get_score(period: str, request: Request, db: Session = Depends(_get_db)):
     """Obtiene el score CENTINELA para un período YYYYMM.
 
     SEGURIDAD: solo devuelve datos del tenant autenticado.
@@ -563,7 +563,7 @@ def get_score(period: str, request, db: Session = Depends(_get_db)):
 
 
 @router.get("/centinela/d270/{period}")
-def get_d270_preview(period: str, request, db: Session = Depends(_get_db)):
+def get_d270_preview(period: str, request: Request, db: Session = Depends(_get_db)):
     """Retorna el preview del D-270 para el período dado.
 
     SEGURIDAD: solo devuelve partidas del tenant autenticado.
@@ -619,7 +619,7 @@ def export_d270(period: str, db: Session = Depends(_get_db)):
 # ── Bank Rules ───────────────────────────────────────────────────────────────
 
 @router.post("/conciliacion/rule")
-def save_rule(rule: BankRule, request, db: Session = Depends(_get_db)):
+def save_rule(rule: BankRule, request: Request, db: Session = Depends(_get_db)):
     """Guarda o actualiza una Bank Rule de clasificación.
 
     SEGURIDAD: las reglas se guardan bajo el tenant autenticado.
@@ -644,7 +644,7 @@ def save_rule(rule: BankRule, request, db: Session = Depends(_get_db)):
 
 
 @router.get("/conciliacion/rules")
-def list_rules(request, db: Session = Depends(_get_db)):
+def list_rules(request: Request, db: Session = Depends(_get_db)):
     """Lista las Bank Rules del tenant autenticado.
 
     SEGURIDAD: solo muestra las reglas del tenant del JWT.
