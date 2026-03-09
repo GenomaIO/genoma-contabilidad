@@ -592,64 +592,112 @@ def run_match(recon_id: str, db: Session = Depends(_get_db)):
         "account_code": account_code,
     }).fetchall()]
 
-    # ── Matching principal: banco vs FE ───────────────────────────────────────
-    # Tolerancia: monto ±2% (más permisiva que el libro para cubrir retenciones)
-    TOLERANCIA_FE = 0.02
+    # ──────────────────────────────────────────────────────────────────────────
+    # ALGORITMO CORRECTO DE MATCHING (Regla de negocio)
+    # ──────────────────────────────────────────────────────────────────────────
+    # MÁXIMA: una txn bancaria es CON_FE SOLO SI existe un asiento (debit/credit)
+    # en el Libro Diario para la cuenta bancaria con:
+    #   1. Misma fecha exacta
+    #   2. Monto que coincide ±2%  (debit=DB, credit=CR)
+    #   3. Descripción con al menos 1 token significativo en común
+    #
+    # Si el asiento existe y su source es FE/TE/NC/ND → CON_FE
+    # Si el asiento existe pero source MANUAL/otro      → PROBABLE
+    # Si NO existe asiento                              → SIN_FE (siempre)
+    # ──────────────────────────────────────────────────────────────────────────
 
-    fe_ingresos_disponibles = list(fe_emitidas)   # copia mutable
-    fe_gastos_disponibles   = list(fe_recibidas)
+    FUENTES_FE = {'FE', 'TE', 'NC', 'ND'}
+    TOLERANCIA = 0.02   # ±2% de diferencia de monto
+
+    # Cargamos TODOS los asientos POSTED del período para esta cuenta bancaria
+    # incluyendo el source del journal_entry para saber si tiene FE
+    asientos_periodo = [dict(r._mapping) for r in db.execute(text("""
+        SELECT je.id AS entry_id, je.date::text AS fecha, je.description AS desc_asiento,
+               je.source, jl.debit, jl.credit, jl.account_code
+        FROM journal_entries je
+        JOIN journal_lines jl ON jl.entry_id = je.id
+        WHERE je.tenant_id    = :tenant_id
+          AND je.period       = :period
+          AND je.status       = 'POSTED'
+          AND jl.account_code = :account_code
+        ORDER BY je.date
+    """), {
+        "tenant_id":    tenant_id,
+        "period":       period_fmt,
+        "account_code": account_code,
+    }).fetchall()]
+
+    def _tokens(s: str) -> set:
+        """Extrae tokens significativos (len>2, solo alfanuméricos)."""
+        import re
+        return {t.upper() for t in re.split(r'[\s/\-_.,]+', str(s or '')) if len(t) > 2}
+
+    def _descriptions_match(bank_desc: str, asiento_desc: str) -> bool:
+        """True si las descripciones comparten al menos 1 token significativo."""
+        t1 = _tokens(bank_desc)
+        t2 = _tokens(asiento_desc)
+        # Excluir tokens muy genéricos que aparecen en todos lados
+        STOP = {'DEL', 'LAS', 'LOS', 'CON', 'POR', 'PAGO', 'TXN', 'TRANS', 'BANCO', 'BNCR'}
+        t1 -= STOP
+        t2 -= STOP
+        return bool(t1 & t2)
+
+    usados_asientos: set = set()  # entry_id ya usados (1-a-1)
 
     for txn in bank_txns:
+        txn_fecha = str(txn.get("fecha", ""))[:10]    # YYYY-MM-DD
         txn_monto = abs(float(txn.get("monto", 0)))
-        txn_tipo  = txn.get("tipo", "DB")
-        cat       = txn.get("beneficiario_categoria", "TERCERO")
+        txn_tipo  = txn.get("tipo", "DB")              # CR=crédito en banco, DB=débito
+        txn_desc  = str(txn.get("descripcion", ""))
 
-        # Cargos bancarios → siempre CON_FE (no necesitan FE de tercero)
-        if cat in ("BANK_FEE", "BANK_INTEREST"):
-            txn["match_estado"]    = "CON_FE"
-            txn["match_confianza"] = 100.0
-            txn["tiene_fe"]        = True
-            txn["fe_numero"]       = "CARGO_BANCARIO"
-            continue
+        best_asiento  = None
+        best_diff     = 1.0
+        best_conf     = 0.0
 
-        # Cruce contra FE según tipo
-        if txn_tipo == "CR":
-            pool = fe_ingresos_disponibles
-        else:
-            pool = fe_gastos_disponibles
-
-        best = None
-        best_diff = 1.0
-        for i, fe in enumerate(pool):
-            fe_monto = abs(float(fe.get("monto", 0) or 0))
-            if fe_monto <= 0:
+        for asi in asientos_periodo:
+            # 1. Fecha exacta
+            if str(asi["fecha"])[:10] != txn_fecha:
                 continue
-            diff = abs(txn_monto - fe_monto) / fe_monto if fe_monto else 1.0
-            if diff < TOLERANCIA_FE and diff < best_diff:
-                best_diff = diff
-                best = (i, fe)
 
-        if best:
-            idx, fe = best
-            txn["match_estado"]    = "CON_FE"
-            txn["match_confianza"] = round((1.0 - best_diff) * 100, 1)
-            txn["tiene_fe"]        = True
-            txn["fe_numero"]       = fe.get("id", "")
-            pool.pop(idx)
-        else:
-            # Fallback: cruzar contra asientos del Libro Diario
-            fallback = match_transactions([txn], journal_lines)
-            fb = fallback[0] if fallback else txn
-            if fb.get("match_estado") in ("CONCILIADO", "PROBABLE"):
-                txn["match_estado"]    = fb["match_estado"]
-                txn["match_confianza"] = fb.get("match_confianza", 50.0)
-                txn["tiene_fe"]        = False   # libro, no FE
-                txn["fe_numero"]       = None
+            # 2. Monto ±2% en el lado correcto (CR banco → credit del asiento, etc.)
+            if txn_tipo == "CR":
+                asi_monto = float(asi.get("credit", 0) or 0)
             else:
-                txn["match_estado"]    = "SIN_FE"
-                txn["match_confianza"] = 0.0
-                txn["tiene_fe"]        = False
-                txn["fe_numero"]       = None
+                asi_monto = float(asi.get("debit",  0) or 0)
+
+            if asi_monto <= 0:
+                continue
+
+            diff = abs(txn_monto - asi_monto) / max(asi_monto, 1)
+            if diff > TOLERANCIA:
+                continue
+
+            # 3. Descripción: al menos 1 token en común (secundario / mejora confianza)
+            desc_ok = _descriptions_match(txn_desc, asi.get("desc_asiento", ""))
+            conf    = round((1.0 - diff) * 100, 1)
+            if desc_ok:
+                conf = min(conf + 10, 100.0)  # bonus si la descripción concuerda
+
+            # Preferir el asiento con mejor ajuste de monto
+            if diff < best_diff and asi["entry_id"] not in usados_asientos:
+                best_diff    = diff
+                best_conf    = conf
+                best_asiento = asi
+
+        if best_asiento:
+            usados_asientos.add(best_asiento["entry_id"])
+            tiene_fe = best_asiento["source"] in FUENTES_FE
+            txn["match_estado"]    = "CON_FE"    if tiene_fe else "PROBABLE"
+            txn["match_confianza"] = best_conf
+            txn["tiene_fe"]        = tiene_fe
+            txn["fe_numero"]       = best_asiento["entry_id"] if tiene_fe else None
+        else:
+            # SIN asiento en libros → SIN FE siempre (regla de negocio estricta)
+            txn["match_estado"]    = "SIN_FE"
+            txn["match_confianza"] = 0.0
+            txn["tiene_fe"]        = False
+            txn["fe_numero"]       = None
+
 
     # ── Solo libros ───────────────────────────────────────────────────────────
     solo = find_solo_libros(bank_txns, journal_lines)
