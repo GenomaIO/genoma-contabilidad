@@ -263,10 +263,10 @@ function StatsBar({ stats, saldoDiff }) {
     if (!stats) return null
     const items = [
         { label: 'Total banco', value: stats.total_banco, color: 'var(--text-primary)' },
-        { label: 'Conciliados', value: stats.conciliados, color: '#16a34a' },
-        { label: 'Probables', value: stats.probables, color: '#d97706' },
-        { label: 'Sin asiento', value: stats.sin_asiento, color: '#dc2626' },
-        { label: 'Solo libros', value: stats.solo_libros, color: '#7c3aed' },
+        { label: '✅ CON FE', value: stats.con_fe ?? stats.conciliados ?? 0, color: '#16a34a' },
+        { label: '🔴 SIN FE', value: stats.sin_fe ?? stats.sin_asiento ?? 0, color: '#dc2626' },
+        { label: '🟡 Probable', value: stats.probable ?? stats.probables ?? 0, color: '#d97706' },
+        { label: '📚 Solo libros', value: stats.solo_libros ?? 0, color: '#7c3aed' },
     ]
     return (
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 20 }}>
@@ -736,7 +736,11 @@ export default function Conciliacion() {
                 setStats(d.stats)
                 setSaldoDiff(d.saldo_diff)
                 setStep('done')
-                setMatchMsg({ ok: true, text: `Matching completado — ${d.stats.conciliados} conciliados` })
+                // stats V2: con_fe, sin_fe, probable, total_banco
+                const conFE = d.stats?.con_fe ?? d.stats?.conciliados ?? 0
+                const sinFE = d.stats?.sin_fe ?? 0
+                const total = d.stats?.total_banco ?? 0
+                setMatchMsg({ ok: true, text: `✅ Conciliación completada — ${conFE} CON FE · ${sinFE} SIN FE · ${total} total` })
 
                 // Auto-CENTINELA: enriquecer resultados con análisis fiscal
                 try {
@@ -747,11 +751,13 @@ export default function Conciliacion() {
                         const dc = await rc.json()
                         setCentinelaScore(dc.score)
                     }
-                } catch (_) { /* CENTINELA falla silenciosamente, el matching ya está guardado */ }
+                } catch (_) { /* CENTINELA falla silenciosamente */ }
             } else {
-                setMatchMsg({ ok: false, text: d.detail || 'Error en matching' })
+                setMatchMsg({ ok: false, text: d.detail || `Error ${r.status} en matching` })
             }
-        } catch (e) { setMatchMsg({ ok: false, text: String(e) }) }
+        } catch (e) {
+            setMatchMsg({ ok: false, text: `Error de conexión: ${String(e)}. ¿El servidor está corriendo?` })
+        }
         setMatching(false)
     }
 
@@ -760,7 +766,7 @@ export default function Conciliacion() {
     }
 
     const porcentajeConciliado = stats
-        ? Math.round((stats.conciliados / Math.max(stats.total_banco, 1)) * 100)
+        ? Math.round(((stats.con_fe ?? stats.conciliados ?? 0) / Math.max(stats.total_banco, 1)) * 100)
         : 0
 
     return (

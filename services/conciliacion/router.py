@@ -668,13 +668,15 @@ def run_match(recon_id: str, db: Session = Depends(_get_db)):
         })
     db.commit()
 
+    con_fe_count = sum(1 for t in bank_txns if t["match_estado"] == "CON_FE")
     stats = {
-        "con_fe":      sum(1 for t in bank_txns if t["match_estado"] == "CON_FE"),
-        "sin_fe":      sum(1 for t in bank_txns if t["match_estado"] == "SIN_FE"),
-        "probable":    sum(1 for t in bank_txns if t["match_estado"] == "PROBABLE"),
-        "solo_libros": len(solo),
-        "total_banco": len(bank_txns),
-        "fe_usadas":   len(fe_emitidas) - len(fe_ingresos_disponibles),
+        "con_fe":       con_fe_count,
+        "conciliados":  con_fe_count,   # alias retrocompatible
+        "sin_fe":       sum(1 for t in bank_txns if t["match_estado"] == "SIN_FE"),
+        "probable":     sum(1 for t in bank_txns if t["match_estado"] == "PROBABLE"),
+        "solo_libros":  len(solo),
+        "total_banco":  len(bank_txns),
+        "fe_usadas":    len(fe_emitidas) - len(fe_ingresos_disponibles),
     }
 
     return {
