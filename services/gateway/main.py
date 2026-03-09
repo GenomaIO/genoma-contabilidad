@@ -638,6 +638,84 @@ async def lifespan(app: FastAPI):
         except Exception as _niif_err:
             logger.warning(f"⚠️  Fix Mapeos NIIF omitido: {_niif_err}")
 
+    # ── Migración: Tablas Conciliación Bancaria + CENTINELA ──────
+    # CREATE IF NOT EXISTS → idempotente, sin riesgo en instancias existentes.
+    # Tablas: bank_reconciliation, bank_transactions, bank_rules, centinela_score
+    if _engine:
+        try:
+            from sqlalchemy import text as _sql_bank
+            _bank_ddl = """
+            CREATE TABLE IF NOT EXISTS bank_reconciliation (
+                id              SERIAL PRIMARY KEY,
+                tenant_id       INTEGER NOT NULL,
+                banco           VARCHAR(80) NOT NULL,
+                period          VARCHAR(6)  NOT NULL,
+                archivo_nombre  VARCHAR(255),
+                saldo_inicial   NUMERIC(18,2) DEFAULT 0,
+                saldo_final     NUMERIC(18,2) DEFAULT 0,
+                moneda          VARCHAR(3) DEFAULT 'CRC',
+                status          VARCHAR(20) DEFAULT 'PENDING',
+                created_at      TIMESTAMP DEFAULT NOW(),
+                updated_at      TIMESTAMP DEFAULT NOW()
+            );
+            CREATE TABLE IF NOT EXISTS bank_transactions (
+                id              SERIAL PRIMARY KEY,
+                recon_id        INTEGER NOT NULL,
+                tenant_id       INTEGER NOT NULL,
+                fecha           DATE,
+                descripcion     TEXT,
+                tipo            VARCHAR(2),
+                monto           NUMERIC(18,2) DEFAULT 0,
+                moneda          VARCHAR(3) DEFAULT 'CRC',
+                monto_crc       NUMERIC(18,2) DEFAULT 0,
+                monto_orig_usd  NUMERIC(18,2),
+                tc_bccr         NUMERIC(10,4),
+                telefono        VARCHAR(30),
+                match_estado    VARCHAR(20) DEFAULT 'PENDIENTE',
+                match_confianza INTEGER DEFAULT 0,
+                journal_entry_id INTEGER,
+                fuga_tipo       VARCHAR(1),
+                d270_codigo     VARCHAR(5),
+                created_at      TIMESTAMP DEFAULT NOW()
+            );
+            CREATE TABLE IF NOT EXISTS bank_rules (
+                id              SERIAL PRIMARY KEY,
+                tenant_id       INTEGER NOT NULL,
+                nombre          VARCHAR(120) NOT NULL,
+                patron          TEXT NOT NULL,
+                tipo_match      VARCHAR(20) DEFAULT 'CONTIENE',
+                cuenta_contable VARCHAR(30),
+                tipo_txn        VARCHAR(2),
+                activa          BOOLEAN DEFAULT TRUE,
+                prioridad       INTEGER DEFAULT 0,
+                created_at      TIMESTAMP DEFAULT NOW()
+            );
+            CREATE TABLE IF NOT EXISTS centinela_score (
+                id              SERIAL PRIMARY KEY,
+                tenant_id       INTEGER NOT NULL,
+                period          VARCHAR(6)  NOT NULL,
+                recon_id        INTEGER,
+                score_total     INTEGER DEFAULT 0,
+                nivel           VARCHAR(15) DEFAULT 'SIN_DATOS',
+                exposicion_iva  NUMERIC(18,2) DEFAULT 0,
+                exposicion_renta NUMERIC(18,2) DEFAULT 0,
+                fugas_tipo_a    INTEGER DEFAULT 0,
+                fugas_tipo_b    INTEGER DEFAULT 0,
+                fugas_tipo_c    INTEGER DEFAULT 0,
+                d270_regs       INTEGER DEFAULT 0,
+                detalle         JSONB DEFAULT '[]',
+                created_at      TIMESTAMP DEFAULT NOW(),
+                updated_at      TIMESTAMP DEFAULT NOW(),
+                UNIQUE(tenant_id, period)
+            );
+            """
+            with _engine.connect() as _bank_conn:
+                _bank_conn.execute(_sql_bank(_bank_ddl))
+                _bank_conn.commit()
+            logger.info("✅ Migración Conciliación+CENTINELA: 4 tablas bank_* + centinela_score verificadas")
+        except Exception as _bank_err:
+            logger.warning(f"⚠️  Migración Conciliación+CENTINELA omitida: {_bank_err}")
+
     yield
     logger.info("🛑 Genoma Contabilidad cerrando...")
 
