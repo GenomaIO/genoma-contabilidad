@@ -54,6 +54,7 @@ export default function Dashboard() {
     // ── Datos ──────────────────────────────────────────────────
     const [kpis, setKpis] = useState({ activos: null, pasivos: null, patrimonio: null, resultado: null })
     const [recentEntries, setRecentEntries] = useState([])
+    const [carouselPage, setCarouselPage] = useState(0)  // página del carousel de asientos
     const [draftCount, setDraftCount] = useState(null)
     const [hasApertura, setHasApertura] = useState(null)
     const [activePeriodStatus, setActivePeriodStatus] = useState(null)
@@ -160,9 +161,10 @@ export default function Dashboard() {
                     resultado: ingresos - gastos,
                 })
             }
-            // Asientos del mes cerrado
+            // Asientos del mes cerrado (últimos 5, del más reciente al más antiguo)
             const allEntries = entriesRes.status === 'fulfilled' ? (entriesRes.value || []) : []
             setRecentEntries(allEntries.slice(-5).reverse())
+            setCarouselPage(0)  // reset al cargar nuevos datos
 
             // DRAFTs
             const drafts = draftRes.status === 'fulfilled' ? (draftRes.value || []) : []
@@ -307,8 +309,9 @@ export default function Dashboard() {
             {/* ── Últimos Asientos + Estado del Período ── */}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 14 }}>
 
-                {/* Últimos Asientos — del MES CERRADO */}
+                {/* Últimos Asientos — carousel con flechas ← → */}
                 <div style={{ background: 'var(--bg-card)', borderRadius: 14, padding: 18, border: '1px solid var(--border-color)' }}>
+                    {/* Header */}
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
                         <div>
                             <span style={{ fontWeight: 700, fontSize: '0.9rem' }}>📒 Últimos Asientos</span>
@@ -339,36 +342,94 @@ export default function Dashboard() {
                                 ? `Sin asientos en ${ymLabel(lastClosedPeriod, true)}`
                                 : 'Aún no hay períodos cerrados'}
                         </div>
-                    ) : (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                            {recentEntries.map(e => {
-                                const sc = e.status === 'POSTED' ? '#10b981' : e.status === 'DRAFT' ? '#f59e0b' : '#ef4444'
-                                return (
-                                    <div key={e.id} style={{
-                                        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                                        padding: '8px 10px', borderRadius: 8,
-                                        background: 'rgba(255,255,255,0.03)',
-                                        border: '1px solid var(--border-color)',
+                    ) : (() => {
+                        const PER_PAGE = 3
+                        const totalPages = Math.ceil(recentEntries.length / PER_PAGE)
+                        const visible = recentEntries.slice(
+                            carouselPage * PER_PAGE,
+                            carouselPage * PER_PAGE + PER_PAGE
+                        )
+                        const btnNav = (disabled, onClick, label) => (
+                            <button
+                                onClick={onClick}
+                                disabled={disabled}
+                                style={{
+                                    background: disabled ? 'transparent' : 'rgba(255,255,255,0.06)',
+                                    border: '1px solid var(--border-color)',
+                                    borderRadius: 6, width: 26, height: 26,
+                                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                    cursor: disabled ? 'default' : 'pointer',
+                                    color: disabled ? 'var(--text-muted)' : 'var(--text-primary)',
+                                    fontSize: '0.8rem', opacity: disabled ? 0.3 : 1,
+                                    transition: 'all 0.15s',
+                                }}
+                            >{label}</button>
+                        )
+                        return (
+                            <div>
+                                {/* Lista de 3 asientos */}
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 6, minHeight: 112 }}>
+                                    {visible.map(e => {
+                                        const sc = e.status === 'POSTED' ? '#10b981' : e.status === 'DRAFT' ? '#f59e0b' : '#ef4444'
+                                        return (
+                                            <div key={e.id} style={{
+                                                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                                                padding: '8px 10px', borderRadius: 8,
+                                                background: 'rgba(255,255,255,0.03)',
+                                                border: '1px solid var(--border-color)',
+                                            }}>
+                                                <div style={{ overflow: 'hidden' }}>
+                                                    <div style={{ fontSize: '0.82rem', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 200 }}>
+                                                        {e.description}
+                                                    </div>
+                                                    <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: 1 }}>
+                                                        {e.date}
+                                                    </div>
+                                                </div>
+                                                <span style={{
+                                                    fontSize: '0.68rem', fontWeight: 700, padding: '2px 7px',
+                                                    borderRadius: 10, background: `${sc}22`, color: sc, flexShrink: 0,
+                                                }}>
+                                                    {e.status}
+                                                </span>
+                                            </div>
+                                        )
+                                    })}
+                                </div>
+
+                                {/* Controles de navegación — solo si hay más de 3 */}
+                                {totalPages > 1 && (
+                                    <div style={{
+                                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                        gap: 8, marginTop: 10,
                                     }}>
-                                        <div style={{ overflow: 'hidden' }}>
-                                            <div style={{ fontSize: '0.82rem', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 210 }}>
-                                                {e.description}
-                                            </div>
-                                            <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: 1 }}>
-                                                {e.date}
-                                            </div>
+                                        {btnNav(carouselPage === 0,
+                                            () => setCarouselPage(p => p - 1), '←')}
+
+                                        {/* Puntos indicadores */}
+                                        <div style={{ display: 'flex', gap: 5, alignItems: 'center' }}>
+                                            {Array.from({ length: totalPages }).map((_, i) => (
+                                                <button
+                                                    key={i}
+                                                    onClick={() => setCarouselPage(i)}
+                                                    style={{
+                                                        width: i === carouselPage ? 16 : 7,
+                                                        height: 7, borderRadius: 4,
+                                                        background: i === carouselPage ? 'var(--accent)' : 'var(--border-color)',
+                                                        border: 'none', cursor: 'pointer', padding: 0,
+                                                        transition: 'all 0.2s',
+                                                    }}
+                                                />
+                                            ))}
                                         </div>
-                                        <span style={{
-                                            fontSize: '0.68rem', fontWeight: 700, padding: '2px 7px',
-                                            borderRadius: 10, background: `${sc}22`, color: sc, flexShrink: 0,
-                                        }}>
-                                            {e.status}
-                                        </span>
+
+                                        {btnNav(carouselPage === totalPages - 1,
+                                            () => setCarouselPage(p => p + 1), '→')}
                                     </div>
-                                )
-                            })}
-                        </div>
-                    )}
+                                )}
+                            </div>
+                        )
+                    })()}
                 </div>
 
                 {/* Estado del Período — del MES ACTIVO (siguiente al cerrado) */}
