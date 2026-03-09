@@ -457,3 +457,154 @@ def generar_d270_resumen(items: list[dict]) -> dict:
         "total_monto": sum(totales.values()),
         "codigos": D270_CODIGOS,
     }
+
+
+# ── Score Fiscal V2 — 5 indicadores DGT reales ──────────────────────────────
+# Score 0-100 invertido: 0=máximo riesgo, 100=sin riesgo fiscal
+# Metodología: ponderación por importancia de control fiscal DGT CR
+
+def calcular_score_v2(
+    bank_txns: list[dict],
+    fe_emitidas: list[dict],
+    fe_recibidas: list[dict],
+    saldo_banco: float,
+    saldo_libros: float,
+) -> dict:
+    """
+    Motor de score CENTINELA V2 — 5 indicadores reales DGT Costa Rica.
+
+    Score 0-100 (invertido): 100 = sin riesgo, 0 = riesgo máximo.
+
+    Indicadores:
+      I1 (30%): Cobertura documental = txns CON_FE / total_txns
+      I2 (25%): Exposición IVA = sum(iva_estimado SIN_FE) / total_ingresos
+      I3 (20%): Concentración sin FE = top3_beneficiarios_sinFE / total_debitos
+      I4 (15%): Operaciones sin referencia trazable (SINPE/transf sin FE)
+      I5 (10%): Discrepancia banco vs FE-D101 proyectada
+
+    Args:
+        bank_txns:    lista con 'match_estado', 'tipo', 'monto', 'iva_estimado',
+                      'beneficiario_nombre', 'beneficiario_categoria'
+        fe_emitidas:  lista de FE emitidas del período
+        fe_recibidas: lista de FE recibidas del período (puede estar vacía)
+        saldo_banco:  saldo final banco (del PDF)
+        saldo_libros: saldo calculado desde journal_lines
+
+    Returns:
+        dict con score_total (0-100), nivel, indicadores, exposicion_iva, exposicion_renta
+    """
+    if not bank_txns:
+        return _score_vacio()
+
+    total = len(bank_txns)
+    con_fe  = sum(1 for t in bank_txns if t.get("match_estado") == "CON_FE")
+    sin_fe  = [t for t in bank_txns if t.get("match_estado") == "SIN_FE"]
+    total_ingresos = sum(float(t.get("monto", 0)) for t in bank_txns if t.get("tipo") == "CR")
+
+    # ── I1: Cobertura documental (30%) ────────────────────────────────────────
+    i1_ratio = con_fe / total if total else 1.0
+    i1_score = i1_ratio * 100  # 100 si todos tienen FE
+
+    # ── I2: Exposición IVA (25%) ──────────────────────────────────────────────
+    iva_total   = sum(abs(float(t.get("iva_estimado", 0) or 0)) for t in sin_fe if t.get("tipo") == "CR")
+    if total_ingresos > 0:
+        i2_ratio = min(iva_total / total_ingresos, 1.0)
+    else:
+        i2_ratio = 0.0
+    i2_score = (1.0 - i2_ratio) * 100  # 100 si no hay IVA en riesgo
+
+    # ── I3: Concentración beneficiarios sin FE (20%) ──────────────────────────
+    # Top-3 beneficiarios en débitos SIN_FE vs total débitos
+    from collections import Counter
+    debitos_sinfe_por_ben: Counter = Counter()
+    for t in sin_fe:
+        if t.get("tipo") == "DB":
+            bnom = t.get("beneficiario_nombre", "DESCONOCIDO")
+            debitos_sinfe_por_ben[bnom] += float(t.get("monto", 0))
+    total_debitos = sum(float(t.get("monto", 0)) for t in bank_txns if t.get("tipo") == "DB")
+    top3_sinfe = sum(v for _, v in debitos_sinfe_por_ben.most_common(3))
+    if total_debitos > 0:
+        i3_ratio = min(top3_sinfe / total_debitos, 1.0)
+    else:
+        i3_ratio = 0.0
+    i3_score = (1.0 - i3_ratio) * 100
+
+    # ── I4: Operaciones sin referencia (15%) ──────────────────────────────────
+    # SINPE/transferencias sin FE → menor trazabilidad
+    sin_ref = [
+        t for t in sin_fe
+        if any(kw in (t.get("descripcion") or "").upper()
+               for kw in ("SINPE", "TRANSFER", "TRASLADO"))
+    ]
+    i4_ratio = len(sin_ref) / total if total else 0.0
+    i4_score = (1.0 - i4_ratio) * 100
+
+    # ── I5: Discrepancia banco vs D-101 proyectado (10%) ─────────────────────
+    total_fe_ingresos = sum(abs(float(fe.get("monto", fe.get("total_amount", 0)) or 0))
+                            for fe in fe_emitidas)
+    if total_ingresos > 0 and total_fe_ingresos > 0:
+        brecha = abs(total_ingresos - total_fe_ingresos) / total_ingresos
+        i5_score = max(0.0, (1.0 - brecha) * 100)
+    else:
+        i5_score = 50.0  # Sin FE emitidas → riesgo medio
+
+    # ── Score ponderado ───────────────────────────────────────────────────────
+    score = (
+        i1_score * 0.30 +
+        i2_score * 0.25 +
+        i3_score * 0.20 +
+        i4_score * 0.15 +
+        i5_score * 0.10
+    )
+    score = round(min(max(score, 0.0), 100.0), 1)
+
+    # Nivel de riesgo (invertido: score bajo = riesgo alto)
+    if score >= 91:
+        nivel, emoji = "VERDE",    "🟢"
+    elif score >= 71:
+        nivel, emoji = "BAJO",     "🟡"
+    elif score >= 41:
+        nivel, emoji = "MODERADO", "🟠"
+    else:
+        nivel, emoji = "CRITICO",  "🔴"
+
+    exposicion_iva   = round(iva_total, 2)
+    exposicion_renta = round(iva_total * 0.15 / 0.13, 2)  # estimado proporcional
+
+    return {
+        "score_total":      score,
+        "nivel":            nivel,
+        "emoji":            emoji,
+        "version":          "v2",
+        "indicadores": {
+            "I1_cobertura_documental": round(i1_score, 1),
+            "I2_exposicion_iva":       round(i2_score, 1),
+            "I3_concentracion_sinfe":  round(i3_score, 1),
+            "I4_sin_referencia":       round(i4_score, 1),
+            "I5_discrepancia_d101":    round(i5_score, 1),
+        },
+        "totales": {
+            "total_txns":    total,
+            "con_fe":        con_fe,
+            "sin_fe":        len(sin_fe),
+            "total_ingresos": total_ingresos,
+            "total_debitos": total_debitos,
+        },
+        "exposicion_iva":   exposicion_iva,
+        "exposicion_renta": exposicion_renta,
+        "exposicion_total": round(exposicion_iva + exposicion_renta, 2),
+        "saldo_diff":       round(saldo_banco - saldo_libros, 2),
+    }
+
+
+def _score_vacio() -> dict:
+    """Score vacío cuando no hay transacciones."""
+    return {
+        "score_total": 100.0, "nivel": "VERDE", "emoji": "🟢",
+        "version": "v2",
+        "indicadores": {k: 100.0 for k in
+                        ["I1_cobertura_documental","I2_exposicion_iva",
+                         "I3_concentracion_sinfe","I4_sin_referencia","I5_discrepancia_d101"]},
+        "totales": {"total_txns":0,"con_fe":0,"sin_fe":0,"total_ingresos":0,"total_debitos":0},
+        "exposicion_iva": 0.0, "exposicion_renta": 0.0, "exposicion_total": 0.0, "saldo_diff": 0.0,
+    }
