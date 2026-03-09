@@ -453,6 +453,34 @@ async def lifespan(app: FastAPI):
         except Exception as _dep_err:
             logger.warning(f"⚠️  Auto-Depreciación omitida: {_dep_err}")
 
+    # ── Fix Mapeos NIIF: corrige prefijos incorrectos en niif_mappings ──
+    # Idempotente: solo actualiza registros que apunten a la línea incorrecta.
+    # Principal corrección: 1201/1202 → ESF.AC.02 (CxC) → ESF.ANC.01 (PPE)
+    if _engine:
+        try:
+            from services.reporting.niif_lines import fix_existing_mappings
+            from sqlalchemy.orm import Session as _NiifSession
+            from sqlalchemy import text as _sql_text
+            with _NiifSession(_engine) as _niif_sess:
+                # Obtener todos los tenant_ids activos
+                _tenant_ids = [
+                    r[0] for r in _niif_sess.execute(
+                        _sql_text("SELECT DISTINCT id FROM tenants WHERE is_active = TRUE")
+                    ).fetchall()
+                ]
+                _total_fixed = 0
+                for _tid in _tenant_ids:
+                    _total_fixed += fix_existing_mappings(_tid, _niif_sess)
+            if _total_fixed:
+                logger.info(
+                    f"✅ Fix Mapeos NIIF: {_total_fixed} registro(s) corregido(s) "
+                    f"en {len(_tenant_ids)} tenant(s)"
+                )
+            else:
+                logger.info("✅ Fix Mapeos NIIF: sin correcciones necesarias (ya al día)")
+        except Exception as _niif_err:
+            logger.warning(f"⚠️  Fix Mapeos NIIF omitido: {_niif_err}")
+
     yield
     logger.info("🛑 Genoma Contabilidad cerrando...")
 
