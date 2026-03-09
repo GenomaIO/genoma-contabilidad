@@ -133,508 +133,608 @@ export default function Mayor() {
     const color = mayorData ? (TYPE_COLOR[mayorData.account_type] || '#6b7280') : '#6b7280'
     const hasData = mayorData && !loading
 
+    // ── Exportar Mayor a Excel (CSV BOM UTF-8) ───────────────────
+    function exportToExcel() {
+        if (!mayorData) return
+        const acc = mayorData
+        const filename = `Mayor_${acc.account_code}_${fromDate}_${toDate}.csv`.replace(/:/g, '-')
+
+        const rows = [
+            ['Libro Mayor — T-Account', '', '', '', '', ''],
+            [`Cuenta: ${acc.account_code} – ${acc.account_name}`, '', '', '', '', ''],
+            [`Período: ${fromDate} → ${toDate}`, '', '', '', '', ''],
+            ['', '', '', '', '', ''],
+            [`Saldo Inicial (Apertura): ${acc.opening_balance?.toFixed(2) ?? '0.00'} CRC`, '', '', '', '', ''],
+            ['', '', '', '', '', ''],
+            ['FECHA', 'REFERENCIA', 'DESCRIPCIÓN', 'DEBE (DR)', 'HABER (CR)', 'SALDO'],
+            ...(acc.lines || []).map(l => [
+                l.date || '',
+                l.ref || '',
+                l.description || '',
+                l.debit > 0 ? l.debit.toFixed(2) : '0.00',
+                l.credit > 0 ? l.credit.toFixed(2) : '0.00',
+                typeof l.running_balance !== 'undefined' ? l.running_balance.toFixed(2) : '',
+            ]),
+            ['', '', '', '', '', ''],
+            ['', 'TOTALES DEL PERÍODO',
+                '',
+                (acc.period_debit ?? 0).toFixed(2),
+                (acc.period_credit ?? 0).toFixed(2),
+                (acc.closing_balance ?? 0).toFixed(2)
+            ],
+        ]
+
+        const csv = '\uFEFF' + rows
+            .map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(','))
+            .join('\r\n')
+
+        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url; a.download = filename; a.click()
+        URL.revokeObjectURL(url)
+    }
+
+    function handlePrint() { window.print() }
+
     // ────────────────────────────────────────────────────────────────
     return (
         <div style={{ padding: '24px', maxWidth: 980, margin: '0 auto', fontFamily: 'Inter, sans-serif' }}>
 
-            {/* ── Breadcrumb contextual (solo visible en vista T-account) ── */}
-            {hasData && (
-                <div style={{
-                    display: 'flex', alignItems: 'center', gap: 8,
-                    marginBottom: 18, padding: '7px 14px',
-                    background: 'rgba(139,92,246,0.07)',
-                    border: '1px solid rgba(139,92,246,0.18)',
-                    borderRadius: 10,
-                    fontSize: '0.8rem',
-                    transition: 'all 0.2s',
-                }}>
-                    {/* Botón ← Índice (chip) */}
-                    <button
-                        id="mayor-back-btn"
-                        onClick={goBack}
-                        style={{
-                            display: 'inline-flex', alignItems: 'center', gap: 5,
-                            padding: '3px 12px', borderRadius: 20,
-                            background: 'rgba(139,92,246,0.15)',
-                            border: '1px solid rgba(139,92,246,0.35)',
-                            color: '#a78bfa',
-                            fontSize: '0.78rem', fontWeight: 600,
-                            cursor: 'pointer',
-                            transition: 'all 0.15s',
-                            whiteSpace: 'nowrap',
-                        }}
-                        onMouseEnter={e => {
-                            e.currentTarget.style.background = 'rgba(139,92,246,0.28)'
-                            e.currentTarget.style.color = '#c4b5fd'
-                        }}
-                        onMouseLeave={e => {
-                            e.currentTarget.style.background = 'rgba(139,92,246,0.15)'
-                            e.currentTarget.style.color = '#a78bfa'
-                        }}
-                    >
-                        ← Índice
-                    </button>
+            {/* Estilos de impresión */}
+            <style>{`
+                @media print {
+                    body > * { display: none !important; }
+                    #mayor-print-root { display: block !important; }
+                    #mayor-print-root .no-print { display: none !important; }
+                    #mayor-print-root { padding: 20px; font-family: Arial, sans-serif; color: #000; }
+                    #mayor-print-root table { width: 100%; border-collapse: collapse; font-size: 10px; }
+                    #mayor-print-root th { background: #e8e0ff; padding: 5px 7px; text-align: left; border: 1px solid #ccc; }
+                    #mayor-print-root td { padding: 4px 7px; border: 1px solid #ddd; }
+                    #mayor-print-root tr:nth-child(even) td { background: #f8f8f8; }
+                    #mayor-print-root .total-row td { font-weight: bold; background: #f0eded; border-top: 2px solid #999; }
+                    @page { margin: 12mm; size: A4 landscape; }
+                }
+            `}</style>
 
-                    {/* Separador */}
-                    <span style={{ color: 'var(--text-muted)', opacity: 0.4, fontSize: '0.9rem' }}>/</span>
-
-                    {/* Cuenta actual */}
-                    <span style={{
-                        fontFamily: 'monospace', fontWeight: 700,
-                        fontSize: '0.82rem', color,
+            <div id="mayor-print-root">
+                {/* ── Breadcrumb contextual (solo visible en vista T-account) ── */}
+                {hasData && (
+                    <div style={{
+                        display: 'flex', alignItems: 'center', gap: 8,
+                        marginBottom: 18, padding: '7px 14px',
+                        background: 'rgba(139,92,246,0.07)',
+                        border: '1px solid rgba(139,92,246,0.18)',
+                        borderRadius: 10,
+                        fontSize: '0.8rem',
+                        transition: 'all 0.2s',
                     }}>
-                        {selectedAcc?.display_code}
-                    </span>
-                    <span style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>
-                        {selectedAcc?.name}
-                    </span>
-
-                    {/* Type badge */}
-                    {selectedAcc?.account_type && (
-                        <span style={{
-                            marginLeft: 'auto',
-                            fontSize: '0.68rem', fontWeight: 700,
-                            color, background: `${color}22`,
-                            padding: '2px 8px', borderRadius: 20,
-                            border: `1px solid ${color}40`,
-                        }}>
-                            {TYPE_LABEL[selectedAcc.account_type]}
-                        </span>
-                    )}
-                </div>
-            )}
-
-            {/* ── Header ─────────────────────────────────────── */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24 }}>
-                <div>
-                    <h1 style={{ margin: 0, fontSize: '1.4rem', fontWeight: 700, color: 'var(--text-primary)' }}>
-                        📒 Libro Mayor
-                    </h1>
-                    <p style={{ margin: '4px 0 0', fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
-                        T-account por cuenta — saldo inicial + movimientos + saldo cierre
-                    </p>
-                </div>
-
-                {/* Tooltip guía */}
-                <div style={{ position: 'relative', display: 'inline-block' }}
-                    onMouseEnter={e => e.currentTarget.querySelector('.mayor-guide').style.display = 'block'}
-                    onMouseLeave={e => e.currentTarget.querySelector('.mayor-guide').style.display = 'none'}
-                >
-                    <span style={{ cursor: 'help', fontSize: '1.1rem' }}>💡 Guía</span>
-                    <div className="mayor-guide" style={{
-                        display: 'none', position: 'absolute', right: 0, top: '130%',
-                        background: 'var(--bg-card)', border: '1px solid var(--border-color)',
-                        borderRadius: 10, padding: '14px 18px', zIndex: 100, width: 320,
-                        fontSize: '0.8rem', color: 'var(--text-secondary)', lineHeight: 1.6,
-                        boxShadow: '0 8px 32px rgba(0,0,0,0.25)',
-                    }}>
-                        <strong style={{ color: 'var(--text-primary)' }}>📒 ¿Qué es el Libro Mayor?</strong><br />
-                        Muestra todos los movimientos de una cuenta específica ordenados por fecha,
-                        con el saldo acumulado (saldo running) después de cada asiento.<br /><br />
-                        <strong>Saldo inicial:</strong> viene del asiento de <em>Apertura</em>.<br />
-                        <strong>Saldo cierre:</strong> apertura + débitos − créditos del período.<br /><br />
-                        Solo se incluyen asientos <strong>POSTED</strong> — los borradores no afectan el mayor.
-                    </div>
-                </div>
-            </div>
-
-            {/* ── Filtros ─────────────────────────────────────── */}
-            <div style={{
-                display: 'grid', gridTemplateColumns: '1fr 1fr 1fr auto', gap: 12,
-                marginBottom: 20, alignItems: 'end',
-            }}>
-                {/* Selector de cuenta */}
-                <div style={{ gridColumn: '1 / 2' }}>
-                    <label style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>
-                        Cuenta
-                    </label>
-                    <div style={{ position: 'relative' }}>
-                        <div
-                            id="mayor-account-select"
-                            onClick={() => { setShowSearch(s => !s); loadAccounts() }}
+                        {/* Botón ← Índice (chip) */}
+                        <button
+                            id="mayor-back-btn"
+                            onClick={goBack}
                             style={{
-                                padding: '8px 12px', borderRadius: 8,
-                                border: `1px solid ${selectedAcc ? color : 'var(--border-color)'}`,
-                                background: 'var(--bg-card)', cursor: 'pointer',
-                                display: 'flex', alignItems: 'center', gap: 8,
-                                fontSize: '0.83rem', color: 'var(--text-primary)',
-                                minHeight: 38,
+                                display: 'inline-flex', alignItems: 'center', gap: 5,
+                                padding: '3px 12px', borderRadius: 20,
+                                background: 'rgba(139,92,246,0.15)',
+                                border: '1px solid rgba(139,92,246,0.35)',
+                                color: '#a78bfa',
+                                fontSize: '0.78rem', fontWeight: 600,
+                                cursor: 'pointer',
+                                transition: 'all 0.15s',
+                                whiteSpace: 'nowrap',
+                            }}
+                            onMouseEnter={e => {
+                                e.currentTarget.style.background = 'rgba(139,92,246,0.28)'
+                                e.currentTarget.style.color = '#c4b5fd'
+                            }}
+                            onMouseLeave={e => {
+                                e.currentTarget.style.background = 'rgba(139,92,246,0.15)'
+                                e.currentTarget.style.color = '#a78bfa'
                             }}
                         >
-                            {selectedAcc ? (
-                                <>
-                                    <span style={{ fontFamily: 'monospace', color, fontWeight: 700, fontSize: '0.82rem' }}>
-                                        {selectedAcc.display_code}
-                                    </span>
-                                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                        {selectedAcc.name}
-                                    </span>
-                                </>
-                            ) : (
-                                <span style={{ color: 'var(--text-muted)' }}>Seleccionar cuenta...</span>
+                            ← Índice
+                        </button>
+
+                        {/* Separador */}
+                        <span style={{ color: 'var(--text-muted)', opacity: 0.4, fontSize: '0.9rem' }}>/</span>
+
+                        {/* Cuenta actual */}
+                        <span style={{
+                            fontFamily: 'monospace', fontWeight: 700,
+                            fontSize: '0.82rem', color,
+                        }}>
+                            {selectedAcc?.display_code}
+                        </span>
+                        <span style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>
+                            {selectedAcc?.name}
+                        </span>
+
+                        {/* Type badge */}
+                        {selectedAcc?.account_type && (
+                            <span style={{
+                                marginLeft: 'auto',
+                                fontSize: '0.68rem', fontWeight: 700,
+                                color, background: `${color}22`,
+                                padding: '2px 8px', borderRadius: 20,
+                                border: `1px solid ${color}40`,
+                            }}>
+                                {TYPE_LABEL[selectedAcc.account_type]}
+                            </span>
+                        )}
+                    </div>
+                )}
+
+                {/* ── Header ─────────────────────────────────────── */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24 }}>
+                    <div>
+                        <h1 style={{ margin: 0, fontSize: '1.4rem', fontWeight: 700, color: 'var(--text-primary)' }}>
+                            📒 Libro Mayor
+                        </h1>
+                        <p style={{ margin: '4px 0 0', fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
+                            T-account por cuenta — saldo inicial + movimientos + saldo cierre
+                        </p>
+                    </div>
+
+                    {/* Tooltip guía */}
+                    <div style={{ position: 'relative', display: 'inline-block' }}
+                        onMouseEnter={e => e.currentTarget.querySelector('.mayor-guide').style.display = 'block'}
+                        onMouseLeave={e => e.currentTarget.querySelector('.mayor-guide').style.display = 'none'}
+                    >
+                        <span style={{ cursor: 'help', fontSize: '1.1rem' }}>💡 Guía</span>
+                        <div className="mayor-guide" style={{
+                            display: 'none', position: 'absolute', right: 0, top: '130%',
+                            background: 'var(--bg-card)', border: '1px solid var(--border-color)',
+                            borderRadius: 10, padding: '14px 18px', zIndex: 100, width: 320,
+                            fontSize: '0.8rem', color: 'var(--text-secondary)', lineHeight: 1.6,
+                            boxShadow: '0 8px 32px rgba(0,0,0,0.25)',
+                        }}>
+                            <strong style={{ color: 'var(--text-primary)' }}>📒 ¿Qué es el Libro Mayor?</strong><br />
+                            Muestra todos los movimientos de una cuenta específica ordenados por fecha,
+                            con el saldo acumulado (saldo running) después de cada asiento.<br /><br />
+                            <strong>Saldo inicial:</strong> viene del asiento de <em>Apertura</em>.<br />
+                            <strong>Saldo cierre:</strong> apertura + débitos − créditos del período.<br /><br />
+                            Solo se incluyen asientos <strong>POSTED</strong> — los borradores no afectan el mayor.
+                        </div>
+                    </div>
+                </div>
+
+                {/* ── Filtros ─────────────────────────────────────── */}
+                <div style={{
+                    display: 'grid', gridTemplateColumns: '1fr 1fr 1fr auto', gap: 12,
+                    marginBottom: 20, alignItems: 'end',
+                }}>
+                    {/* Selector de cuenta */}
+                    <div style={{ gridColumn: '1 / 2' }}>
+                        <label style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>
+                            Cuenta
+                        </label>
+                        <div style={{ position: 'relative' }}>
+                            <div
+                                id="mayor-account-select"
+                                onClick={() => { setShowSearch(s => !s); loadAccounts() }}
+                                style={{
+                                    padding: '8px 12px', borderRadius: 8,
+                                    border: `1px solid ${selectedAcc ? color : 'var(--border-color)'}`,
+                                    background: 'var(--bg-card)', cursor: 'pointer',
+                                    display: 'flex', alignItems: 'center', gap: 8,
+                                    fontSize: '0.83rem', color: 'var(--text-primary)',
+                                    minHeight: 38,
+                                }}
+                            >
+                                {selectedAcc ? (
+                                    <>
+                                        <span style={{ fontFamily: 'monospace', color, fontWeight: 700, fontSize: '0.82rem' }}>
+                                            {selectedAcc.display_code}
+                                        </span>
+                                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                            {selectedAcc.name}
+                                        </span>
+                                    </>
+                                ) : (
+                                    <span style={{ color: 'var(--text-muted)' }}>Seleccionar cuenta...</span>
+                                )}
+                            </div>
+
+                            {/* Dropdown de búsqueda */}
+                            {showSearch && (
+                                <div style={{
+                                    position: 'absolute', top: '110%', left: 0, right: 0, zIndex: 200,
+                                    background: 'var(--bg-card)', border: '1px solid var(--border-color)',
+                                    borderRadius: 10, boxShadow: '0 8px 24px rgba(0,0,0,0.2)', overflow: 'hidden',
+                                }}>
+                                    <input
+                                        id="mayor-search-input"
+                                        autoFocus
+                                        placeholder="Buscar por código o nombre..."
+                                        value={searchQ}
+                                        onChange={e => setSearchQ(e.target.value)}
+                                        style={{
+                                            width: '100%', padding: '9px 12px', border: 'none', outline: 'none',
+                                            borderBottom: '1px solid var(--border-color)',
+                                            background: 'var(--bg-card)', color: 'var(--text-primary)',
+                                            fontSize: '0.83rem', boxSizing: 'border-box',
+                                        }}
+                                    />
+                                    <div style={{ maxHeight: 240, overflowY: 'auto' }}>
+                                        {filtered.length === 0 && (
+                                            <div style={{ padding: '12px 16px', color: 'var(--text-muted)', fontSize: '0.8rem' }}>
+                                                Sin resultados
+                                            </div>
+                                        )}
+                                        {filtered.map(acc => {
+                                            const col = TYPE_COLOR[acc.account_type] || '#6b7280'
+                                            return (
+                                                <div
+                                                    key={acc.code}
+                                                    id={`mayor-acc-${acc.code}`}
+                                                    onClick={() => selectAccount(acc)}
+                                                    style={{
+                                                        padding: '8px 14px', cursor: 'pointer',
+                                                        display: 'flex', alignItems: 'center', gap: 10,
+                                                        transition: 'background 0.12s',
+                                                    }}
+                                                    onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-hover)'}
+                                                    onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                                                >
+                                                    <span style={{ fontFamily: 'monospace', color: col, fontWeight: 700, fontSize: '0.78rem', minWidth: 60 }}>
+                                                        {acc.display_code}
+                                                    </span>
+                                                    <span style={{ fontSize: '0.82rem', color: 'var(--text-primary)' }}>
+                                                        {acc.name}
+                                                    </span>
+                                                    <span style={{ marginLeft: 'auto', fontSize: '0.68rem', color: col, fontWeight: 600 }}>
+                                                        {TYPE_LABEL[acc.account_type] || ''}
+                                                    </span>
+                                                </div>
+                                            )
+                                        })}
+                                    </div>
+                                </div>
                             )}
                         </div>
+                    </div>
 
-                        {/* Dropdown de búsqueda */}
-                        {showSearch && (
+                    {/* Desde */}
+                    <div>
+                        <label style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>Desde</label>
+                        <input
+                            id="mayor-from-date"
+                            type="date"
+                            value={fromDate}
+                            onChange={e => setFromDate(e.target.value)}
+                            style={{ width: '100%', padding: '7px 10px', borderRadius: 8, border: '1px solid var(--border-color)', background: 'var(--bg-card)', color: 'var(--text-primary)', fontSize: '0.83rem', boxSizing: 'border-box' }}
+                        />
+                    </div>
+
+                    {/* Hasta */}
+                    <div>
+                        <label style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>Hasta</label>
+                        <input
+                            id="mayor-to-date"
+                            type="date"
+                            value={toDate}
+                            onChange={e => setToDate(e.target.value)}
+                            style={{ width: '100%', padding: '7px 10px', borderRadius: 8, border: '1px solid var(--border-color)', background: 'var(--bg-card)', color: 'var(--text-primary)', fontSize: '0.83rem', boxSizing: 'border-box' }}
+                        />
+                    </div>
+
+                    {/* Botón Consultar */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                        <button
+                            id="mayor-consultar-btn"
+                            onClick={() => fetchMayor()}
+                            disabled={!selectedAcc || loading}
+                            style={{
+                                padding: '8px 20px', borderRadius: 8, border: 'none',
+                                background: selectedAcc ? 'var(--accent)' : 'var(--border-color)',
+                                color: selectedAcc ? '#fff' : 'var(--text-muted)',
+                                cursor: selectedAcc ? 'pointer' : 'not-allowed',
+                                fontSize: '0.85rem', fontWeight: 600, whiteSpace: 'nowrap',
+                                transition: 'opacity 0.2s',
+                            }}
+                        >
+                            {loading ? '⏳' : '🔎 Consultar'}
+                        </button>
+
+                        {/* Botón Excel */}
+                        {hasData && (
+                            <button
+                                id="btn-mayor-export-excel"
+                                className="no-print"
+                                onClick={exportToExcel}
+                                style={{
+                                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4,
+                                    padding: '7px 14px', borderRadius: 7, cursor: 'pointer',
+                                    fontSize: '0.8rem', fontWeight: 600,
+                                    border: '1px solid #10b98155', background: '#10b98115', color: '#10b981',
+                                }}
+                                title="Exportar a Excel"
+                            >
+                                📥 Excel
+                            </button>
+                        )}
+
+                        {/* Botón Imprimir */}
+                        {hasData && (
+                            <button
+                                id="btn-mayor-print"
+                                className="no-print"
+                                onClick={handlePrint}
+                                style={{
+                                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4,
+                                    padding: '7px 14px', borderRadius: 7, cursor: 'pointer',
+                                    fontSize: '0.8rem', fontWeight: 600,
+                                    border: '1px solid #6366f155', background: '#6366f115', color: '#6366f1',
+                                }}
+                                title="Imprimir"
+                            >
+                                🖨️ Imprimir
+                            </button>
+                        )}
+                    </div>
+                </div>
+
+                {/* ── Error ──────────────────────────────────────── */}
+                {error && (
+                    <div style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 8, padding: '10px 16px', marginBottom: 16, color: '#ef4444', fontSize: '0.82rem' }}>
+                        ⚠️ {error}
+                    </div>
+                )}
+
+                {/* ── Resultado del Mayor ──────────────────────────── */}
+                {hasData && (
+                    <div>
+                        {/* Header de la cuenta */}
+                        <div style={{
+                            background: `${color}12`, border: `1.5px solid ${color}40`,
+                            borderRadius: 12, padding: '16px 20px', marginBottom: 16,
+                            display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 16,
+                        }}>
+                            <div>
+                                <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginBottom: 4 }}>Cuenta</div>
+                                <div style={{ fontFamily: 'monospace', fontWeight: 800, fontSize: '1rem', color }}>
+                                    {mayorData.account_code}
+                                </div>
+                                <div style={{ fontSize: '0.82rem', color: 'var(--text-primary)', fontWeight: 600 }}>
+                                    {mayorData.account_name}
+                                </div>
+                            </div>
+                            <div>
+                                <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginBottom: 4 }}>
+                                    Saldo Inicial {mayorData.has_apertura ? '(Apertura)' : '(sin apertura)'}
+                                </div>
+                                <div style={{ fontSize: '0.95rem', fontWeight: 700, color: getSaldoColor(mayorData.opening_balance, mayorData.account_type) }}>
+                                    {fmt(mayorData.opening_balance)}
+                                </div>
+                            </div>
+                            <div>
+                                <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginBottom: 4 }}>Movimientos del período</div>
+                                <div style={{ fontSize: '0.82rem', color: '#10b981' }}>DR {fmt(mayorData.total_debit)}</div>
+                                <div style={{ fontSize: '0.82rem', color: '#ef4444' }}>CR {fmt(mayorData.total_credit)}</div>
+                            </div>
+                            <div>
+                                <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginBottom: 4 }}>Saldo Cierre</div>
+                                <div style={{ fontSize: '1rem', fontWeight: 800, color: getSaldoColor(mayorData.closing_balance, mayorData.account_type) }}>
+                                    {fmt(mayorData.closing_balance)}
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Tabla T-account */}
+                        <div style={{ borderRadius: 10, overflow: 'hidden', border: '1px solid var(--border-color)' }}>
+                            {/* Columnas */}
                             <div style={{
-                                position: 'absolute', top: '110%', left: 0, right: 0, zIndex: 200,
-                                background: 'var(--bg-card)', border: '1px solid var(--border-color)',
-                                borderRadius: 10, boxShadow: '0 8px 24px rgba(0,0,0,0.2)', overflow: 'hidden',
+                                display: 'grid', gridTemplateColumns: '110px 75px 1fr 130px 130px 150px',
+                                background: 'var(--bg-header)', padding: '8px 16px',
+                                borderBottom: '1px solid var(--border-color)',
                             }}>
-                                <input
-                                    id="mayor-search-input"
-                                    autoFocus
-                                    placeholder="Buscar por código o nombre..."
-                                    value={searchQ}
-                                    onChange={e => setSearchQ(e.target.value)}
-                                    style={{
-                                        width: '100%', padding: '9px 12px', border: 'none', outline: 'none',
-                                        borderBottom: '1px solid var(--border-color)',
-                                        background: 'var(--bg-card)', color: 'var(--text-primary)',
-                                        fontSize: '0.83rem', boxSizing: 'border-box',
-                                    }}
-                                />
-                                <div style={{ maxHeight: 240, overflowY: 'auto' }}>
-                                    {filtered.length === 0 && (
-                                        <div style={{ padding: '12px 16px', color: 'var(--text-muted)', fontSize: '0.8rem' }}>
-                                            Sin resultados
+                                {['FECHA', 'REF', 'DESCRIPCIÓN', 'DEBE (DR)', 'HABER (CR)', 'SALDO'].map((h, i) => (
+                                    <div key={i} style={{
+                                        fontSize: '0.7rem', fontWeight: 700, letterSpacing: '0.05em',
+                                        color: 'var(--text-muted)',
+                                        textAlign: i >= 3 ? 'right' : 'left',
+                                    }}>
+                                        {h}
+                                    </div>
+                                ))}
+                            </div>
+
+                            {/* Fila de saldo inicial */}
+                            <div style={{
+                                display: 'grid', gridTemplateColumns: '110px 75px 1fr 130px 130px 150px',
+                                padding: '10px 16px',
+                                background: `${color}10`,
+                                borderBottom: '1px solid var(--border-color)',
+                            }}>
+                                <div style={{ fontSize: '0.77rem', color: 'var(--text-muted)' }}>{mayorData.from_date}</div>
+                                <div style={{ fontSize: '0.68rem', fontFamily: 'monospace', color: '#8b5cf6', fontWeight: 700 }}>APER</div>
+                                <div style={{ fontSize: '0.82rem', color, fontWeight: 600, fontStyle: 'italic' }}>
+                                    ← Saldo de Apertura
+                                </div>
+                                <div style={{ textAlign: 'right' }} />
+                                <div style={{ textAlign: 'right' }} />
+                                <div style={{ textAlign: 'right', fontWeight: 700, fontSize: '0.85rem', color: getSaldoColor(mayorData.opening_balance, mayorData.account_type) }}>
+                                    {fmt(mayorData.opening_balance)}
+                                </div>
+                            </div>
+
+                            {/* Movimientos */}
+                            {mayorData.movements.length === 0 && (
+                                <div style={{ padding: '20px 16px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.82rem' }}>
+                                    Sin movimientos en el período seleccionado
+                                </div>
+                            )}
+                            {mayorData.movements.map((m, i) => {
+                                const ref = m.source_ref || `#${String(m.entry_id).slice(-6)}`
+                                return (
+                                    <div
+                                        key={i}
+                                        style={{
+                                            display: 'grid', gridTemplateColumns: '110px 75px 1fr 130px 130px 150px',
+                                            padding: '9px 16px',
+                                            borderBottom: '1px solid var(--border-color)',
+                                            background: i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.015)',
+                                            transition: 'background 0.1s',
+                                        }}
+                                        onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-hover)'}
+                                        onMouseLeave={e => e.currentTarget.style.background = i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.015)'}
+                                    >
+                                        <div style={{ fontSize: '0.77rem', color: 'var(--text-muted)', fontFamily: 'monospace' }}>
+                                            {fmtDate(m.date)}
                                         </div>
-                                    )}
-                                    {filtered.map(acc => {
+                                        <div
+                                            title={`Asiento ${m.entry_id}`}
+                                            style={{
+                                                fontSize: '0.68rem', fontFamily: 'monospace', color: '#7c3aed', fontWeight: 600,
+                                                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                                                cursor: 'pointer'
+                                            }}
+                                            onClick={() => window.location.href = `/diario?entry=${m.entry_id}`}
+                                        >
+                                            {ref}
+                                        </div>
+                                        <div style={{ fontSize: '0.82rem', color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: 8 }}>
+                                            {m.description}
+                                            {m.source !== 'MANUAL' && (
+                                                <span style={{ marginLeft: 6, fontSize: '0.68rem', color: 'var(--text-muted)', background: 'rgba(99,102,241,0.15)', padding: '1px 5px', borderRadius: 4 }}>
+                                                    {m.source}
+                                                </span>
+                                            )}
+                                        </div>
+                                        <div style={{ textAlign: 'right', fontSize: '0.82rem', color: m.debit > 0 ? '#10b981' : 'var(--text-muted)', fontWeight: m.debit > 0 ? 600 : 400, fontFamily: 'monospace' }}>
+                                            {m.debit > 0 ? fmt(m.debit) : ''}
+                                        </div>
+                                        <div style={{ textAlign: 'right', fontSize: '0.82rem', color: m.credit > 0 ? '#ef4444' : 'var(--text-muted)', fontWeight: m.credit > 0 ? 600 : 400, fontFamily: 'monospace' }}>
+                                            {m.credit > 0 ? fmt(m.credit) : ''}
+                                        </div>
+                                        <div style={{ textAlign: 'right', fontSize: '0.83rem', fontWeight: 700, fontFamily: 'monospace', color: getSaldoColor(m.balance, mayorData.account_type) }}>
+                                            {fmt(m.balance)}
+                                        </div>
+                                    </div>
+                                )
+                            })}
+
+                            {/* Fila totales */}
+                            <div style={{
+                                display: 'grid', gridTemplateColumns: '110px 75px 1fr 130px 130px 150px',
+                                padding: '10px 16px',
+                                background: `${color}10`,
+                                borderTop: `2px solid ${color}40`,
+                            }}>
+                                <div /><div />
+                                <div style={{ fontSize: '0.78rem', fontWeight: 700, color }}>TOTALES DEL PERÍODO</div>
+                                <div style={{ textAlign: 'right', fontWeight: 700, fontSize: '0.85rem', color: '#10b981', fontFamily: 'monospace' }}>
+                                    {fmt(mayorData.total_debit)}
+                                </div>
+                                <div style={{ textAlign: 'right', fontWeight: 700, fontSize: '0.85rem', color: '#ef4444', fontFamily: 'monospace' }}>
+                                    {fmt(mayorData.total_credit)}
+                                </div>
+                                <div style={{ textAlign: 'right', fontWeight: 800, fontSize: '0.9rem', fontFamily: 'monospace', color: getSaldoColor(mayorData.closing_balance, mayorData.account_type) }}>
+                                    {fmt(mayorData.closing_balance)}
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Metadatos */}
+                        <div style={{ marginTop: 10, fontSize: '0.72rem', color: 'var(--text-muted)', textAlign: 'right' }}>
+                            Período: {fmtDate(mayorData.from_date)} → {fmtDate(mayorData.to_date)} ·
+                            {mayorData.movements.length} movimiento{mayorData.movements.length !== 1 ? 's' : ''} ·
+                            Solo asientos POSTED
+                        </div>
+                    </div>
+                )}
+
+                {/* Estado vacío: índice automático de cuentas con actividad */}
+                {!hasData && !loading && !error && (
+                    <div>
+                        {/* NOTA: carga del índice solo en useEffect, no aquí */}
+
+                        {indexLoading && (
+                            <div style={{ textAlign: 'center', padding: '40px 0', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+                                ⏳ Buscando cuentas con actividad...
+                            </div>
+                        )}
+
+                        {indexData && indexData.accounts && indexData.accounts.length > 0 && (
+                            <div>
+                                <div style={{ marginBottom: 12, fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: 600, letterSpacing: '0.05em' }}>
+                                    📊 ÍNDICE DEL MAYOR — Cuentas con actividad ({indexData.accounts.length})
+                                </div>
+                                <div style={{ display: 'grid', gridTemplateColumns: '60px 1fr 140px 140px 140px', gap: 0, borderRadius: 10, overflow: 'hidden', border: '1px solid var(--border-color)' }}>
+                                    {/* Header */}
+                                    <div style={{ display: 'contents' }}>
+                                        {['TIPO', 'CUENTA', 'SALDO APERTURA', 'MOVIMIENTOS', 'SALDO CIERRE'].map((h, i) => (
+                                            <div key={i} style={{
+                                                background: 'var(--bg-header)', padding: '8px 12px',
+                                                fontSize: '0.68rem', fontWeight: 700, letterSpacing: '0.05em',
+                                                color: 'var(--text-muted)', textAlign: i >= 2 ? 'right' : 'left',
+                                                borderBottom: '1px solid var(--border-color)',
+                                            }}>{h}</div>
+                                        ))}
+                                    </div>
+                                    {/* Filas */}
+                                    {indexData.accounts.map((acc, i) => {
                                         const col = TYPE_COLOR[acc.account_type] || '#6b7280'
                                         return (
-                                            <div
-                                                key={acc.code}
-                                                id={`mayor-acc-${acc.code}`}
-                                                onClick={() => selectAccount(acc)}
-                                                style={{
-                                                    padding: '8px 14px', cursor: 'pointer',
-                                                    display: 'flex', alignItems: 'center', gap: 10,
-                                                    transition: 'background 0.12s',
+                                            <div key={acc.account_code} style={{ display: 'contents' }}
+                                                onClick={() => {
+                                                    setSelectedAcc({ code: acc.account_code, display_code: acc.display_code || acc.account_code, name: acc.account_name, account_type: acc.account_type })
+                                                    fetchMayor(acc.account_code)
                                                 }}
-                                                onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-hover)'}
-                                                onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
                                             >
-                                                <span style={{ fontFamily: 'monospace', color: col, fontWeight: 700, fontSize: '0.78rem', minWidth: 60 }}>
-                                                    {acc.display_code}
-                                                </span>
-                                                <span style={{ fontSize: '0.82rem', color: 'var(--text-primary)' }}>
-                                                    {acc.name}
-                                                </span>
-                                                <span style={{ marginLeft: 'auto', fontSize: '0.68rem', color: col, fontWeight: 600 }}>
-                                                    {TYPE_LABEL[acc.account_type] || ''}
-                                                </span>
+                                                {[' ', ' ', ' ', ' ', ' '].map((_, ci) => (
+                                                    <div key={ci} style={{
+                                                        padding: '9px 12px',
+                                                        borderBottom: '1px solid var(--border-color)',
+                                                        background: i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.015)',
+                                                        cursor: 'pointer',
+                                                        transition: 'background 0.1s',
+                                                    }}
+                                                        onMouseEnter={e => { e.currentTarget.parentElement.querySelectorAll('div').forEach(d => d.style.background = 'var(--bg-hover)') }}
+                                                        onMouseLeave={e => { e.currentTarget.parentElement.querySelectorAll('div').forEach(d => d.style.background = i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.015)') }}
+                                                    >
+                                                        {ci === 0 && <span style={{ fontSize: '0.68rem', color: col, fontWeight: 700, background: `${col}20`, padding: '2px 6px', borderRadius: 4 }}>{TYPE_LABEL[acc.account_type] || '?'}</span>}
+                                                        {ci === 1 && <><span style={{ fontFamily: 'monospace', color: col, fontWeight: 700, fontSize: '0.8rem', marginRight: 8 }}>{acc.display_code || acc.account_code}</span><span style={{ fontSize: '0.82rem', color: 'var(--text-primary)' }}>{acc.account_name}</span></>}
+                                                        {ci === 2 && <span style={{ fontFamily: 'monospace', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{fmt(acc.opening_balance)}</span>}
+                                                        {ci === 3 && <span style={{ fontFamily: 'monospace', fontSize: '0.8rem', color: acc.net_movement > 0 ? '#10b981' : acc.net_movement < 0 ? '#ef4444' : 'var(--text-muted)' }}>{fmt(Math.abs(acc.net_movement))}</span>}
+                                                        {ci === 4 && <span style={{ fontFamily: 'monospace', fontSize: '0.82rem', fontWeight: 700, color: getSaldoColor(acc.closing_balance, acc.account_type) }}>{fmt(acc.closing_balance)}</span>}
+                                                    </div>
+                                                ))}
                                             </div>
                                         )
                                     })}
                                 </div>
+                                <div style={{ marginTop: 8, fontSize: '0.72rem', color: 'var(--text-muted)', textAlign: 'right' }}>
+                                    👇 Haz clic en una cuenta para ver su T-account
+                                </div>
+                            </div>
+                        )}
+
+                        {indexData && (!indexData.accounts || indexData.accounts.length === 0) && (
+                            <div style={{ textAlign: 'center', padding: '60px 0', color: 'var(--text-muted)' }}>
+                                <div style={{ fontSize: '3rem', marginBottom: 12 }}>📖</div>
+                                <p style={{ fontSize: '0.9rem' }}>No hay movimientos registrados aún</p>
+                                <p style={{ fontSize: '0.8rem', marginTop: 4 }}>El libro mayor se abre con el asiento de Apertura</p>
+                            </div>
+                        )}
+
+                        {!indexData && !indexLoading && (
+                            <div style={{ textAlign: 'center', padding: '60px 0', color: 'var(--text-muted)' }}>
+                                <div style={{ fontSize: '3rem', marginBottom: 12 }}>📖</div>
+                                <p style={{ fontSize: '0.9rem' }}>Selecciona una cuenta y presiona <strong>Consultar</strong></p>
+                                <p style={{ fontSize: '0.8rem', marginTop: 4 }}>El mayor muestra el saldo inicial (apertura) + todos los movimientos del período</p>
                             </div>
                         )}
                     </div>
-                </div>
+                )}
 
-                {/* Desde */}
-                <div>
-                    <label style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>Desde</label>
-                    <input
-                        id="mayor-from-date"
-                        type="date"
-                        value={fromDate}
-                        onChange={e => setFromDate(e.target.value)}
-                        style={{ width: '100%', padding: '7px 10px', borderRadius: 8, border: '1px solid var(--border-color)', background: 'var(--bg-card)', color: 'var(--text-primary)', fontSize: '0.83rem', boxSizing: 'border-box' }}
-                    />
-                </div>
-
-                {/* Hasta */}
-                <div>
-                    <label style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>Hasta</label>
-                    <input
-                        id="mayor-to-date"
-                        type="date"
-                        value={toDate}
-                        onChange={e => setToDate(e.target.value)}
-                        style={{ width: '100%', padding: '7px 10px', borderRadius: 8, border: '1px solid var(--border-color)', background: 'var(--bg-card)', color: 'var(--text-primary)', fontSize: '0.83rem', boxSizing: 'border-box' }}
-                    />
-                </div>
-
-                {/* Botón Consultar */}
-                <button
-                    id="mayor-consultar-btn"
-                    onClick={() => fetchMayor()}
-                    disabled={!selectedAcc || loading}
-                    style={{
-                        padding: '8px 20px', borderRadius: 8, border: 'none',
-                        background: selectedAcc ? 'var(--accent)' : 'var(--border-color)',
-                        color: selectedAcc ? '#fff' : 'var(--text-muted)',
-                        cursor: selectedAcc ? 'pointer' : 'not-allowed',
-                        fontSize: '0.85rem', fontWeight: 600, whiteSpace: 'nowrap',
-                        transition: 'opacity 0.2s',
-                    }}
-                >
-                    {loading ? '⏳' : '🔍 Consultar'}
-                </button>
-            </div>
-
-            {/* ── Error ──────────────────────────────────────── */}
-            {error && (
-                <div style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 8, padding: '10px 16px', marginBottom: 16, color: '#ef4444', fontSize: '0.82rem' }}>
-                    ⚠️ {error}
-                </div>
-            )}
-
-            {/* ── Resultado del Mayor ──────────────────────────── */}
-            {hasData && (
-                <div>
-                    {/* Header de la cuenta */}
-                    <div style={{
-                        background: `${color}12`, border: `1.5px solid ${color}40`,
-                        borderRadius: 12, padding: '16px 20px', marginBottom: 16,
-                        display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 16,
-                    }}>
-                        <div>
-                            <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginBottom: 4 }}>Cuenta</div>
-                            <div style={{ fontFamily: 'monospace', fontWeight: 800, fontSize: '1rem', color }}>
-                                {mayorData.account_code}
-                            </div>
-                            <div style={{ fontSize: '0.82rem', color: 'var(--text-primary)', fontWeight: 600 }}>
-                                {mayorData.account_name}
-                            </div>
-                        </div>
-                        <div>
-                            <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginBottom: 4 }}>
-                                Saldo Inicial {mayorData.has_apertura ? '(Apertura)' : '(sin apertura)'}
-                            </div>
-                            <div style={{ fontSize: '0.95rem', fontWeight: 700, color: getSaldoColor(mayorData.opening_balance, mayorData.account_type) }}>
-                                {fmt(mayorData.opening_balance)}
-                            </div>
-                        </div>
-                        <div>
-                            <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginBottom: 4 }}>Movimientos del período</div>
-                            <div style={{ fontSize: '0.82rem', color: '#10b981' }}>DR {fmt(mayorData.total_debit)}</div>
-                            <div style={{ fontSize: '0.82rem', color: '#ef4444' }}>CR {fmt(mayorData.total_credit)}</div>
-                        </div>
-                        <div>
-                            <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginBottom: 4 }}>Saldo Cierre</div>
-                            <div style={{ fontSize: '1rem', fontWeight: 800, color: getSaldoColor(mayorData.closing_balance, mayorData.account_type) }}>
-                                {fmt(mayorData.closing_balance)}
-                            </div>
-                        </div>
+                {loading && (
+                    <div style={{ textAlign: 'center', padding: '40px 0', color: 'var(--text-muted)', fontSize: '0.9rem' }}>
+                        ⏳ Cargando libro mayor...
                     </div>
-
-                    {/* Tabla T-account */}
-                    <div style={{ borderRadius: 10, overflow: 'hidden', border: '1px solid var(--border-color)' }}>
-                        {/* Columnas */}
-                        <div style={{
-                            display: 'grid', gridTemplateColumns: '110px 75px 1fr 130px 130px 150px',
-                            background: 'var(--bg-header)', padding: '8px 16px',
-                            borderBottom: '1px solid var(--border-color)',
-                        }}>
-                            {['FECHA', 'REF', 'DESCRIPCIÓN', 'DEBE (DR)', 'HABER (CR)', 'SALDO'].map((h, i) => (
-                                <div key={i} style={{
-                                    fontSize: '0.7rem', fontWeight: 700, letterSpacing: '0.05em',
-                                    color: 'var(--text-muted)',
-                                    textAlign: i >= 3 ? 'right' : 'left',
-                                }}>
-                                    {h}
-                                </div>
-                            ))}
-                        </div>
-
-                        {/* Fila de saldo inicial */}
-                        <div style={{
-                            display: 'grid', gridTemplateColumns: '110px 75px 1fr 130px 130px 150px',
-                            padding: '10px 16px',
-                            background: `${color}10`,
-                            borderBottom: '1px solid var(--border-color)',
-                        }}>
-                            <div style={{ fontSize: '0.77rem', color: 'var(--text-muted)' }}>{mayorData.from_date}</div>
-                            <div style={{ fontSize: '0.68rem', fontFamily: 'monospace', color: '#8b5cf6', fontWeight: 700 }}>APER</div>
-                            <div style={{ fontSize: '0.82rem', color, fontWeight: 600, fontStyle: 'italic' }}>
-                                ← Saldo de Apertura
-                            </div>
-                            <div style={{ textAlign: 'right' }} />
-                            <div style={{ textAlign: 'right' }} />
-                            <div style={{ textAlign: 'right', fontWeight: 700, fontSize: '0.85rem', color: getSaldoColor(mayorData.opening_balance, mayorData.account_type) }}>
-                                {fmt(mayorData.opening_balance)}
-                            </div>
-                        </div>
-
-                        {/* Movimientos */}
-                        {mayorData.movements.length === 0 && (
-                            <div style={{ padding: '20px 16px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.82rem' }}>
-                                Sin movimientos en el período seleccionado
-                            </div>
-                        )}
-                        {mayorData.movements.map((m, i) => {
-                            const ref = m.source_ref || `#${String(m.entry_id).slice(-6)}`
-                            return (
-                                <div
-                                    key={i}
-                                    style={{
-                                        display: 'grid', gridTemplateColumns: '110px 75px 1fr 130px 130px 150px',
-                                        padding: '9px 16px',
-                                        borderBottom: '1px solid var(--border-color)',
-                                        background: i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.015)',
-                                        transition: 'background 0.1s',
-                                    }}
-                                    onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-hover)'}
-                                    onMouseLeave={e => e.currentTarget.style.background = i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.015)'}
-                                >
-                                    <div style={{ fontSize: '0.77rem', color: 'var(--text-muted)', fontFamily: 'monospace' }}>
-                                        {fmtDate(m.date)}
-                                    </div>
-                                    <div
-                                        title={`Asiento ${m.entry_id}`}
-                                        style={{
-                                            fontSize: '0.68rem', fontFamily: 'monospace', color: '#7c3aed', fontWeight: 600,
-                                            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                                            cursor: 'pointer'
-                                        }}
-                                        onClick={() => window.location.href = `/diario?entry=${m.entry_id}`}
-                                    >
-                                        {ref}
-                                    </div>
-                                    <div style={{ fontSize: '0.82rem', color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: 8 }}>
-                                        {m.description}
-                                        {m.source !== 'MANUAL' && (
-                                            <span style={{ marginLeft: 6, fontSize: '0.68rem', color: 'var(--text-muted)', background: 'rgba(99,102,241,0.15)', padding: '1px 5px', borderRadius: 4 }}>
-                                                {m.source}
-                                            </span>
-                                        )}
-                                    </div>
-                                    <div style={{ textAlign: 'right', fontSize: '0.82rem', color: m.debit > 0 ? '#10b981' : 'var(--text-muted)', fontWeight: m.debit > 0 ? 600 : 400, fontFamily: 'monospace' }}>
-                                        {m.debit > 0 ? fmt(m.debit) : ''}
-                                    </div>
-                                    <div style={{ textAlign: 'right', fontSize: '0.82rem', color: m.credit > 0 ? '#ef4444' : 'var(--text-muted)', fontWeight: m.credit > 0 ? 600 : 400, fontFamily: 'monospace' }}>
-                                        {m.credit > 0 ? fmt(m.credit) : ''}
-                                    </div>
-                                    <div style={{ textAlign: 'right', fontSize: '0.83rem', fontWeight: 700, fontFamily: 'monospace', color: getSaldoColor(m.balance, mayorData.account_type) }}>
-                                        {fmt(m.balance)}
-                                    </div>
-                                </div>
-                            )
-                        })}
-
-                        {/* Fila totales */}
-                        <div style={{
-                            display: 'grid', gridTemplateColumns: '110px 75px 1fr 130px 130px 150px',
-                            padding: '10px 16px',
-                            background: `${color}10`,
-                            borderTop: `2px solid ${color}40`,
-                        }}>
-                            <div /><div />
-                            <div style={{ fontSize: '0.78rem', fontWeight: 700, color }}>TOTALES DEL PERÍODO</div>
-                            <div style={{ textAlign: 'right', fontWeight: 700, fontSize: '0.85rem', color: '#10b981', fontFamily: 'monospace' }}>
-                                {fmt(mayorData.total_debit)}
-                            </div>
-                            <div style={{ textAlign: 'right', fontWeight: 700, fontSize: '0.85rem', color: '#ef4444', fontFamily: 'monospace' }}>
-                                {fmt(mayorData.total_credit)}
-                            </div>
-                            <div style={{ textAlign: 'right', fontWeight: 800, fontSize: '0.9rem', fontFamily: 'monospace', color: getSaldoColor(mayorData.closing_balance, mayorData.account_type) }}>
-                                {fmt(mayorData.closing_balance)}
-                            </div>
-                        </div>
-                    </div>
-
-                    {/* Metadatos */}
-                    <div style={{ marginTop: 10, fontSize: '0.72rem', color: 'var(--text-muted)', textAlign: 'right' }}>
-                        Período: {fmtDate(mayorData.from_date)} → {fmtDate(mayorData.to_date)} ·
-                        {mayorData.movements.length} movimiento{mayorData.movements.length !== 1 ? 's' : ''} ·
-                        Solo asientos POSTED
-                    </div>
-                </div>
-            )}
-
-            {/* Estado vacío: índice automático de cuentas con actividad */}
-            {!hasData && !loading && !error && (
-                <div>
-                    {/* NOTA: carga del índice solo en useEffect, no aquí */}
-
-                    {indexLoading && (
-                        <div style={{ textAlign: 'center', padding: '40px 0', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
-                            ⏳ Buscando cuentas con actividad...
-                        </div>
-                    )}
-
-                    {indexData && indexData.accounts && indexData.accounts.length > 0 && (
-                        <div>
-                            <div style={{ marginBottom: 12, fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: 600, letterSpacing: '0.05em' }}>
-                                📊 ÍNDICE DEL MAYOR — Cuentas con actividad ({indexData.accounts.length})
-                            </div>
-                            <div style={{ display: 'grid', gridTemplateColumns: '60px 1fr 140px 140px 140px', gap: 0, borderRadius: 10, overflow: 'hidden', border: '1px solid var(--border-color)' }}>
-                                {/* Header */}
-                                <div style={{ display: 'contents' }}>
-                                    {['TIPO', 'CUENTA', 'SALDO APERTURA', 'MOVIMIENTOS', 'SALDO CIERRE'].map((h, i) => (
-                                        <div key={i} style={{
-                                            background: 'var(--bg-header)', padding: '8px 12px',
-                                            fontSize: '0.68rem', fontWeight: 700, letterSpacing: '0.05em',
-                                            color: 'var(--text-muted)', textAlign: i >= 2 ? 'right' : 'left',
-                                            borderBottom: '1px solid var(--border-color)',
-                                        }}>{h}</div>
-                                    ))}
-                                </div>
-                                {/* Filas */}
-                                {indexData.accounts.map((acc, i) => {
-                                    const col = TYPE_COLOR[acc.account_type] || '#6b7280'
-                                    return (
-                                        <div key={acc.account_code} style={{ display: 'contents' }}
-                                            onClick={() => {
-                                                setSelectedAcc({ code: acc.account_code, display_code: acc.display_code || acc.account_code, name: acc.account_name, account_type: acc.account_type })
-                                                fetchMayor(acc.account_code)
-                                            }}
-                                        >
-                                            {[' ', ' ', ' ', ' ', ' '].map((_, ci) => (
-                                                <div key={ci} style={{
-                                                    padding: '9px 12px',
-                                                    borderBottom: '1px solid var(--border-color)',
-                                                    background: i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.015)',
-                                                    cursor: 'pointer',
-                                                    transition: 'background 0.1s',
-                                                }}
-                                                    onMouseEnter={e => { e.currentTarget.parentElement.querySelectorAll('div').forEach(d => d.style.background = 'var(--bg-hover)') }}
-                                                    onMouseLeave={e => { e.currentTarget.parentElement.querySelectorAll('div').forEach(d => d.style.background = i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.015)') }}
-                                                >
-                                                    {ci === 0 && <span style={{ fontSize: '0.68rem', color: col, fontWeight: 700, background: `${col}20`, padding: '2px 6px', borderRadius: 4 }}>{TYPE_LABEL[acc.account_type] || '?'}</span>}
-                                                    {ci === 1 && <><span style={{ fontFamily: 'monospace', color: col, fontWeight: 700, fontSize: '0.8rem', marginRight: 8 }}>{acc.display_code || acc.account_code}</span><span style={{ fontSize: '0.82rem', color: 'var(--text-primary)' }}>{acc.account_name}</span></>}
-                                                    {ci === 2 && <span style={{ fontFamily: 'monospace', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{fmt(acc.opening_balance)}</span>}
-                                                    {ci === 3 && <span style={{ fontFamily: 'monospace', fontSize: '0.8rem', color: acc.net_movement > 0 ? '#10b981' : acc.net_movement < 0 ? '#ef4444' : 'var(--text-muted)' }}>{fmt(Math.abs(acc.net_movement))}</span>}
-                                                    {ci === 4 && <span style={{ fontFamily: 'monospace', fontSize: '0.82rem', fontWeight: 700, color: getSaldoColor(acc.closing_balance, acc.account_type) }}>{fmt(acc.closing_balance)}</span>}
-                                                </div>
-                                            ))}
-                                        </div>
-                                    )
-                                })}
-                            </div>
-                            <div style={{ marginTop: 8, fontSize: '0.72rem', color: 'var(--text-muted)', textAlign: 'right' }}>
-                                👇 Haz clic en una cuenta para ver su T-account
-                            </div>
-                        </div>
-                    )}
-
-                    {indexData && (!indexData.accounts || indexData.accounts.length === 0) && (
-                        <div style={{ textAlign: 'center', padding: '60px 0', color: 'var(--text-muted)' }}>
-                            <div style={{ fontSize: '3rem', marginBottom: 12 }}>📖</div>
-                            <p style={{ fontSize: '0.9rem' }}>No hay movimientos registrados aún</p>
-                            <p style={{ fontSize: '0.8rem', marginTop: 4 }}>El libro mayor se abre con el asiento de Apertura</p>
-                        </div>
-                    )}
-
-                    {!indexData && !indexLoading && (
-                        <div style={{ textAlign: 'center', padding: '60px 0', color: 'var(--text-muted)' }}>
-                            <div style={{ fontSize: '3rem', marginBottom: 12 }}>📖</div>
-                            <p style={{ fontSize: '0.9rem' }}>Selecciona una cuenta y presiona <strong>Consultar</strong></p>
-                            <p style={{ fontSize: '0.8rem', marginTop: 4 }}>El mayor muestra el saldo inicial (apertura) + todos los movimientos del período</p>
-                        </div>
-                    )}
-                </div>
-            )}
-
-            {loading && (
-                <div style={{ textAlign: 'center', padding: '40px 0', color: 'var(--text-muted)', fontSize: '0.9rem' }}>
-                    ⏳ Cargando libro mayor...
-                </div>
-            )}
+                )}
+            </div>{/* fin mayor-print-root */}
         </div>
     )
 }
