@@ -693,10 +693,16 @@ def run_match(recon_id: str, db: Session = Depends(_get_db)):
 def run_centinela(recon_id: str, db: Session = Depends(_get_db)):
     """
     Corre el análisis CENTINELA completo para una sesión de conciliación.
-    Detecta fugas A/B/C y calcula el score de riesgo fiscal.
+
+    Pasos:
+    1. Detecta txns SIN_FE (riesgo fiscal real, ya no SIN_ASIENTO vacío)
+    2. Aplica tarifa IVA semántica correcta por transacción (Ley 9635)
+    3. Clasifica fugas A/B/C y calcula score
+    4. Acumula datos en bank_counterparties (cross-meses)
+    5. Detecta beneficiarios que superan umbral D-150 (>₡1,000,000 anuales)
     """
     from services.conciliacion.fiscal_engine import (
-        clasificar_fuga, calcular_score
+        clasificar_fuga, calcular_score, estimar_tarifa, calcular_iva_incluido
     )
     from services.conciliacion.reconciliation_engine import calcular_diferencia_saldo
 
@@ -707,61 +713,146 @@ def run_centinela(recon_id: str, db: Session = Depends(_get_db)):
         raise HTTPException(status_code=404, detail="Sesión no encontrada")
 
     tenant_id, period, saldo_final_banco = row
+    year, month = period[:4], period[4:6]
+    period_fmt = f"{year}-{month}"
 
-    # Transacciones sin asiento = candidatas a fugas
+    # ── Paso 1: transacciones SIN_FE → riesgo fiscal real ─────────────────────
     sin_match = [dict(r._mapping) for r in db.execute(text("""
         SELECT * FROM bank_transactions
-        WHERE recon_id = :id AND match_estado IN ('SIN_ASIENTO', 'SOLO_LIBROS')
+        WHERE recon_id = :id AND match_estado IN ('SIN_FE', 'SIN_ASIENTO', 'SOLO_LIBROS')
     """), {"id": recon_id}).fetchall()]
 
-    # FE emitidas del período (para cruce Tipo A y C)
-    year, month = period[:4], period[4:6]
+    # ── FE emitidas del período ────────────────────────────────────────────────
     fe_emitidas = [dict(r._mapping) for r in db.execute(text("""
         SELECT * FROM journal_entries
-        WHERE tenant_id = :tenant_id AND period = :period
+        WHERE tenant_id = :tid AND period = :period
           AND source IN ('FE', 'TE', 'NC', 'ND') AND status = 'POSTED'
-    """), {"tenant_id": tenant_id, "period": f"{year}-{month}"}).fetchall()]
+    """), {"tid": tenant_id, "period": period_fmt}).fetchall()]
 
-    fe_recibidas = []  # Para fase futura (FE recibidas módulo)
+    fe_recibidas = []  # FE recibidas módulo (fase futura)
 
+    # ── Paso 2: clasificar fugas con tarifa IVA semántica ─────────────────────
     fugas = []
     for txn in sin_match:
+        desc = txn.get("descripcion", "")
+        cat  = txn.get("beneficiario_categoria", "TERCERO")
+
+        # Aplicar tarifa correcta por Ley 9635 ANTES de calcular IVA
+        tarifa = estimar_tarifa(desc, cat)
+        calc   = calcular_iva_incluido(float(txn.get("monto", 0)), tarifa)
+
         fuga = clasificar_fuga(txn, fe_emitidas, fe_recibidas)
         if fuga:
             fuga["txn_id"]          = txn["id"]
-            fuga["txn_descripcion"] = txn.get("descripcion", "")
+            fuga["txn_descripcion"] = desc
             fuga["txn_monto"]       = float(txn.get("monto", 0))
             fuga["txn_fecha"]       = str(txn.get("fecha", ""))
+            # Sobrescribir con IVA calculado con tarifa semántica correcta
+            fuga["iva_riesgo"]      = calc["iva"]
+            fuga["base_riesgo"]     = calc["base"]
             fugas.append(fuga)
 
-            # Actualizar transacción en BD
             db.execute(text("""
                 UPDATE bank_transactions
                 SET fuga_tipo = :ft, score_puntos = :sp, iva_estimado = :iva,
-                    base_estimada = :base, d270_codigo = :d270, accion = :accion
+                    base_estimada = :base, d270_codigo = :d270, accion = :accion,
+                    tarifa_iva = :tarifa
                 WHERE id = :id
             """), {
-                "ft": fuga.get("fuga_tipo"),
-                "sp": fuga.get("score_pts", 0),
-                "iva": fuga.get("iva_riesgo", 0),
-                "base": fuga.get("base_riesgo", 0),
-                "d270": fuga.get("d270_codigo"),
+                "ft":     fuga.get("fuga_tipo"),
+                "sp":     fuga.get("score_pts", 0),
+                "iva":    calc["iva"],
+                "base":   calc["base"],
+                "d270":   fuga.get("d270_codigo"),
                 "accion": fuga.get("accion"),
-                "id": txn["id"],
+                "tarifa": int(tarifa * 100),
+                "id":     txn["id"],
             })
 
-    # Score total
+    # ── Paso 3: score fiscal ───────────────────────────────────────────────────
     total_fe_monto = sum(float(fe.get("total_amount", 0) or 0) for fe in fe_emitidas)
-    ingresos_banco = sum(float(t.get("monto", 0)) for t in db.execute(text(
-        "SELECT monto FROM bank_transactions WHERE recon_id = :id AND tipo = 'CR'"
-    ), {"id": recon_id}).fetchall())
+    ingresos_banco = sum(
+        float(r[0]) for r in db.execute(text(
+            "SELECT monto FROM bank_transactions WHERE recon_id = :id AND tipo = 'CR'"
+        ), {"id": recon_id}).fetchall()
+    )
 
-    saldo_libros = 0.0
-    diff = calcular_diferencia_saldo(float(saldo_final_banco or 0), saldo_libros)
+    # Saldo real en libros (NO hardcodeado a 0)
+    saldo_libros = float(db.execute(text("""
+        SELECT COALESCE(SUM(jl.credit), 0) - COALESCE(SUM(jl.debit), 0)
+        FROM journal_lines jl
+        JOIN journal_entries je ON je.id = jl.entry_id
+        WHERE jl.tenant_id = :tid AND je.period = :period AND je.status = 'POSTED'
+    """), {"tid": tenant_id, "period": period_fmt}).scalar() or 0)
 
+    diff   = calcular_diferencia_saldo(float(saldo_final_banco or 0), saldo_libros)
     result = calcular_score(fugas, diff, ingresos_banco, total_fe_monto)
 
-    # Guardar score en centinela_score
+    # ── Paso 4: acumular en bank_counterparties (cross-meses) ─────────────────
+    all_txns = [dict(r._mapping) for r in db.execute(text(
+        "SELECT * FROM bank_transactions WHERE recon_id = :id"
+    ), {"id": recon_id}).fetchall()]
+
+    from collections import defaultdict
+    por_beneficiario: dict[str, dict] = defaultdict(lambda: {
+        "debitos": 0.0, "creditos": 0.0, "n": 0, "tel": None, "cat": "TERCERO"
+    })
+    for txn in all_txns:
+        bnom = txn.get("beneficiario_nombre") or "DESCONOCIDO"
+        bcat = txn.get("beneficiario_categoria", "TERCERO")
+        if bcat in ("BANK_FEE", "BANK_INTEREST"):
+            continue   # No acumular cargos bancarios en counterparties
+        por_beneficiario[bnom]["n"]        += 1
+        por_beneficiario[bnom]["tel"]       = txn.get("beneficiario_telefono_norm") or por_beneficiario[bnom]["tel"]
+        por_beneficiario[bnom]["cat"]       = bcat
+        if txn.get("tipo") == "DB":
+            por_beneficiario[bnom]["debitos"]  += float(txn.get("monto", 0))
+        else:
+            por_beneficiario[bnom]["creditos"] += float(txn.get("monto", 0))
+
+    # Año para umbral D-150
+    year_str = period[:4]
+
+    for nombre, datos in por_beneficiario.items():
+        # Suma anual existente para umbral D-150
+        existing_anual = db.execute(text("""
+            SELECT COALESCE(d150_monto_anual, 0)
+            FROM bank_counterparties
+            WHERE tenant_id = :tid AND nombre_norm = :nom
+        """), {"tid": tenant_id, "nom": nombre}).scalar() or 0.0
+
+        monto_nuevo_anual = float(existing_anual) + datos["debitos"] + datos["creditos"]
+        d150_flag = monto_nuevo_anual >= 1_000_000.0
+
+        db.execute(text("""
+            INSERT INTO bank_counterparties
+              (tenant_id, nombre_norm, telefono, categoria,
+               total_debitos, total_creditos, n_transacciones,
+               primer_periodo, ultimo_periodo,
+               d150_monto_anual, d150_flag, updated_at)
+            VALUES
+              (:tid, :nom, :tel, :cat,
+               :deb, :cred, :n,
+               :period, :period,
+               :d150a, :d150f, NOW())
+            ON CONFLICT (tenant_id, nombre_norm)
+            DO UPDATE SET
+              total_debitos    = bank_counterparties.total_debitos + :deb,
+              total_creditos   = bank_counterparties.total_creditos + :cred,
+              n_transacciones  = bank_counterparties.n_transacciones + :n,
+              ultimo_periodo   = :period,
+              d150_monto_anual = bank_counterparties.d150_monto_anual + :deb + :cred,
+              d150_flag        = :d150f,
+              telefono         = COALESCE(bank_counterparties.telefono, :tel),
+              updated_at       = NOW()
+        """), {
+            "tid": tenant_id, "nom": nombre, "tel": datos["tel"],
+            "cat": datos["cat"], "deb": datos["debitos"], "cred": datos["creditos"],
+            "n": datos["n"], "period": period,
+            "d150a": monto_nuevo_anual, "d150f": d150_flag,
+        })
+
+    # ── Guardar score en centinela_score ──────────────────────────────────────
     db.execute(text("""
         INSERT INTO centinela_score
           (tenant_id, period, score_total, fugas_tipo_a, fugas_tipo_b, fugas_tipo_c,
@@ -783,21 +874,84 @@ def run_centinela(recon_id: str, db: Session = Depends(_get_db)):
         "det": str({"detalle": result["detalle"]}),
     })
 
-    # Actualizar score en bank_reconciliation
     db.execute(text(
         "UPDATE bank_reconciliation SET score_riesgo = :s, estado = 'ANALIZADO' WHERE id = :id"
     ), {"s": result["score_total"], "id": recon_id})
     db.commit()
 
     return {
-        "ok":     True,
+        "ok":       True,
         "recon_id": recon_id,
-        "score":  result,
-        "fugas":  fugas,
+        "score":    result,
+        "fugas":    fugas,
+        "saldo_diff": diff,
+        "n_counterparties_actualizados": len(por_beneficiario),
+    }
+
+
+
+
+@router.get("/centinela/beneficiarios")
+def list_beneficiarios(request: Request, db: Session = Depends(_get_db)):
+    """
+    Lista todos los beneficiarios del tenant con acumulados históricos.
+    Ordenados por total movido DESC — útil para detectar proveedores sin FE.
+
+    SEGURIDAD: tenant_id del JWT, nunca del body.
+    """
+    tenant_id = _get_tenant(request)
+    rows = db.execute(text("""
+        SELECT nombre_norm, telefono, categoria,
+               total_debitos, total_creditos,
+               total_debitos + total_creditos AS total_movido,
+               n_transacciones, primer_periodo, ultimo_periodo,
+               d150_monto_anual, d150_flag, riesgo_nivel, updated_at
+        FROM bank_counterparties
+        WHERE tenant_id = :tid
+        ORDER BY (total_debitos + total_creditos) DESC
+        LIMIT 200
+    """), {"tid": tenant_id}).fetchall()
+    return {
+        "beneficiarios": [dict(r._mapping) for r in rows],
+        "d150_flagged":  sum(1 for r in rows if r.d150_flag),
+    }
+
+
+@router.get("/centinela/beneficiario/{nombre_norm}")
+def get_beneficiario_detalle(nombre_norm: str, request: Request, db: Session = Depends(_get_db)):
+    """
+    Detalle período a período de un beneficiario específico.
+    Muestra todas sus transacciones y evolución de montos.
+
+    SEGURIDAD: tenant_id del JWT.
+    """
+    tenant_id = _get_tenant(request)
+
+    resumen = db.execute(text(
+        "SELECT * FROM bank_counterparties WHERE tenant_id = :tid AND nombre_norm = :nom"
+    ), {"tid": tenant_id, "nom": nombre_norm.upper()}).fetchone()
+
+    txns = db.execute(text("""
+        SELECT bt.fecha, bt.monto, bt.tipo, bt.descripcion,
+               bt.match_estado, bt.tiene_fe, bt.iva_estimado,
+               bt.base_estimada, bt.tarifa_iva, br.period, br.banco
+        FROM bank_transactions bt
+        JOIN bank_reconciliation br ON br.id = bt.recon_id
+        WHERE br.tenant_id = :tid
+          AND bt.beneficiario_nombre = :nom
+        ORDER BY bt.fecha DESC
+        LIMIT 100
+    """), {"tid": tenant_id, "nom": nombre_norm.upper()}).fetchall()
+
+    return {
+        "resumen": dict(resumen._mapping) if resumen else {},
+        "transacciones": [dict(r._mapping) for r in txns],
+        "total": len(txns),
     }
 
 
 @router.get("/centinela/score/{period}")
+
 def get_score(period: str, request: Request, db: Session = Depends(_get_db)):
     """Obtiene el score CENTINELA para un período YYYYMM.
 
