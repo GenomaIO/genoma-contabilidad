@@ -435,9 +435,10 @@ function TabERI({ eri, year, priorYear, showCompar }) {
     const p = eri.prior_totals || {}
     const un = t.utilidad_neta || 0
     const isLoss = un < 0
-    // sc = show comparative: activo solo si showCompar=true Y el backend envió prior_totals
-    const sc = showCompar && Object.keys(p).length > 0
-    // Subtotales N-1 calculados en engine (Capa 1a del plan)
+    // sc = show comparative: activo solo con showCompar=true (igual que ESF)
+    // Muestra ceros cuando es primer año (sin datos N-1), conforme NIIF Sec. 3.14
+    const sc = showCompar
+    // Subtotales N-1 (calculados en engine si has_prior, o 0 en primer año)
     const p_bruta = p.utilidad_bruta_prior ?? 0
     const p_ai = p.utilidad_antes_isr_prior ?? 0
     const p_neta = p.utilidad_neta_prior ?? 0
@@ -626,7 +627,13 @@ function TabERI({ eri, year, priorYear, showCompar }) {
                 color: 'var(--text-muted)'
             }}>
                 📖 NIIF PYMES 3ª Ed. · Sección 5 · Clasificación por función · Sección 23 (Ingresos-contratos) aplicada
+                {sc && !priorYear && (
+                    <span style={{ color: '#f59e0b', fontStyle: 'italic', marginLeft: 8 }}>
+                        · ⚠️ Primer año · columna {parseInt(year) - 1} en cero (Sec. 3.14)
+                    </span>
+                )}
             </div>
+
         </div>
     )
 }
