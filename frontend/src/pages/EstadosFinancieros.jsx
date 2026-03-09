@@ -1054,9 +1054,9 @@ export default function EstadosFinancieros() {
         const esf = data.esf || {}
         const eri = data.eri || {}
         const ecp = data.ecp || {}
-        const t   = esf.totals  || {}
-        const p   = esf.prior_totals || {}
-        const te  = eri.totals  || {}
+        const t = esf.totals || {}
+        const p = esf.prior_totals || {}
+        const te = eri.totals || {}
         const comparLabel = (showCompar && data.prior_year) ? data.prior_year : (parseInt(year) - 1)
 
         const secRows = (lines = [], prior_lines = []) =>
@@ -1067,7 +1067,7 @@ export default function EstadosFinancieros() {
                 fmtAcct(l.amount ?? 0),
             ])
 
-        const sep  = (txt) => [txt, '', '', '']
+        const sep = (txt) => [txt, '', '', '']
         const head = showCompar
             ? ['CÓDIGO NIIF', 'PARTIDA', `${comparLabel} (CRC)`, `${year} (CRC)`]
             : ['CÓDIGO NIIF', 'PARTIDA', `${year} (CRC)`]
@@ -1099,7 +1099,7 @@ export default function EstadosFinancieros() {
             [],
             sep('── PATRIMONIO ──'),
             ...secRows(esf.patrimonio),
-            ['', 'TOTAL PASIVOS + PATRIMONIO', showCompar ? fmtAcct((p.total_pasivos??0)+(p.total_patrimonio??0)) : '', fmtAcct(t.total_pasivo_patrimonio)],
+            ['', 'TOTAL PASIVOS + PATRIMONIO', showCompar ? fmtAcct((p.total_pasivos ?? 0) + (p.total_patrimonio ?? 0)) : '', fmtAcct(t.total_pasivo_patrimonio)],
             [],
             // ─── ERI ───────────────────────────────────────────────────────
             ['═══ ESTADO DE RESULTADO INTEGRAL ═══'],
@@ -1124,7 +1124,7 @@ export default function EstadosFinancieros() {
         ]
 
         const csv = '\uFEFF' + rows
-            .map(r => (r.length === 0 ? '' : r.slice(0, showCompar ? 4 : 3).map(c => `"${String(c??'').replace(/"/g,'""')}"`).join(',')))
+            .map(r => (r.length === 0 ? '' : r.slice(0, showCompar ? 4 : 3).map(c => `"${String(c ?? '').replace(/"/g, '""')}"`).join(',')))
             .join('\r\n')
 
         const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
@@ -1141,9 +1141,9 @@ export default function EstadosFinancieros() {
         if (!data) return
         const esf = data.esf || {}
         const eri = data.eri || {}
-        const t   = esf.totals  || {}
-        const p   = esf.prior_totals || {}
-        const te  = eri.totals  || {}
+        const t = esf.totals || {}
+        const p = esf.prior_totals || {}
+        const te = eri.totals || {}
         const fmtN = (n) => n != null ? Number(n).toLocaleString('es-CR', { minimumFractionDigits: 0 }) : '—'
         const comparLabel = data.prior_year || (parseInt(year) - 1)
 
@@ -1153,10 +1153,10 @@ export default function EstadosFinancieros() {
 
         const lineRow = (l, color) => {
             const prior = showCompar ? `<td class="num" style="color:#777">${fmtN(l.prior_amount ?? 0)}</td>` : ''
-            return `<tr><td style="padding-left:20px;color:${color};font-size:10px">${l.code||''}</td><td>${l.label||''}</td>${prior}<td class="num" style="color:${color}">${fmtN(l.amount)}</td></tr>`
+            return `<tr><td style="padding-left:20px;color:${color};font-size:10px">${l.code || ''}</td><td>${l.label || ''}</td>${prior}<td class="num" style="color:${color}">${fmtN(l.amount)}</td></tr>`
         }
-        const secHead = (txt, color) => `<tr class="sec-head"><td colspan="${showCompar?4:3}" style="color:${color}">${txt}</td></tr>`
-        const totRow  = (txt, prior, curr, color) => {
+        const secHead = (txt, color) => `<tr class="sec-head"><td colspan="${showCompar ? 4 : 3}" style="color:${color}">${txt}</td></tr>`
+        const totRow = (txt, prior, curr, color) => {
             const priorCell = showCompar ? `<td class="num" style="font-weight:700;color:#555">${fmtN(prior)}</td>` : ''
             return `<tr class="tot-row"><td></td><td style="font-weight:700;color:${color}">${txt}</td>${priorCell}<td class="num" style="font-weight:700;color:${color}">${fmtN(curr)}</td></tr>`
         }
@@ -1168,42 +1168,42 @@ export default function EstadosFinancieros() {
         const esfRows = [
             secHead('ACTIVOS', '#166534'),
             secHead('Activo Corriente', '#15803d'),
-            ...(esf.activo_corriente||[]).map(l => lineRow(l, '#166534')),
+            ...(esf.activo_corriente || []).map(l => lineRow(l, '#166534')),
             totRow('Total Activo Corriente', p.total_activo_corriente, t.total_activo_corriente, '#166534'),
             secHead('Activo No Corriente', '#15803d'),
-            ...(esf.activo_no_corriente||[]).map(l => lineRow(l, '#166534')),
+            ...(esf.activo_no_corriente || []).map(l => lineRow(l, '#166534')),
             totRow('Total Activo No Corriente', p.total_activo_no_corriente, t.total_activo_no_corriente, '#166534'),
             grandRow('TOTAL ACTIVOS', p.total_activos, t.total_activos),
-            `<tr><td colspan="${showCompar?4:3}" style="height:8px;background:#f5f5f5"></td></tr>`,
+            `<tr><td colspan="${showCompar ? 4 : 3}" style="height:8px;background:#f5f5f5"></td></tr>`,
             secHead('PASIVOS', '#92400e'),
             secHead('Pasivo Corriente', '#b45309'),
-            ...(esf.pasivo_corriente||[]).map(l => lineRow(l, '#92400e')),
+            ...(esf.pasivo_corriente || []).map(l => lineRow(l, '#92400e')),
             totRow('Total Pasivo Corriente', p.total_pasivo_corriente, t.total_pasivo_corriente, '#92400e'),
             secHead('Pasivo No Corriente', '#b45309'),
-            ...(esf.pasivo_no_corriente||[]).map(l => lineRow(l, '#92400e')),
+            ...(esf.pasivo_no_corriente || []).map(l => lineRow(l, '#92400e')),
             totRow('Total Pasivos', p.total_pasivos, t.total_pasivos, '#92400e'),
-            `<tr><td colspan="${showCompar?4:3}" style="height:8px;background:#f5f5f5"></td></tr>`,
+            `<tr><td colspan="${showCompar ? 4 : 3}" style="height:8px;background:#f5f5f5"></td></tr>`,
             secHead('PATRIMONIO', '#4c1d95'),
-            ...(esf.patrimonio||[]).map(l => lineRow(l, '#4c1d95')),
-            grandRow('TOTAL PASIVOS + PATRIMONIO', (p.total_pasivos??0)+(p.total_patrimonio??0), t.total_pasivo_patrimonio),
+            ...(esf.patrimonio || []).map(l => lineRow(l, '#4c1d95')),
+            grandRow('TOTAL PASIVOS + PATRIMONIO', (p.total_pasivos ?? 0) + (p.total_patrimonio ?? 0), t.total_pasivo_patrimonio),
         ].join('')
 
         const eriRows = [
             secHead('Ingresos de Actividades Ordinarias', '#065f46'),
-            ...(eri.ingresos||[]).map(l => lineRow(l, '#065f46')),
+            ...(eri.ingresos || []).map(l => lineRow(l, '#065f46')),
             totRow('Total Ingresos', 0, te.total_ingresos, '#065f46'),
             secHead('Costo de Ventas / Servicios', '#991b1b'),
-            ...(eri.costos||[]).map(l => lineRow(l, '#991b1b')),
+            ...(eri.costos || []).map(l => lineRow(l, '#991b1b')),
             totRow('Total Costo de Ventas', 0, te.total_costo, '#991b1b'),
             grandRow('Utilidad Bruta', 0, te.utilidad_bruta),
             secHead('Gastos Operativos', '#92400e'),
-            ...(eri.gastos_operativos||[]).map(l => lineRow(l, '#92400e')),
+            ...(eri.gastos_operativos || []).map(l => lineRow(l, '#92400e')),
             totRow('Total Gastos Operativos', 0, te.total_gastos_op, '#92400e'),
             secHead('Gastos Financieros', '#92400e'),
-            ...(eri.gastos_financieros||[]).map(l => lineRow(l, '#92400e')),
+            ...(eri.gastos_financieros || []).map(l => lineRow(l, '#92400e')),
             grandRow('Utilidad antes de Impuestos', 0, te.utilidad_antes_isr),
             secHead('ISR (Sec. 29)', '#374151'),
-            ...(eri.impuesto_renta||[]).map(l => lineRow(l, '#374151')),
+            ...(eri.impuesto_renta || []).map(l => lineRow(l, '#374151')),
             grandRow(te.utilidad_neta < 0 ? '⬇ PÉRDIDA NETA' : '⬆ UTILIDAD NETA DEL PERÍODO', 0, te.utilidad_neta),
         ].join('')
 
@@ -1383,7 +1383,7 @@ export default function EstadosFinancieros() {
                             </button>
                         </div>
                     )}
-                </div>                </div>
+                </div>
             </div>
 
             {/* ── Warning de cuentas sin mapear ───────────────── */}
