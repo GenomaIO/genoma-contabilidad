@@ -788,7 +788,16 @@ export default function Conciliacion() {
         if (!token) return
         fetch(`${API}/conciliacion/sesiones`, { headers: authH(token) })
             .then(r => r.ok ? r.json() : { sesiones: [] })
-            .then(d => setHistorial(d.sesiones || []))
+            .then(d => {
+                // Una sola pill por período — queda la más reciente (primera del array)
+                const vistas = new Set()
+                const unicas = (d.sesiones || []).filter(s => {
+                    if (!s.period || vistas.has(s.period)) return false
+                    vistas.add(s.period)
+                    return true
+                })
+                setHistorial(unicas)
+            })
             .catch(() => { })
     }, [token]) // eslint-disable-line
 
