@@ -276,25 +276,73 @@ export default function Mayor() {
                         </p>
                     </div>
 
-                    {/* Tooltip guía */}
-                    <div style={{ position: 'relative', display: 'inline-block' }}
-                        onMouseEnter={e => e.currentTarget.querySelector('.mayor-guide').style.display = 'block'}
-                        onMouseLeave={e => e.currentTarget.querySelector('.mayor-guide').style.display = 'none'}
-                    >
-                        <span style={{ cursor: 'help', fontSize: '1.1rem' }}>💡 Guía</span>
-                        <div className="mayor-guide" style={{
-                            display: 'none', position: 'absolute', right: 0, top: '130%',
-                            background: 'var(--bg-card)', border: '1px solid var(--border-color)',
-                            borderRadius: 10, padding: '14px 18px', zIndex: 100, width: 320,
-                            fontSize: '0.8rem', color: 'var(--text-secondary)', lineHeight: 1.6,
-                            boxShadow: '0 8px 32px rgba(0,0,0,0.25)',
-                        }}>
-                            <strong style={{ color: 'var(--text-primary)' }}>📒 ¿Qué es el Libro Mayor?</strong><br />
-                            Muestra todos los movimientos de una cuenta específica ordenados por fecha,
-                            con el saldo acumulado (saldo running) después de cada asiento.<br /><br />
-                            <strong>Saldo inicial:</strong> viene del asiento de <em>Apertura</em>.<br />
-                            <strong>Saldo cierre:</strong> apertura + débitos − créditos del período.<br /><br />
-                            Solo se incluyen asientos <strong>POSTED</strong> — los borradores no afectan el mayor.
+                    {/* Esquina superior derecha: botones + guía en línea */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+
+                        {/* 📥 Excel — solo cuando hay datos */}
+                        {hasData && (
+                            <button
+                                id="btn-mayor-export-excel"
+                                className="no-print"
+                                onClick={exportToExcel}
+                                title="Exportar a Excel"
+                                style={{
+                                    display: 'inline-flex', alignItems: 'center', gap: 5,
+                                    padding: '6px 13px', borderRadius: 8, cursor: 'pointer',
+                                    fontSize: '0.8rem', fontWeight: 600,
+                                    border: '1px solid #10b98155',
+                                    background: '#10b98115', color: '#10b981',
+                                    transition: 'all 0.15s',
+                                }}
+                                onMouseEnter={e => e.currentTarget.style.background = '#10b98130'}
+                                onMouseLeave={e => e.currentTarget.style.background = '#10b98115'}
+                            >
+                                📥 Excel
+                            </button>
+                        )}
+
+                        {/* 🖨️ Imprimir — solo cuando hay datos */}
+                        {hasData && (
+                            <button
+                                id="btn-mayor-print"
+                                className="no-print"
+                                onClick={handlePrint}
+                                title="Imprimir"
+                                style={{
+                                    display: 'inline-flex', alignItems: 'center', gap: 5,
+                                    padding: '6px 13px', borderRadius: 8, cursor: 'pointer',
+                                    fontSize: '0.8rem', fontWeight: 600,
+                                    border: '1px solid #6366f155',
+                                    background: '#6366f115', color: '#6366f1',
+                                    transition: 'all 0.15s',
+                                }}
+                                onMouseEnter={e => e.currentTarget.style.background = '#6366f130'}
+                                onMouseLeave={e => e.currentTarget.style.background = '#6366f115'}
+                            >
+                                🖨️ Imprimir
+                            </button>
+                        )}
+
+                        {/* 💡 Guía (tooltip) */}
+                        <div style={{ position: 'relative', display: 'inline-block' }}
+                            onMouseEnter={e => e.currentTarget.querySelector('.mayor-guide').style.display = 'block'}
+                            onMouseLeave={e => e.currentTarget.querySelector('.mayor-guide').style.display = 'none'}
+                        >
+                            <span style={{ cursor: 'help', fontSize: '1.1rem' }}>💡 Guía</span>
+                            <div className="mayor-guide" style={{
+                                display: 'none', position: 'absolute', right: 0, top: '130%',
+                                background: 'var(--bg-card)', border: '1px solid var(--border-color)',
+                                borderRadius: 10, padding: '14px 18px', zIndex: 100, width: 320,
+                                fontSize: '0.8rem', color: 'var(--text-secondary)', lineHeight: 1.6,
+                                boxShadow: '0 8px 32px rgba(0,0,0,0.25)',
+                            }}>
+                                <strong style={{ color: 'var(--text-primary)' }}>📒 ¿Qué es el Libro Mayor?</strong><br />
+                                Muestra todos los movimientos de una cuenta específica ordenados por fecha,
+                                con el saldo acumulado (saldo running) después de cada asiento.<br /><br />
+                                <strong>Saldo inicial:</strong> viene del asiento de <em>Apertura</em>.<br />
+                                <strong>Saldo cierre:</strong> apertura + débitos − créditos del período.<br /><br />
+                                Solo se incluyen asientos <strong>POSTED</strong> — los borradores no afectan el mayor.
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -420,59 +468,21 @@ export default function Mayor() {
                     </div>
 
                     {/* Botón Consultar */}
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                        <button
-                            id="mayor-consultar-btn"
-                            onClick={() => fetchMayor()}
-                            disabled={!selectedAcc || loading}
-                            style={{
-                                padding: '8px 20px', borderRadius: 8, border: 'none',
-                                background: selectedAcc ? 'var(--accent)' : 'var(--border-color)',
-                                color: selectedAcc ? '#fff' : 'var(--text-muted)',
-                                cursor: selectedAcc ? 'pointer' : 'not-allowed',
-                                fontSize: '0.85rem', fontWeight: 600, whiteSpace: 'nowrap',
-                                transition: 'opacity 0.2s',
-                            }}
-                        >
-                            {loading ? '⏳' : '🔎 Consultar'}
-                        </button>
-
-                        {/* Botón Excel */}
-                        {hasData && (
-                            <button
-                                id="btn-mayor-export-excel"
-                                className="no-print"
-                                onClick={exportToExcel}
-                                style={{
-                                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4,
-                                    padding: '7px 14px', borderRadius: 7, cursor: 'pointer',
-                                    fontSize: '0.8rem', fontWeight: 600,
-                                    border: '1px solid #10b98155', background: '#10b98115', color: '#10b981',
-                                }}
-                                title="Exportar a Excel"
-                            >
-                                📥 Excel
-                            </button>
-                        )}
-
-                        {/* Botón Imprimir */}
-                        {hasData && (
-                            <button
-                                id="btn-mayor-print"
-                                className="no-print"
-                                onClick={handlePrint}
-                                style={{
-                                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4,
-                                    padding: '7px 14px', borderRadius: 7, cursor: 'pointer',
-                                    fontSize: '0.8rem', fontWeight: 600,
-                                    border: '1px solid #6366f155', background: '#6366f115', color: '#6366f1',
-                                }}
-                                title="Imprimir"
-                            >
-                                🖨️ Imprimir
-                            </button>
-                        )}
-                    </div>
+                    <button
+                        id="mayor-consultar-btn"
+                        onClick={() => fetchMayor()}
+                        disabled={!selectedAcc || loading}
+                        style={{
+                            padding: '8px 20px', borderRadius: 8, border: 'none',
+                            background: selectedAcc ? 'var(--accent)' : 'var(--border-color)',
+                            color: selectedAcc ? '#fff' : 'var(--text-muted)',
+                            cursor: selectedAcc ? 'pointer' : 'not-allowed',
+                            fontSize: '0.85rem', fontWeight: 600, whiteSpace: 'nowrap',
+                            transition: 'opacity 0.2s',
+                        }}
+                    >
+                        {loading ? '⏳' : '🔎 Consultar'}
+                    </button>
                 </div>
 
                 {/* ── Error ──────────────────────────────────────── */}
