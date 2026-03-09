@@ -65,19 +65,110 @@ CR_KEYWORDS: dict[str, dict] = {
 }
 
 
-# ── Funciones de cálculo IVA ─────────────────────────────────────────────────
+# ── Tarifas IVA vigentes (Ley 9635 y Decreto 43855-H) ───────────────────────
+# Tarifa 0%: bienes exentos (art. 8 Ley 9635)
+# Tarifa 1%: canasta básica (art. 11)
+# Tarifa 2%: medicamentos y seguros (art. 11)
+# Tarifa 4%: servicios profesionales (transitorio V) + educación privada
+# Tarifa 8%: salud privada, seguros generales (art. 11)
+# Tarifa 13%: general (art. 10)
 
-def calcular_iva_incluido(monto_bruto: float) -> dict:
+# Mapa semántico: keyword → tasa decimal
+# Aplicado en orden: la primera coincidencia gana
+_TARIFA_SEMANTICA: list[tuple[str, float]] = [
+    # Exentos 0%
+    ("GASOLINA",         0.00),
+    ("DIESEL",           0.00),
+    ("COMBUSTIBLE",      0.00),
+    ("RECOPE",           0.00),
+    ("MEDICINA",         0.00),
+    ("MEDICAMENTO",      0.00),
+    ("FARMACIA",         0.00),
+    ("HOSPITAL",         0.00),
+    ("CLINICA",          0.00),
+    ("LABORATORIO",      0.00),
+    ("SEGURO",           0.02),  # Seguros → 2%
+    ("INS",              0.02),
+    ("CCSS",             0.00),  # Cargas sociales → exento
+    ("HACIENDA",         0.00),  # Impuestos → exento
+    ("MUNICIPALIDAD",    0.00),  # Impuestos locales → exento
+    ("AYA",              0.00),  # Servicios AyA → exento art. 8
+    ("AGUA",             0.00),
+    ("EDUCACION",        0.04),  # Educación privada → 4%
+    ("COLEGIO",          0.04),
+    ("UNIVERSIDAD",      0.04),
+    ("CAPACITACION",     0.04),
+    ("MEDICO",           0.04),  # Servicios médicos → 4% (transitorio)
+    ("DENTISTA",         0.04),
+    ("ODONTOLOGO",       0.04),
+    ("PSICOLOGO",        0.04),
+    ("HONORARIO",        0.04),  # Servicios profesionales → 4%
+    ("ABOGADO",          0.04),
+    ("CONTADOR",         0.04),
+    ("CONSULTOR",        0.04),
+    ("NOTARIO",          0.04),
+    ("ALQUILER",         0.13),  # Alquileres inmuebles → 13%
+    ("ARRENDAMIENTO",    0.13),
+    # Resto → 13% default
+]
+
+
+def estimar_tarifa(descripcion: str, categoria: str = "TERCERO") -> float:
     """
-    Desglosa un monto que ya incluye el IVA del 13%.
-    
-    monto_bruto = base + IVA = base * 1.13
-    base = monto_bruto / 1.13
-    IVA  = monto_bruto - base = monto_bruto * (0.13/1.13)
+    Estima la tarifa IVA correcta para una transacción bancaria.
+
+    Base legal: Ley 9635 (IVA Costa Rica) vigente.
+    Trabaja por semántica de la descripción — la primera coincidencia gana.
+
+    Casos especiales:
+    - BANK_FEE / BANK_INTEREST → 0% (servicios financieros exentos, art. 8)
+    - SINPE sin descripción → 13% (ingreso gravable por defecto)
+    - Descripción vacía → 13% (máxima prudencia fiscal)
+
+    Args:
+        descripcion: Texto crudo de la transacción
+        categoria:   beneficiario_categoria (BANK_FEE, BANK_INTEREST, SINPE, TERCERO)
+
+    Returns:
+        Tasa decimal: 0.0, 0.01, 0.02, 0.04, 0.08, 0.13
     """
-    base = round(monto_bruto / (1 + IVA_RATE), 2)
+    if categoria in ("BANK_FEE", "BANK_INTEREST"):
+        return 0.00   # Servicios financieros exentos art. 8 inc. g
+
+    desc_up = (descripcion or "").upper()
+    for keyword, tasa in _TARIFA_SEMANTICA:
+        if keyword in desc_up:
+            return tasa
+    return 0.13   # Default: tarifa general
+
+
+def calcular_iva_incluido(monto_bruto: float, tarifa: float = IVA_RATE) -> dict:
+    """
+    Desglosa un monto que ya incluye IVA según la tarifa indicada.
+
+    monto_bruto = base * (1 + tarifa)
+    base  = monto_bruto / (1 + tarifa)
+    IVA   = monto_bruto - base
+
+    Args:
+        monto_bruto: Monto total del banco (ya incluye IVA)
+        tarifa:      Tasa decimal. Default 0.13. Usar estimar_tarifa() para detectar.
+
+    Returns:
+        dict con base, iva, bruto, tarifa_pct
+    """
+    if tarifa <= 0:
+        return {"base": monto_bruto, "iva": 0.0, "bruto": monto_bruto, "tarifa_pct": 0}
+    base = round(monto_bruto / (1 + tarifa), 2)
     iva  = round(monto_bruto - base, 2)
-    return {"base": base, "iva": iva, "bruto": monto_bruto}
+    return {
+        "base":       base,
+        "iva":        iva,
+        "bruto":      monto_bruto,
+        "tarifa_pct": int(tarifa * 100),
+    }
+
+
 
 
 # ── Clasificación de fugas ───────────────────────────────────────────────────
