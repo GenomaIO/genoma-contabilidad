@@ -1,5 +1,12 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { useApp } from '../context/AppContext'
+import * as pdfjsLib from 'pdfjs-dist'
+
+// Worker de pdf.js — debe apuntar al archivo del paquete instalado
+pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
+    'pdfjs-dist/build/pdf.worker.min.mjs',
+    import.meta.url
+).href
 
 const API = import.meta.env.VITE_API_URL || ''
 const MESES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic']
@@ -320,26 +327,101 @@ function FileUploader({ token, onTransacciones }) {
             return
         }
         setLoading(true); setMsg(null)
+        const fname = file.name.toLowerCase()
         try {
-            if (file.name.endsWith('.csv') || file.name.endsWith('.txt')) {
+            let d = null
+
+            // ── CSV / TXT → leer como texto y enviar al endpoint /parse ──
+            if (fname.endsWith('.csv') || fname.endsWith('.txt')) {
                 const text = await file.text()
                 const r = await fetch(`${API}/conciliacion/parse`, {
                     method: 'POST',
                     headers: authJ(token),
                     body: JSON.stringify({ text, banco }),
                 })
-                const d = await r.json()
-                if (r.ok) {
-                    setMsg({ ok: true, text: `${d.total_transacciones} transacciones parseadas de ${banco}` })
-                    onTransacciones(d.transacciones, banco, period, d.saldo_inicial, d.saldo_final)
-                } else {
-                    setMsg({ ok: false, text: d.detail || 'Error al parsear' })
-                }
-            } else {
-                // Excel o PDF — enviar como FormData (implementación futura directa)
-                setMsg({ ok: true, text: `Archivo ${file.name} cargado — procesando...` })
+                d = await r.json()
+                if (!r.ok) throw new Error(d.detail || 'Error al parsear CSV')
             }
-        } catch (e) { setMsg({ ok: false, text: String(e) }) }
+
+            // ── PDF → pdf.js extrae texto → /parse ─────────────────────
+            else if (fname.endsWith('.pdf')) {
+                setMsg({ ok: true, text: '⏳ Leyendo PDF con pdf.js...' })
+                const buffer = await file.arrayBuffer()
+                const pdfDoc = await pdfjsLib.getDocument({ data: buffer }).promise
+                const pages = []
+                for (let i = 1; i <= pdfDoc.numPages; i++) {
+                    const page = await pdfDoc.getPage(i)
+                    const content = await page.getTextContent()
+                    // Ordenar ítems por posición Y (de arriba a abajo) y X
+                    const items = content.items
+                        .sort((a, b) => {
+                            const dy = Math.round(b.transform[5]) - Math.round(a.transform[5])
+                            return dy !== 0 ? dy : a.transform[4] - b.transform[4]
+                        })
+                    pages.push(items.map(it => it.str).join(' '))
+                }
+                const text = pages.join('\n')
+                setMsg({ ok: true, text: '📤 Enviando texto al servidor...' })
+                const r = await fetch(`${API}/conciliacion/parse`, {
+                    method: 'POST',
+                    headers: authJ(token),
+                    body: JSON.stringify({ text, banco }),
+                })
+                d = await r.json()
+                if (!r.ok) throw new Error(d.detail || 'Error al parsear PDF')
+            }
+
+            // ── XLSX / XLS → multipart → /parse-file (backend usa openpyxl) ─
+            else if (fname.endsWith('.xlsx') || fname.endsWith('.xls')) {
+                setMsg({ ok: true, text: '⏳ Procesando Excel...' })
+                const form = new FormData()
+                form.append('file', file)
+                form.append('banco', banco)
+                const r = await fetch(`${API}/conciliacion/parse-file`, {
+                    method: 'POST',
+                    headers: authH(token),   // sin Content-Type, el browser lo pone
+                    body: form,
+                })
+                d = await r.json()
+                if (!r.ok) throw new Error(d.detail || 'Error al parsear Excel')
+            }
+
+            // ── Imágenes → OCR con Gemini Vision → /ocr-image ──────────
+            else if (
+                fname.endsWith('.jpg') || fname.endsWith('.jpeg') ||
+                fname.endsWith('.png') || fname.endsWith('.webp')
+            ) {
+                setMsg({ ok: true, text: '🔍 Analizando imagen con IA (Gemini Vision)...' })
+                const form = new FormData()
+                form.append('file', file)
+                form.append('banco', banco)
+                const r = await fetch(`${API}/conciliacion/ocr-image`, {
+                    method: 'POST',
+                    headers: authH(token),
+                    body: form,
+                })
+                d = await r.json()
+                if (!r.ok) throw new Error(d.detail || 'Error OCR imagen')
+            }
+
+            else {
+                throw new Error(`Formato no soportado: ${file.name}. Usa PDF, CSV, XLSX, JPG o PNG.`)
+            }
+
+            // ── Resultado común ────────────────────────────────────────
+            const periodos = d.periodos_detectados?.length
+                ? ` | Períodos: ${d.periodos_detectados.join(', ')}`
+                : ''
+            const fuente = d.fuente === 'gemini-vision' ? ' (OCR Gemini ✨)' : ''
+            setMsg({
+                ok: true,
+                text: `✅ ${d.total_transacciones} transacciones de ${banco}${fuente}${periodos}`,
+            })
+            onTransacciones(d.transacciones, banco, period, d.saldo_inicial, d.saldo_final)
+
+        } catch (e) {
+            setMsg({ ok: false, text: String(e.message || e) })
+        }
         setLoading(false)
     }
 
@@ -421,7 +503,9 @@ function FileUploader({ token, onTransacciones }) {
                         </div>
                     )}
                 </div>
-                <input ref={fileRef} type="file" accept=".csv,.txt,.xlsx,.xls,.pdf" style={{ display: 'none' }}
+                <input ref={fileRef} type="file"
+                    accept=".csv,.txt,.xlsx,.xls,.pdf,.jpg,.jpeg,.png,.webp"
+                    style={{ display: 'none' }}
                     onChange={handleFile} />
             </div>
 

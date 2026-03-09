@@ -3,8 +3,10 @@ router.py — Endpoints REST para Conciliación Bancaria + CENTINELA Fiscal
 
 Endpoints:
   GET  /conciliacion/entidades           → Lista de 37 bancos/cooperativas
-  POST /conciliacion/parse               → Parsea texto PDF → transacciones
-  POST /conciliacion/upload              → Crea sesión + parsea + guarda en BD
+  POST /conciliacion/parse               → Parsea TEXTO plano → transacciones
+  POST /conciliacion/parse-file          → Parsea archivo (PDF/XLSX/CSV) multipart
+  POST /conciliacion/ocr-image           → Imagen → Gemini Vision → transacciones
+  POST /conciliacion/sesion              → Crea sesión de conciliación
   POST /conciliacion/match/{recon_id}    → Corre motor de matching vs Diario
   POST /centinela/analyze/{recon_id}     → Análisis CENTINELA completo
   GET  /centinela/score/{period}         → Score del período YYYYMM
@@ -109,6 +111,176 @@ def parse_pdf(req: ParseRequest):
         logger.error(f"Error parseando PDF {req.banco}: {e}")
         raise HTTPException(status_code=422, detail=str(e))
 
+
+@router.post("/conciliacion/parse-file")
+async def parse_file_upload(
+    file:  UploadFile = File(...),
+    banco: str        = Form(...),
+):
+    """
+    Parsea un archivo multipart: PDF, XLSX o CSV.
+
+    - PDF  → pdfplumber extrae el texto, luego bank_pdf_parser lo procesa
+    - XLSX → openpyxl convierte las filas a CSV-like, luego parser
+    - CSV  → lee como texto directamente
+
+    Retorna el mismo formato estándar que /conciliacion/parse.
+    """
+    from services.conciliacion.bank_pdf_parser import (
+        parse_pdf_text, extract_saldos, extract_header_info,
+        split_transactions_by_period,
+    )
+
+    fname = (file.filename or "").lower()
+    raw   = await file.read()
+
+    try:
+        if fname.endswith(".pdf"):
+            import pdfplumber, io
+            text_parts = []
+            with pdfplumber.open(io.BytesIO(raw)) as pdf:
+                for page in pdf.pages:
+                    t = page.extract_text()
+                    if t:
+                        text_parts.append(t)
+            text = "\n".join(text_parts)
+
+        elif fname.endswith((".xlsx", ".xls")):
+            import openpyxl, io
+            wb  = openpyxl.load_workbook(io.BytesIO(raw), data_only=True)
+            ws  = wb.active
+            rows = []
+            for row in ws.iter_rows(values_only=True):
+                cells = [str(c) if c is not None else "" for c in row]
+                rows.append("  ".join(cells))
+            text = "\n".join(rows)
+
+        else:
+            # CSV / TXT — decodificar directo
+            text = raw.decode("utf-8", errors="replace")
+
+        txns   = parse_pdf_text(text, banco)
+        saldos = extract_saldos(text)
+        header = extract_header_info(text)
+        grupos = split_transactions_by_period(txns)
+
+        return {
+            "ok":                  True,
+            "banco":               banco,
+            "transacciones":       txns,
+            "total_transacciones": len(txns),
+            "saldo_inicial":       saldos["saldo_inicial"],
+            "saldo_final":         saldos["saldo_final"],
+            "periodos_detectados": list(grupos.keys()),
+            "fecha_inicio":        str(header.get("fecha_inicio") or ""),
+            "fecha_fin":           str(header.get("fecha_fin") or ""),
+            "numero_cuenta":       header.get("numero_cuenta"),
+        }
+
+    except Exception as e:
+        logger.error(f"parse-file error ({fname}): {e}", exc_info=True)
+        raise HTTPException(status_code=422, detail=str(e))
+
+
+@router.post("/conciliacion/ocr-image")
+async def ocr_image(
+    file:  UploadFile = File(...),
+    banco: str        = Form(...),
+):
+    """
+    Recibe una imagen (jpg/png/webp/pdf-escaneado) de un estado de cuenta
+    bancario, usa Gemini Vision para extraer el texto estructurado, y luego
+    corre el bank_pdf_parser normal.
+
+    Requiere: GEMINI_API_KEY en las variables de entorno.
+    """
+    import os, io, base64
+    from services.conciliacion.bank_pdf_parser import (
+        parse_pdf_text, extract_saldos, extract_header_info,
+        split_transactions_by_period,
+    )
+
+    api_key = os.getenv("GEMINI_API_KEY", "")
+    if not api_key:
+        raise HTTPException(
+            status_code=503,
+            detail="GEMINI_API_KEY no configurada. Contacta al administrador."
+        )
+
+    fname = (file.filename or "").lower()
+    raw   = await file.read()
+
+    # Determinar MIME type
+    if fname.endswith(".png"):
+        mime = "image/png"
+    elif fname.endswith((".jpg", ".jpeg")):
+        mime = "image/jpeg"
+    elif fname.endswith(".webp"):
+        mime = "image/webp"
+    elif fname.endswith(".pdf"):
+        mime = "application/pdf"
+    else:
+        raise HTTPException(status_code=400,
+                            detail=f"Formato no soportado: {fname}. Use jpg/png/webp/pdf")
+
+    try:
+        import google.generativeai as genai
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel("gemini-1.5-flash")
+
+        prompt = (
+            "Eres un extractor de datos contables. Analiza esta imagen de un "
+            "estado de cuenta bancario costarricense y extrae TODAS las transacciones "
+            "en formato de tabla de texto plano con las columnas:\n"
+            "FECHA  DESCRIPCION  MONTO  TIPO(CR/DB)  SALDO\n\n"
+            "Reglas:\n"
+            "- FECHA: usa el formato que aparece en el documento (dd/mm/yyyy, dd-mm, etc.)\n"
+            "- MONTO: solo el número con decimales, sin signo\n"
+            "- TIPO: CR si es crédito/ingreso, DB si es débito/gasto\n"
+            "- Incluye los saldos del header: 'Saldo anterior: X' y 'Saldo actual: Y'\n"
+            "- NO omitas ninguna transacción\n"
+            "- Si hay información del header (banco, número de cuenta, "
+            "  fecha último estado, fecha éste estado), inclúyela al inicio\n\n"
+            "Responde SOLO con el texto extraído, sin explicaciones adicionales."
+        )
+
+        img_part = {"mime_type": mime, "data": base64.b64encode(raw).decode()}
+        response = model.generate_content([prompt, img_part])
+        text     = response.text or ""
+
+        if not text.strip():
+            raise ValueError("Gemini no pudo extraer texto de la imagen")
+
+        txns   = parse_pdf_text(text, banco)
+        saldos = extract_saldos(text)
+        header = extract_header_info(text)
+        grupos = split_transactions_by_period(txns)
+
+        logger.info(
+            f"OCR exitoso ({fname}): {len(txns)} txns, "
+            f"periodos={list(grupos.keys())}"
+        )
+
+        return {
+            "ok":                  True,
+            "banco":               banco,
+            "fuente":              "gemini-vision",
+            "transacciones":       txns,
+            "total_transacciones": len(txns),
+            "saldo_inicial":       saldos["saldo_inicial"],
+            "saldo_final":         saldos["saldo_final"],
+            "periodos_detectados": list(grupos.keys()),
+            "fecha_inicio":        str(header.get("fecha_inicio") or ""),
+            "fecha_fin":           str(header.get("fecha_fin") or ""),
+            "numero_cuenta":       header.get("numero_cuenta"),
+            "texto_extraido":      text[:500] + "..." if len(text) > 500 else text,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"OCR error ({fname}): {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error OCR: {str(e)}")
 
 @router.post("/conciliacion/sesion")
 def crear_sesion(req: UploadSession, request = None, db: Session = Depends(_get_db)):
