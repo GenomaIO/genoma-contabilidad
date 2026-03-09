@@ -539,28 +539,42 @@ def run_match(recon_id: str, db: Session = Depends(_get_db)):
     ), {"id": recon_id}).fetchall()]
 
     # ── Capa 2: FE emitidas del período (ingresos con comprobante) ─────────────
-    fe_emitidas = [dict(r._mapping) for r in db.execute(text("""
-        SELECT je.id, je.date::text AS fecha,
-               COALESCE(SUM(jl.credit), 0) AS monto,
-               je.source, je.description
-        FROM journal_entries je
-        JOIN journal_lines jl ON jl.entry_id = je.id
-        WHERE je.tenant_id = :tid
-          AND je.period     = :period
-          AND je.source    IN ('FE', 'TE', 'NC', 'ND')
-          AND je.status     = 'POSTED'
-        GROUP BY je.id, je.date, je.source, je.description
-        HAVING COALESCE(SUM(jl.credit), 0) > 0
-    """), {"tid": tenant_id, "period": period_fmt}).fetchall()]
+    # try/except: si journal_entries no tiene las columnas esperadas → vacío
+    try:
+        fe_emitidas = [dict(r._mapping) for r in db.execute(text("""
+            SELECT je.id, je.date::text AS fecha,
+                   COALESCE(SUM(jl.credit), 0) AS monto,
+                   je.source, je.description
+            FROM journal_entries je
+            JOIN journal_lines jl ON jl.entry_id = je.id
+            WHERE je.tenant_id = :tid
+              AND je.period     = :period
+              AND je.source    IN ('FE', 'TE', 'NC', 'ND')
+              AND je.status     = 'POSTED'
+            GROUP BY je.id, je.date, je.source, je.description
+            HAVING COALESCE(SUM(jl.credit), 0) > 0
+        """), {"tid": tenant_id, "period": period_fmt}).fetchall()]
+        db.rollback()   # limpia la transacción fallida si la hubo
+    except Exception as e_fe:
+        logger.warning(f"⚠️  FE emitidas no disponibles: {e_fe}")
+        db.rollback()
+        fe_emitidas = []
 
     # ── Capa 3: FE recibidas del período (gastos con comprobante) ─────────────
-    fe_recibidas = [dict(r._mapping) for r in db.execute(text("""
-        SELECT id, fecha::text AS fecha, monto_total AS monto,
-               emisor_nombre AS description
-        FROM recibidos
-        WHERE tenant_id = :tid
-          AND DATE_TRUNC('month', fecha) = DATE(:period || '-01')
-    """), {"tid": tenant_id, "period": period_fmt}).fetchall()]
+    # try/except: la tabla 'recibidos' puede no existir en todos los tenants
+    try:
+        fe_recibidas = [dict(r._mapping) for r in db.execute(text("""
+            SELECT id, fecha::text AS fecha, monto_total AS monto,
+                   emisor_nombre AS description
+            FROM recibidos
+            WHERE tenant_id = :tid
+              AND DATE_TRUNC('month', fecha) = DATE(:period || '-01')
+        """), {"tid": tenant_id, "period": period_fmt}).fetchall()]
+        db.rollback()
+    except Exception as e_rec:
+        logger.warning(f"⚠️  FE recibidas no disponibles: {e_rec}")
+        db.rollback()
+        fe_recibidas = []
 
     # ── Capa 4: asientos del Libro Diario (fallback) ──────────────────────────
     journal_lines = [dict(r._mapping) for r in db.execute(text("""
