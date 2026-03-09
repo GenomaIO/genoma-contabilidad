@@ -512,6 +512,19 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning(f"⚠️  Migración M_CONC_V2 omitida: {e}")
 
+        # ── Migración M_RECON_V2: score_riesgo en bank_reconciliation ──────────
+        # score_riesgo existe en el CREATE TABLE pero si la tabla fue creada antes
+        # de agregarlo, la columna no existe en producción → 500 en list_sesiones.
+        try:
+            with _engine.begin() as conn:
+                conn.execute(text(
+                    "ALTER TABLE bank_reconciliation "
+                    "ADD COLUMN IF NOT EXISTS score_riesgo INTEGER DEFAULT 0"
+                ))
+            logger.info("✅ Migración M_RECON_V2: score_riesgo en bank_reconciliation")
+        except Exception as e:
+            logger.warning(f"⚠️  Migración M_RECON_V2 omitida: {e}")
+
         # ── Migración M_CATALOG_V2: columna es_reguladora en accounts ──────
         # La columna existe en el modelo SQLAlchemy (catalog/models.py) pero
         # nunca se agregó en producción con ALTER TABLE.
