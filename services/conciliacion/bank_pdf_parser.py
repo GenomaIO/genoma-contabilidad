@@ -537,9 +537,21 @@ def _parse_bn(text: str) -> list[dict]:
                 tipo  = 'CR'
                 monto = _parse_monto_cr(monto_raw[:-1])
             else:
-                # Sin indicador: asumir débito (BN default para débitos sin signo)
-                tipo  = 'DB'
+                # Sin indicador: BN omite el signo en algunos créditos automáticos.
+                # Usamos la descripción para distinguir:
                 monto = _parse_monto_cr(monto_raw)
+                desc_up = descripcion.upper()
+                _CR_KEYWORDS = (
+                    'ACREDITACION', 'ACREDITACIÓN',
+                    'INTERESES', 'RENDIMIENTO',
+                    'DEPOSITO', 'DEPÓSITO',
+                    'CREDITO', 'CRÉDITO',
+                    'SALARIO', 'PENSIÓN', 'PENSION',
+                    'DEVOLUCION', 'DEVOLUCIÓN',
+                    'REINTEGRO', 'REMESA',
+                    'BONO', 'SUBSIDIO',
+                )
+                tipo = 'CR' if any(k in desc_up for k in _CR_KEYWORDS) else 'DB'
 
             saldo = _parse_monto_cr(saldo_raw)
 

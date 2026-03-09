@@ -92,23 +92,42 @@ def get_entidades():
 @router.post("/conciliacion/parse")
 def parse_pdf(req: ParseRequest):
     """
-    Parsea el texto de un PDF de estado de cuenta.
-    El frontend extrae el texto con pdf.js y lo envía aquí.
+    Parsea texto plano (CSV, TXT) de un estado de cuenta bancario.
+
+    Nota: Los PDFs se procesan vía /conciliacion/parse-file (pdfplumber).
+    Este endpoint recibe el texto ya extraído para CSV/TXT.
     """
-    from services.conciliacion.bank_pdf_parser import parse_pdf_text, extract_saldos
+    from services.conciliacion.bank_pdf_parser import (
+        parse_pdf_text, extract_saldos, BANCO_KEYS,
+    )
+
+    # WARN-01 fix: validar que el banco sea una clave reconocida
+    banco_upper = req.banco.strip().upper()
+    claves_validas = set(BANCO_KEYS.values())  # set de claves internas
+    if banco_upper not in claves_validas:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Banco '{req.banco}' no reconocido. "
+                f"Valores válidos: {', '.join(sorted(claves_validas))}"
+            )
+        )
+
     try:
-        txns   = parse_pdf_text(req.text, req.banco)
+        txns   = parse_pdf_text(req.text, banco_upper)
         saldos = extract_saldos(req.text)
         return {
             "ok": True,
-            "banco": req.banco,
+            "banco": banco_upper,
             "transacciones": txns,
             "total_transacciones": len(txns),
             "saldo_inicial": saldos["saldo_inicial"],
             "saldo_final":   saldos["saldo_final"],
         }
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error parseando PDF {req.banco}: {e}")
+        logger.error(f"Error parseando texto {banco_upper}: {e}")
         raise HTTPException(status_code=422, detail=str(e))
 
 

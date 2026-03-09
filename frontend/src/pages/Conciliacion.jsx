@@ -411,7 +411,7 @@ function FileUploader({ token, onTransacciones, onPeriodChange }) {
             // Deduplicar: misma fecha + mismo monto + misma descripción = duplicado
             const seen = new Set()
             const txnsFusionadas = todosLasTxns.filter(t => {
-                const key = `${t.fecha}|${t.monto}|${t.descripcion?.slice(0, 30)}`
+                const key = `${t.fecha}|${t.monto}|${t.descripcion?.slice(0, 60)}`
                 if (seen.has(key)) return false
                 seen.add(key)
                 return true
