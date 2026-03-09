@@ -520,7 +520,7 @@ export default function Dashboard() {
                                         highlight: true,
                                     },
                                     {
-                                        label: 'Tasa efectiva',
+                                        label: '% ISR sobre utilidad',
                                         value: `${(rentaProj.tasa_efectiva_pct || 0).toFixed(1)}%`,
                                         color: '#8b5cf6', bg: 'rgba(139,92,246,0.1)',
                                     },
