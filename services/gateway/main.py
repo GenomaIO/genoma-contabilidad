@@ -366,6 +366,119 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning(f"⚠️  Migración M_PERIOD omitida: {e}")
 
+        # ── Migración M_CONCILIACION: Conciliación Bancaria + CENTINELA ──
+        # Tablas para el módulo de conciliación bancaria inteligente y el
+        # detector de fugas fiscales CENTINELA. Idempotentes.
+        try:
+            with _engine.begin() as conn:
+                # Sesiones de conciliación (una por PDF subido)
+                conn.execute(text("""
+                    CREATE TABLE IF NOT EXISTS bank_reconciliation (
+                        id            TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+                        tenant_id     TEXT NOT NULL,
+                        period        TEXT NOT NULL,
+                        banco         TEXT NOT NULL,
+                        account_code  TEXT NOT NULL,
+                        filename      TEXT,
+                        saldo_inicial NUMERIC(18,2) DEFAULT 0,
+                        saldo_final   NUMERIC(18,2) DEFAULT 0,
+                        score_riesgo  INTEGER DEFAULT 0,
+                        estado        TEXT NOT NULL DEFAULT 'PENDIENTE',
+                        created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                        updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                    )
+                """))
+                conn.execute(text(
+                    "CREATE INDEX IF NOT EXISTS idx_bankrecon_tenant_period "
+                    "ON bank_reconciliation(tenant_id, period)"
+                ))
+
+                # Transacciones individuales del estado de cuenta PDF
+                conn.execute(text("""
+                    CREATE TABLE IF NOT EXISTS bank_transactions (
+                        id               TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+                        recon_id         TEXT NOT NULL REFERENCES bank_reconciliation(id) ON DELETE CASCADE,
+                        tenant_id        TEXT NOT NULL,
+                        fecha            DATE NOT NULL,
+                        descripcion      TEXT,
+                        tipo             TEXT NOT NULL,
+                        monto            NUMERIC(18,2) NOT NULL,
+                        saldo            NUMERIC(18,2),
+                        referencia       TEXT,
+                        telefono         TEXT,
+                        matched_entry_id TEXT,
+                        match_estado     TEXT NOT NULL DEFAULT 'SIN_MATCH',
+                        match_confianza  NUMERIC(5,2) DEFAULT 0,
+                        fuga_tipo        TEXT,
+                        score_puntos     INTEGER DEFAULT 0,
+                        iva_estimado     NUMERIC(18,2) DEFAULT 0,
+                        base_estimada    NUMERIC(18,2) DEFAULT 0,
+                        d270_codigo      TEXT,
+                        accion           TEXT,
+                        accion_tomada    BOOLEAN DEFAULT FALSE,
+                        ai_clasificacion TEXT,
+                        ai_cuenta_hint   TEXT,
+                        ai_confianza     NUMERIC(5,2) DEFAULT 0,
+                        created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                    )
+                """))
+                conn.execute(text(
+                    "CREATE INDEX IF NOT EXISTS idx_banktxn_recon "
+                    "ON bank_transactions(recon_id)"
+                ))
+                conn.execute(text(
+                    "CREATE INDEX IF NOT EXISTS idx_banktxn_tenant_fecha "
+                    "ON bank_transactions(tenant_id, fecha)"
+                ))
+
+                # Reglas de clasificación aprendidas (Bank Rules)
+                conn.execute(text("""
+                    CREATE TABLE IF NOT EXISTS bank_rules (
+                        id             TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+                        tenant_id      TEXT NOT NULL,
+                        pattern        TEXT NOT NULL,
+                        pattern_type   TEXT NOT NULL DEFAULT 'description_contains',
+                        contact_name   TEXT,
+                        ledger_account TEXT,
+                        d270_codigo    TEXT,
+                        note           TEXT,
+                        uses_count     INTEGER DEFAULT 0,
+                        created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                        UNIQUE(tenant_id, pattern_type, pattern)
+                    )
+                """))
+                conn.execute(text(
+                    "CREATE INDEX IF NOT EXISTS idx_bankrules_tenant "
+                    "ON bank_rules(tenant_id)"
+                ))
+
+                # Score fiscal mensual por tenant (CENTINELA)
+                conn.execute(text("""
+                    CREATE TABLE IF NOT EXISTS centinela_score (
+                        id               TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+                        tenant_id        TEXT NOT NULL,
+                        period           TEXT NOT NULL,
+                        score_total      INTEGER DEFAULT 0,
+                        fugas_tipo_a     INTEGER DEFAULT 0,
+                        fugas_tipo_b     INTEGER DEFAULT 0,
+                        fugas_tipo_c     INTEGER DEFAULT 0,
+                        exposicion_iva   NUMERIC(18,2) DEFAULT 0,
+                        exposicion_renta NUMERIC(18,2) DEFAULT 0,
+                        exposicion_total NUMERIC(18,2) DEFAULT 0,
+                        d270_regs        INTEGER DEFAULT 0,
+                        score_detalle    JSONB,
+                        created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                        UNIQUE(tenant_id, period)
+                    )
+                """))
+                conn.execute(text(
+                    "CREATE INDEX IF NOT EXISTS idx_centinela_tenant_period "
+                    "ON centinela_score(tenant_id, period)"
+                ))
+            logger.info("✅ Migración M_CONCILIACION: bank_reconciliation, bank_transactions, bank_rules, centinela_score")
+        except Exception as e:
+            logger.warning(f"⚠️  Migración M_CONCILIACION omitida: {e}")
+
         # ── Migración M_CLEANUP_5900_01: eliminar cuenta fantasma ────
         # La cuenta '5900.01' fue creada accidentalmente por el bug de
         # nextChildCode (generaba prefijo-string en lugar de parent_code).
