@@ -595,11 +595,44 @@ class EeffEngine:
         return {k: Decimal(str(v)) for k, v in pa["buckets"].items()}
 
     # ─────────────────────────────────────────────────────────────
+    # 8b. Saldos de N-2 para EFE comparativo
+    # ─────────────────────────────────────────────────────────────
+    def _get_prior_year_buckets_2(self, mappings: dict) -> dict:
+        """Saldos anuales de N-2 (anterior al anterior). Se usan como
+        'prior' del EFE del año N-1, habilitando la columna comparativa
+        del EFE (período N vs período N-1)."""
+        py2 = str(int(self.year) - 2)
+        rows = self.db.execute(text("""
+            SELECT jl.account_code, a.account_type, a.name,
+                   COALESCE(SUM(jl.debit),0), COALESCE(SUM(jl.credit),0)
+            FROM journal_lines jl
+            JOIN journal_entries je ON jl.entry_id = je.id
+            JOIN accounts a ON a.code = jl.account_code AND a.tenant_id = je.tenant_id
+            WHERE je.tenant_id = :tid
+              AND je.status = 'POSTED'
+              AND je.date >= :f AND je.date <= :t
+              AND jl.account_code NOT IN ('3304')
+            GROUP BY jl.account_code, a.account_type, a.name
+            HAVING (SUM(jl.debit) != 0 OR SUM(jl.credit) != 0)
+        """), {"tid": self.tenant_id, "f": f"{py2}-01-01", "t": f"{py2}-12-31"}).fetchall()
+
+        if not rows:
+            return {}
+        tb2 = {r[0]: {
+            "account_code": r[0], "account_type": r[1], "account_name": r[2],
+            "debit":  Decimal(str(r[3])), "credit": Decimal(str(r[4])),
+            "balance": Decimal(str(r[3])) - Decimal(str(r[4])),
+        } for r in rows}
+        acc2 = self._accumulate(tb2, mappings)
+        return {k: Decimal(str(v)) for k, v in acc2["buckets"].items()}
+
+    # ─────────────────────────────────────────────────────────────
     # 9. Punto de entrada principal — genera los 4 EEFF con comparativo
     # ─────────────────────────────────────────────────────────────
     def compute(self) -> dict:
         """Genera ESF + ERI + ECP + EFE desde el balance de comprobación.
-        Incluye prior_amount en cada línea ESF/ERI para comparativo N-1."""
+        Incluye prior_amount en cada línea ESF/ERI para comparativo N-1.
+        Incluye efe_prior (EFE del año N-1) para columna comparativa del EFE."""
         trial_balance = self._get_trial_balance()
         mappings      = self._get_mappings()
         accum         = self._accumulate(trial_balance, mappings)
@@ -607,8 +640,9 @@ class EeffEngine:
         detail   = accum["detail"]
         unmapped = accum["unmapped_codes"]
 
-        buckets_prior   = self._get_prior_year_buckets(mappings)
-        buckets_opening = self._get_opening_buckets(mappings)
+        buckets_prior    = self._get_prior_year_buckets(mappings)
+        buckets_prior_2  = self._get_prior_year_buckets_2(mappings)
+        buckets_opening  = self._get_opening_buckets(mappings)
 
         esf = self._build_esf(buckets, detail)
         eri = self._build_eri(buckets, detail)
@@ -639,7 +673,9 @@ class EeffEngine:
 
         # ── Enriquecer líneas con prior_amount para comparativo N-1 ──
         has_prior = bool(buckets_prior)
+        efe_prior = None   # inicializar aquí para que exista fuera del bloque has_prior
         if has_prior:
+
             for sk in ("activo_corriente","activo_no_corriente",
                        "pasivo_corriente","pasivo_no_corriente","patrimonio"):
                 for line in esf.get(sk, []):
@@ -662,26 +698,70 @@ class EeffEngine:
                 "total_pasivos":             sum(p(l["code"]) for l in esf["pasivo_corriente"]+esf["pasivo_no_corriente"]),
                 "total_patrimonio":          sum(p(l["code"]) for l in esf["patrimonio"]),
             }
+            _p_ing  = sum(p(l["code"]) for l in eri["ingresos"])
+            _p_cos  = sum(p(l["code"]) for l in eri["costos"])
+            _p_gop  = sum(p(l["code"]) for l in eri["gastos_operativos"])
+            _p_gfin = sum(p(l["code"]) for l in eri["gastos_financieros"])
+            _p_isr  = sum(p(l["code"]) for l in eri["impuesto_renta"])
+            _p_ori  = sum(p(l["code"]) for l in eri["otro_resultado"])
+            _p_bruta = _p_ing - _p_cos
+            _p_ai    = _p_bruta - _p_gop - _p_gfin
+            _p_neta  = _p_ai - _p_isr
+            _p_ri    = _p_neta + _p_ori
             eri["prior_totals"] = {
-                "total_ingresos":   sum(p(l["code"]) for l in eri["ingresos"]),
-                "total_costo":      sum(p(l["code"]) for l in eri["costos"]),
-                "total_gastos_op":  sum(p(l["code"]) for l in eri["gastos_operativos"]),
-                "total_gastos_fin": sum(p(l["code"]) for l in eri["gastos_financieros"]),
-                "total_isr":        sum(p(l["code"]) for l in eri["impuesto_renta"]),
+                "total_ingresos":             _p_ing,
+                "total_costo":                _p_cos,
+                "total_gastos_op":            _p_gop,
+                "total_gastos_fin":           _p_gfin,
+                "total_isr":                  _p_isr,
+                "total_ori":                  _p_ori,
+                # Subtotales calculados (necesarios para columna N-1 en frontend)
+                "utilidad_bruta_prior":        _p_bruta,
+                "utilidad_antes_isr_prior":    _p_ai,
+                "utilidad_neta_prior":         _p_neta,
+                "total_resultado_integral_prior": _p_ri,
             }
+
+            # ── EFE comparativo: calcular EFE del año N-1 ───────────────
+            # Para el EFE del período N-1 necesitamos:
+            #   current = buckets_prior  (saldos finales de N-1)
+            #   prior   = buckets_prior_2 (saldos finales de N-2, punto de partida)
+            # Los eri_totals del período N-1 son los prior_totals que acabamos
+            # de calcular para el ERI.
+            _eri_prior_totals = {
+                "utilidad_neta":           _p_neta,
+                "total_ingresos":          _p_ing,
+                "total_costo":             _p_cos,
+            }
+            _esf_prior_totals = {
+                "total_activos":  p("ESF.AC.01") + p("ESF.AC.02"),
+                "total_activos_balance": p("ESF.AC.01"),
+            }
+            efe_prior = self._build_efe(
+                buckets_current=buckets_prior,
+                buckets_prior=buckets_prior_2,
+                eri_totals=_eri_prior_totals,
+                esf_totals=_esf_prior_totals,
+            ) if buckets_prior_2 else None
+
+        # efe_prior puede haber sido calculado dentro del bloque has_prior;
+        # si no hubo prior en absoluto, no existe.
+        efe_prior_out = efe_prior if has_prior and buckets_prior_2 else None  # type: ignore[name-defined]
 
         return {
             "ok":           True,
             "year":         self.year,
             "prior_year":   str(int(self.year) - 1),
             "has_prior":    has_prior,
+            "has_efe_prior": efe_prior_out is not None,
             "from_date":    self.from_date,
             "to_date":      self.to_date,
             "niif_edition": "3rd_2025",
-            "esf":   esf,
-            "eri":   eri,
-            "ecp":   ecp,
-            "efe":   efe,
+            "esf":       esf,
+            "eri":       eri,
+            "ecp":       ecp,
+            "efe":       efe,
+            "efe_prior": efe_prior_out,
             "warnings": {
                 "unmapped_accounts":  unmapped,
                 "has_unmapped":       len(unmapped) > 0,

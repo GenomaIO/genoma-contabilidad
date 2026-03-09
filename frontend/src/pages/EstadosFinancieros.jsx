@@ -435,6 +435,45 @@ function TabERI({ eri, year, priorYear, showCompar }) {
     const p = eri.prior_totals || {}
     const un = t.utilidad_neta || 0
     const isLoss = un < 0
+    // sc = show comparative: activo solo si showCompar=true Y el backend envió prior_totals
+    const sc = showCompar && Object.keys(p).length > 0
+    // Subtotales N-1 calculados en engine (Capa 1a del plan)
+    const p_bruta = p.utilidad_bruta_prior ?? 0
+    const p_ai = p.utilidad_antes_isr_prior ?? 0
+    const p_neta = p.utilidad_neta_prior ?? 0
+    const p_ri = p.total_resultado_integral_prior ?? 0
+
+    // Fila de subtotal calculado (Utilidad Bruta, UAI) con columna N-1
+    function SubtotalRow({ label, current, prior, isGood }) {
+        const neg = current < 0
+        const negP = prior < 0
+        return (
+            <tbody>
+                <tr style={{ background: 'rgba(255,255,255,0.03)' }}>
+                    <td style={{ padding: '7px 8px', fontWeight: 800, fontSize: '0.8rem', color: '#fff' }}>
+                        {label}
+                    </td>
+                    {sc && (
+                        <td style={{
+                            padding: '7px 12px', textAlign: 'right', fontFamily: 'monospace',
+                            fontWeight: 700, fontSize: '0.78rem',
+                            color: negP ? '#ef4444' : '#6b7280'
+                        }}>
+                            {fmt(prior)}
+                        </td>
+                    )}
+                    <td style={{
+                        padding: '7px 12px 7px 8px', textAlign: 'right', fontFamily: 'monospace',
+                        fontWeight: 800, fontSize: '0.82rem',
+                        color: neg ? '#ef4444' : (isGood ? '#10b981' : COLORS.ingreso)
+                    }}>
+                        {fmt(current)}
+                    </td>
+                </tr>
+                <tr><td colSpan={sc ? 3 : 2} style={{ height: 4 }} /></tr>
+            </tbody>
+        )
+    }
 
     return (
         <div>
@@ -453,61 +492,91 @@ function TabERI({ eri, year, priorYear, showCompar }) {
                 </div>
             </div>
 
-            <div style={{ background: 'var(--bg-card)', borderRadius: 12, overflow: 'hidden', border: '1px solid var(--border)', maxWidth: 600 }}>
+            <div style={{
+                background: 'var(--bg-card)', borderRadius: 12, overflow: 'hidden',
+                border: '1px solid var(--border)', maxWidth: sc ? 780 : 600
+            }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                    {/* Header comparativo N-1 / N */}
+                    {sc && (
+                        <thead>
+                            <tr style={{ background: 'rgba(255,255,255,0.05)' }}>
+                                <th style={{
+                                    padding: '7px 8px', textAlign: 'left',
+                                    fontSize: '0.72rem', color: 'var(--text-muted)', fontWeight: 600
+                                }}>
+                                    Partida
+                                </th>
+                                <th id="eri-col-prior" style={{
+                                    padding: '7px 12px', textAlign: 'right',
+                                    fontSize: '0.72rem', color: 'var(--text-muted)', fontWeight: 600
+                                }}>
+                                    N-1 ({priorYear})
+                                </th>
+                                <th id="eri-col-current" style={{
+                                    padding: '7px 12px', textAlign: 'right',
+                                    fontSize: '0.72rem', color: 'var(--text-primary)', fontWeight: 700
+                                }}>
+                                    N ({year})
+                                </th>
+                            </tr>
+                        </thead>
+                    )}
+
                     <StatementSection title="Ingresos de Actividades Ordinarias"
                         color={COLORS.ingreso} lines={eri.ingresos}
-                        total={t.total_ingresos} totalLabel="Total Ingresos" />
+                        total={t.total_ingresos} totalLabel="Total Ingresos"
+                        showCompar={sc} priorTotal={p.total_ingresos} />
 
                     <StatementSection title="Costo de Ventas / Servicios"
                         color={COLORS.costo} lines={eri.costos}
-                        total={t.total_costo} totalLabel="Total Costo de Ventas" />
+                        total={t.total_costo} totalLabel="Total Costo de Ventas"
+                        showCompar={sc} priorTotal={p.total_costo} />
 
-                    {/* Utilidad Bruta */}
-                    <tbody>
-                        <tr style={{ background: 'rgba(255,255,255,0.03)' }}>
-                            <td style={{ padding: '7px 8px', fontWeight: 800, fontSize: '0.8rem', color: '#fff' }}>
-                                Utilidad Bruta
-                            </td>
-                            <td style={{ padding: '7px 12px 7px 8px', textAlign: 'right', fontFamily: 'monospace', fontWeight: 800, fontSize: '0.82rem', color: isNeg(t.utilidad_bruta) ? '#ef4444' : '#10b981' }}>
-                                {fmt(t.utilidad_bruta)}
-                            </td>
-                        </tr>
-                        <tr><td colSpan={2} style={{ height: 4 }} /></tr>
-                    </tbody>
+                    <SubtotalRow label="Utilidad Bruta"
+                        current={t.utilidad_bruta} prior={p_bruta} isGood />
 
                     <StatementSection title="Gastos Operativos"
                         color={COLORS.gasto} lines={eri.gastos_operativos}
-                        total={t.total_gastos_op} totalLabel="Total Gastos Operativos" />
+                        total={t.total_gastos_op} totalLabel="Total Gastos Operativos"
+                        showCompar={sc} priorTotal={p.total_gastos_op} />
 
                     <StatementSection title="Gastos Financieros"
                         color={COLORS.gasto} lines={eri.gastos_financieros}
-                        total={t.total_gastos_fin} totalLabel="Total Gastos Financieros" />
+                        total={t.total_gastos_fin} totalLabel="Total Gastos Financieros"
+                        showCompar={sc} priorTotal={p.total_gastos_fin} />
 
-                    {/* UAI */}
-                    <tbody>
-                        <tr style={{ background: 'rgba(255,255,255,0.03)' }}>
-                            <td style={{ padding: '7px 8px', fontWeight: 800, fontSize: '0.8rem', color: '#fff' }}>
-                                Utilidad antes de impuestos
-                            </td>
-                            <td style={{ padding: '7px 12px', textAlign: 'right', fontFamily: 'monospace', fontWeight: 800, fontSize: '0.82rem', color: isNeg(t.utilidad_antes_isr) ? '#ef4444' : COLORS.ingreso }}>
-                                {fmt(t.utilidad_antes_isr)}
-                            </td>
-                        </tr>
-                        <tr><td colSpan={2} style={{ height: 4 }} /></tr>
-                    </tbody>
+                    <SubtotalRow label="Utilidad antes de impuestos"
+                        current={t.utilidad_antes_isr} prior={p_ai} />
 
                     <StatementSection title="Impuesto sobre la Renta (Sec. 29)"
                         color={COLORS.isr} lines={eri.impuesto_renta}
-                        total={t.total_isr} totalLabel="Total ISR" />
+                        total={t.total_isr} totalLabel="Total ISR"
+                        showCompar={sc} priorTotal={p.total_isr} />
 
-                    {/* Utilidad Neta */}
+                    {/* Utilidad / Pérdida Neta */}
                     <tbody>
-                        <tr style={{ background: isLoss ? 'rgba(239,68,68,0.08)' : 'rgba(16,185,129,0.08)', borderTop: '2px solid rgba(255,255,255,0.15)' }}>
+                        <tr id="eri-utilidad-neta" style={{
+                            background: isLoss ? 'rgba(239,68,68,0.08)' : 'rgba(16,185,129,0.08)',
+                            borderTop: '2px solid rgba(255,255,255,0.15)',
+                        }}>
                             <td style={{ padding: '10px 8px', fontWeight: 800, fontSize: '0.85rem', color: '#fff' }}>
                                 {isLoss ? '📉 PÉRDIDA NETA DEL PERÍODO' : '📈 UTILIDAD NETA DEL PERÍODO'}
                             </td>
-                            <td style={{ padding: '10px 12px', textAlign: 'right', fontFamily: 'monospace', fontWeight: 800, fontSize: '0.9rem', color: isLoss ? '#ef4444' : '#10b981' }}>
+                            {sc && (
+                                <td id="eri-utilidad-neta-prior" style={{
+                                    padding: '10px 12px', textAlign: 'right',
+                                    fontFamily: 'monospace', fontWeight: 700, fontSize: '0.85rem',
+                                    color: p_neta < 0 ? '#ef4444' : '#6b7280',
+                                }}>
+                                    {fmt(p_neta)}
+                                </td>
+                            )}
+                            <td style={{
+                                padding: '10px 12px', textAlign: 'right',
+                                fontFamily: 'monospace', fontWeight: 800, fontSize: '0.9rem',
+                                color: isLoss ? '#ef4444' : '#10b981'
+                            }}>
                                 {fmt(un)}
                             </td>
                         </tr>
@@ -518,13 +587,30 @@ function TabERI({ eri, year, priorYear, showCompar }) {
                         <>
                             <StatementSection title="Otro Resultado Integral (ORI — Sec. 5.4 NIIF 3ªEd.)"
                                 color={COLORS.patrimonio} lines={eri.otro_resultado}
-                                total={t.total_ori} totalLabel="Total ORI" />
+                                total={t.total_ori} totalLabel="Total ORI"
+                                showCompar={sc} priorTotal={p.total_ori} />
                             <tbody>
-                                <tr style={{ background: 'rgba(139,92,246,0.08)', borderTop: '2px solid rgba(255,255,255,0.15)' }}>
+                                <tr style={{
+                                    background: 'rgba(139,92,246,0.08)',
+                                    borderTop: '2px solid rgba(255,255,255,0.15)',
+                                }}>
                                     <td style={{ padding: '10px 8px', fontWeight: 800, fontSize: '0.85rem', color: '#fff' }}>
                                         TOTAL RESULTADO INTEGRAL
                                     </td>
-                                    <td style={{ padding: '10px 12px', textAlign: 'right', fontFamily: 'monospace', fontWeight: 800, fontSize: '0.9rem', color: COLORS.patrimonio }}>
+                                    {sc && (
+                                        <td style={{
+                                            padding: '10px 12px', textAlign: 'right',
+                                            fontFamily: 'monospace', fontWeight: 700,
+                                            fontSize: '0.85rem', color: '#6b7280'
+                                        }}>
+                                            {fmt(p_ri)}
+                                        </td>
+                                    )}
+                                    <td style={{
+                                        padding: '10px 12px', textAlign: 'right',
+                                        fontFamily: 'monospace', fontWeight: 800,
+                                        fontSize: '0.9rem', color: COLORS.patrimonio
+                                    }}>
                                         {fmt(t.total_resultado_integral)}
                                     </td>
                                 </tr>
@@ -534,7 +620,11 @@ function TabERI({ eri, year, priorYear, showCompar }) {
                 </table>
             </div>
 
-            <div style={{ marginTop: 12, padding: '8px 12px', borderRadius: 8, background: 'rgba(139,92,246,0.07)', fontSize: '0.68rem', color: 'var(--text-muted)' }}>
+            <div style={{
+                marginTop: 12, padding: '8px 12px', borderRadius: 8,
+                background: 'rgba(139,92,246,0.07)', fontSize: '0.68rem',
+                color: 'var(--text-muted)'
+            }}>
                 📖 NIIF PYMES 3ª Ed. · Sección 5 · Clasificación por función · Sección 23 (Ingresos-contratos) aplicada
             </div>
         </div>
@@ -605,35 +695,83 @@ function TabECP({ ecp, year }) {
 }
 
 // ── TAB: Estado de Flujos de Efectivo ─────────────────────────
-function TabEFE({ efe, year }) {
+function TabEFE({ efe, efePrior, year, priorYear, showCompar }) {
     if (!efe) return <div style={{ color: 'var(--text-muted)', padding: 24, textAlign: 'center' }}>Sin datos EFE</div>
     const c = efe.conciliacion || {}
+    const cp = efePrior?.conciliacion || {}
     const cashOk = c.efe_cash_matches
+    const hasPrior = showCompar && !!efePrior
 
-    function EfeSection({ title, section, color, icon }) {
+    function EfeSection({ title, section, sectionPrior, color, icon }) {
         const items = (section?.items || []).filter(i => i.amount !== 0)
+        const priorItems = sectionPrior?.items || []
         return (
             <div style={{ marginBottom: 12 }}>
-                <div style={{ padding: '8px 14px', background: `${color}15`, borderLeft: `3px solid ${color}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                {/* Encabezado con total N-1 y N */}
+                <div style={{
+                    padding: '8px 14px', background: `${color}15`, borderLeft: `3px solid ${color}`,
+                    display: 'flex', justifyContent: 'space-between', alignItems: 'center'
+                }}>
                     <span style={{ fontWeight: 800, fontSize: '0.78rem', color }}>{icon} {title}</span>
-                    <span style={{ fontFamily: 'monospace', fontWeight: 800, fontSize: '0.82rem', color: section?.total < 0 ? '#ef4444' : color }}>
-                        {fmt(section?.total)}
-                    </span>
-                </div>
-                <div style={{ paddingLeft: 3 }}>
-                    {items.map((item, i) => (
-                        <div key={i} style={{
-                            display: 'flex', justifyContent: 'space-between',
-                            padding: '5px 14px', fontSize: '0.78rem',
-                            borderBottom: '1px solid rgba(255,255,255,0.03)',
-                            color: 'var(--text-secondary)',
-                        }}>
-                            <span>{item.label}</span>
-                            <span style={{ fontFamily: 'monospace', color: item.amount < 0 ? '#ef4444' : item.amount > 0 ? '#10b981' : 'var(--text-muted)' }}>
-                                {item.amount > 0 ? '+' : ''}{fmt(item.amount)}
+                    <div style={{ display: 'flex', gap: 16, alignItems: 'center' }}>
+                        {hasPrior && (
+                            <span style={{ fontFamily: 'monospace', fontSize: '0.75rem', color: '#6b7280' }}>
+                                {fmt(sectionPrior?.total)}
                             </span>
-                        </div>
-                    ))}
+                        )}
+                        <span style={{
+                            fontFamily: 'monospace', fontWeight: 800, fontSize: '0.82rem',
+                            color: section?.total < 0 ? '#ef4444' : color
+                        }}>
+                            {fmt(section?.total)}
+                        </span>
+                    </div>
+                </div>
+                {/* Sub-header N-1 / N */}
+                {hasPrior && (
+                    <div style={{
+                        display: 'flex', justifyContent: 'flex-end', gap: 16, padding: '3px 14px',
+                        fontSize: '0.68rem', color: 'var(--text-muted)'
+                    }}>
+                        <span style={{ minWidth: 105, textAlign: 'right' }}>N-1 ({priorYear})</span>
+                        <span style={{ minWidth: 105, textAlign: 'right' }}>N ({year})</span>
+                    </div>
+                )}
+                {/* Items */}
+                <div style={{ paddingLeft: 3 }}>
+                    {items.map((item, i) => {
+                        const priorAmt = priorItems[i]?.amount ?? 0
+                        return (
+                            <div key={i} style={{
+                                display: 'flex', justifyContent: 'space-between',
+                                padding: '5px 14px', fontSize: '0.78rem',
+                                borderBottom: '1px solid rgba(255,255,255,0.03)',
+                                color: 'var(--text-secondary)',
+                            }}>
+                                <span>{item.label}</span>
+                                <div style={{ display: 'flex', gap: 16 }}>
+                                    {hasPrior && (
+                                        <span style={{
+                                            fontFamily: 'monospace', minWidth: 105, textAlign: 'right',
+                                            color: priorAmt < 0 ? '#ef4444'
+                                                : priorAmt > 0 ? '#6b7280'
+                                                    : 'var(--text-muted)'
+                                        }}>
+                                            {priorAmt > 0 ? '+' : ''}{fmt(priorAmt)}
+                                        </span>
+                                    )}
+                                    <span style={{
+                                        fontFamily: 'monospace', minWidth: 105, textAlign: 'right',
+                                        color: item.amount < 0 ? '#ef4444'
+                                            : item.amount > 0 ? '#10b981'
+                                                : 'var(--text-muted)'
+                                    }}>
+                                        {item.amount > 0 ? '+' : ''}{fmt(item.amount)}
+                                    </span>
+                                </div>
+                            </div>
+                        )
+                    })}
                 </div>
             </div>
         )
@@ -642,7 +780,9 @@ function TabEFE({ efe, year }) {
     return (
         <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
-                <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Método Indirecto · {efe.niif_ref}</span>
+                <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                    Método Indirecto · {efe.niif_ref}
+                </span>
                 <div id="efe-cash-check" style={{
                     padding: '4px 14px', borderRadius: 20, fontSize: '0.72rem', fontWeight: 700,
                     background: cashOk ? 'rgba(16,185,129,0.12)' : 'rgba(239,68,68,0.12)',
@@ -651,66 +791,174 @@ function TabEFE({ efe, year }) {
                 }}>
                     {cashOk ? '✅ Efectivo cuadra (EFE = ESF.AC.01)' : `❌ Diferencia: ${fmt(c.diferencia)}`}
                 </div>
+                {hasPrior && (
+                    <span id="efe-comparativo-badge" style={{
+                        fontSize: '0.7rem', color: '#6b7280',
+                        border: '1px solid #6b728040', borderRadius: 12, padding: '3px 10px',
+                    }}>
+                        + Comparativo N-1 ({priorYear})
+                    </span>
+                )}
             </div>
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 320px', gap: 16, alignItems: 'start' }}>
                 {/* Columna izquierda: Actividades */}
-                <div style={{ background: 'var(--bg-card)', borderRadius: 12, overflow: 'hidden', border: '1px solid var(--border)' }}>
-                    <EfeSection title="Actividades de Operación" section={efe.operacion} color='#10b981' icon='⚙️' />
-                    <EfeSection title="Actividades de Inversión" section={efe.inversion} color='#f59e0b' icon='🔧' />
-                    <EfeSection title="Actividades de Financiación" section={efe.financiacion} color='#8b5cf6' icon='💰' />
+                <div style={{
+                    background: 'var(--bg-card)', borderRadius: 12,
+                    overflow: 'hidden', border: '1px solid var(--border)'
+                }}>
+                    <EfeSection title="Actividades de Operación"
+                        section={efe.operacion} sectionPrior={efePrior?.operacion}
+                        color='#10b981' icon='⚙️' />
+                    <EfeSection title="Actividades de Inversión"
+                        section={efe.inversion} sectionPrior={efePrior?.inversion}
+                        color='#f59e0b' icon='🔧' />
+                    <EfeSection title="Actividades de Financiación"
+                        section={efe.financiacion} sectionPrior={efePrior?.financiacion}
+                        color='#8b5cf6' icon='💰' />
                 </div>
 
                 {/* Columna derecha: Conciliación */}
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                    <div style={{ background: 'var(--bg-card)', borderRadius: 12, border: '1px solid var(--border)', overflow: 'hidden' }}>
-                        <div style={{ padding: '10px 14px', background: 'rgba(255,255,255,0.04)', borderBottom: '1px solid var(--border)' }}>
-                            <span style={{ fontWeight: 800, fontSize: '0.78rem', color: '#fff' }}>Conciliación de Efectivo</span>
+                    <div style={{
+                        background: 'var(--bg-card)', borderRadius: 12,
+                        border: '1px solid var(--border)', overflow: 'hidden'
+                    }}>
+                        <div style={{
+                            padding: '10px 14px', background: 'rgba(255,255,255,0.04)',
+                            borderBottom: '1px solid var(--border)'
+                        }}>
+                            <span style={{ fontWeight: 800, fontSize: '0.78rem', color: '#fff' }}>
+                                Conciliación de Efectivo
+                            </span>
                         </div>
+                        {hasPrior && (
+                            <div style={{
+                                display: 'flex', justifyContent: 'flex-end', gap: 12,
+                                padding: '3px 14px', fontSize: '0.68rem', color: '#6b7280',
+                                borderBottom: '1px solid rgba(255,255,255,0.04)'
+                            }}>
+                                <span>N-1</span>
+                                <span style={{ minWidth: 60, textAlign: 'right' }}>N</span>
+                            </div>
+                        )}
                         {[
-                            { label: 'Efectivo inicial', value: c.efectivo_inicial, color: 'var(--text-secondary)' },
-                            { label: '+ Flujo Operación', value: c.total_actividades_operacion, color: '#10b981' },
-                            { label: '+ Flujo Inversión', value: c.total_actividades_inversion, color: '#f59e0b' },
-                            { label: '+ Flujo Financiación', value: c.total_actividades_financiacion, color: '#8b5cf6' },
-                            { label: 'Cambio neto', value: c.cambio_neto_efectivo, color: '#06b6d4', bold: true },
-                            { label: 'Efectivo final (EFE)', value: c.efectivo_final_calculado, color: '#fff', bold: true },
-                            { label: 'Efectivo en Balance (ESF)', value: c.efectivo_final_esf, color: '#fff', bold: true },
+                            {
+                                label: 'Efectivo inicial',
+                                curr: c.efectivo_inicial, prior: cp.efectivo_inicial,
+                                color: 'var(--text-secondary)'
+                            },
+                            {
+                                label: '+ Flujo Operación',
+                                curr: c.total_actividades_operacion, prior: cp.total_actividades_operacion,
+                                color: '#10b981'
+                            },
+                            {
+                                label: '+ Flujo Inversión',
+                                curr: c.total_actividades_inversion, prior: cp.total_actividades_inversion,
+                                color: '#f59e0b'
+                            },
+                            {
+                                label: '+ Flujo Financiación',
+                                curr: c.total_actividades_financiacion, prior: cp.total_actividades_financiacion,
+                                color: '#8b5cf6'
+                            },
+                            {
+                                label: 'Cambio neto',
+                                curr: c.cambio_neto_efectivo, prior: cp.cambio_neto_efectivo,
+                                color: '#06b6d4', bold: true
+                            },
+                            {
+                                label: 'Efectivo final (EFE)',
+                                curr: c.efectivo_final_calculado, prior: cp.efectivo_final_calculado,
+                                color: '#fff', bold: true
+                            },
+                            {
+                                label: 'Efectivo en Balance (ESF)',
+                                curr: c.efectivo_final_esf, prior: cp.efectivo_final_esf,
+                                color: '#fff', bold: true
+                            },
                         ].map((row, i) => (
                             <div key={i} style={{
-                                display: 'flex', justifyContent: 'space-between',
+                                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
                                 padding: '5px 14px', borderBottom: '1px solid rgba(255,255,255,0.04)',
                                 background: row.bold ? 'rgba(255,255,255,0.03)' : 'transparent',
                             }}>
-                                <span style={{ fontSize: '0.73rem', color: 'var(--text-muted)' }}>{row.label}</span>
-                                <span style={{ fontSize: '0.73rem', fontFamily: 'monospace', fontWeight: row.bold ? 700 : 400, color: row.value < 0 ? '#ef4444' : row.color }}>
-                                    {fmt(row.value)}
+                                <span style={{ fontSize: '0.73rem', color: 'var(--text-muted)' }}>
+                                    {row.label}
                                 </span>
+                                <div style={{ display: 'flex', gap: 8 }}>
+                                    {hasPrior && (
+                                        <span style={{
+                                            fontSize: '0.73rem', fontFamily: 'monospace',
+                                            fontWeight: row.bold ? 600 : 400,
+                                            color: '#6b7280', minWidth: 70, textAlign: 'right'
+                                        }}>
+                                            {fmt(row.prior)}
+                                        </span>
+                                    )}
+                                    <span style={{
+                                        fontSize: '0.73rem', fontFamily: 'monospace',
+                                        fontWeight: row.bold ? 700 : 400,
+                                        color: (row.curr ?? 0) < 0 ? '#ef4444' : row.color,
+                                        minWidth: 70, textAlign: 'right'
+                                    }}>
+                                        {fmt(row.curr)}
+                                    </span>
+                                </div>
                             </div>
                         ))}
                     </div>
 
                     {/* Conciliación pasivos financiación — Sec. 7.14 3ªEd. */}
-                    <div style={{ background: 'var(--bg-card)', borderRadius: 12, border: '1px solid var(--border)', overflow: 'hidden' }}>
-                        <div style={{ padding: '10px 14px', background: 'rgba(139,92,246,0.06)', borderBottom: '1px solid var(--border)' }}>
-                            <span style={{ fontWeight: 700, fontSize: '0.72rem', color: '#8b5cf6' }}>Pasivos de Financiación (Sec. 7.14)</span>
+                    <div style={{
+                        background: 'var(--bg-card)', borderRadius: 12,
+                        border: '1px solid var(--border)', overflow: 'hidden'
+                    }}>
+                        <div style={{
+                            padding: '10px 14px', background: 'rgba(139,92,246,0.06)',
+                            borderBottom: '1px solid var(--border)'
+                        }}>
+                            <span style={{ fontWeight: 700, fontSize: '0.72rem', color: '#8b5cf6' }}>
+                                Pasivos de Financiación (Sec. 7.14)
+                            </span>
                         </div>
                         {(efe.conciliacion_pasivos_fin || []).map((row, i) => (
-                            <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 14px', borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
+                            <div key={i} style={{
+                                display: 'flex', justifyContent: 'space-between',
+                                padding: '4px 14px',
+                                borderBottom: '1px solid rgba(255,255,255,0.03)'
+                            }}>
                                 <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>{row.label}</span>
-                                <span style={{ fontSize: '0.7rem', fontFamily: 'monospace', color: row.amount < 0 ? '#ef4444' : 'var(--text-secondary)' }}>{fmt(row.amount)}</span>
+                                <span style={{
+                                    fontSize: '0.7rem', fontFamily: 'monospace',
+                                    color: row.amount < 0 ? '#ef4444' : 'var(--text-secondary)'
+                                }}>
+                                    {fmt(row.amount)}
+                                </span>
                             </div>
                         ))}
                     </div>
 
                     {efe.warnings?.length > 0 && (
-                        <div style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 8, padding: '8px 12px' }}>
-                            {efe.warnings.map((w, i) => <div key={i} style={{ fontSize: '0.75rem', color: '#ef4444' }}>{w}</div>)}
+                        <div style={{
+                            background: 'rgba(239,68,68,0.08)',
+                            border: '1px solid rgba(239,68,68,0.3)',
+                            borderRadius: 8, padding: '8px 12px'
+                        }}>
+                            {efe.warnings.map((w, i) =>
+                                <div key={i} style={{ fontSize: '0.75rem', color: '#ef4444' }}>{w}</div>
+                            )}
                         </div>
                     )}
                 </div>
             </div>
 
-            <div style={{ marginTop: 12, padding: '8px 12px', borderRadius: 8, background: 'rgba(16,185,129,0.07)', fontSize: '0.68rem', color: 'var(--text-muted)' }}>
+            <div style={{
+                marginTop: 12, padding: '8px 12px', borderRadius: 8,
+                background: 'rgba(16,185,129,0.07)', fontSize: '0.68rem',
+                color: 'var(--text-muted)'
+            }}>
                 📖 NIIF PYMES 3ª Ed. · Sección 7 · Método Indirecto · Sec. 7.14 Conciliación de pasivos de financiación
             </div>
         </div>
@@ -1488,8 +1736,10 @@ export default function EstadosFinancieros() {
                     <TabECP ecp={data.ecp} year={year} />
                 )}
                 {!loading && data && activeTab === 'efe' && (
-                    <TabEFE efe={data.efe} year={year} />
+                    <TabEFE efe={data.efe} efePrior={data.efe_prior}
+                        year={year} priorYear={data.prior_year} showCompar={showCompar} />
                 )}
+
                 {activeTab === 'map' && (
                     <TabMapeo tenantId={state.tenant?.id} apiBase={API} token={token} />
                 )}
