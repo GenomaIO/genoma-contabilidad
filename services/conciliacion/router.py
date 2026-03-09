@@ -283,23 +283,20 @@ async def ocr_image(
         raise HTTPException(status_code=500, detail=f"Error OCR: {str(e)}")
 
 @router.post("/conciliacion/sesion")
-def crear_sesion(req: UploadSession, request = None, db: Session = Depends(_get_db)):
+def crear_sesion(req: UploadSession, request, db: Session = Depends(_get_db)):
     """
     Crea una sesión de conciliación (sin transacciones aún).
     Devuelve el recon_id para agregar transacciones después.
+
+    SEGURIDAD: tenant_id se extrae del JWT — nunca del body.
+    Impide que un tenant cree sesiones bajo otro tenant.
     """
+    import uuid
+
+    # ─ Extraer tenant_id del JWT (misma lógica que toda la app) ──────────
+    tenant_id = _get_tenant(request)
+
     try:
-        from fastapi import Request
-        from services.conciliacion.fiscal_engine import calcular_iva_incluido
-        import uuid
-
-        # Obtener tenant del request header manualmente
-        auth_header = ""
-        if request and hasattr(request, "headers"):
-            auth_header = request.headers.get("Authorization", "")
-        # Fallback: tenant_id del body si viene (para tests)
-        tenant_id = req.__dict__.get("tenant_id", "test_tenant")
-
         recon_id = str(uuid.uuid4())
         db.execute(text("""
             INSERT INTO bank_reconciliation
@@ -318,7 +315,10 @@ def crear_sesion(req: UploadSession, request = None, db: Session = Depends(_get_
             "saldo_final":   req.saldo_final,
         })
         db.commit()
+        logger.info(f"✅ Sesión creada recon_id={recon_id} tenant={tenant_id}")
         return {"ok": True, "recon_id": recon_id}
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error creando sesión: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -527,32 +527,42 @@ def run_centinela(recon_id: str, db: Session = Depends(_get_db)):
 
 
 @router.get("/centinela/score/{period}")
-def get_score(period: str, db: Session = Depends(_get_db)):
-    """Obtiene el score CENTINELA para un período YYYYMM."""
-    # Note: en producción esto usa el tenant del JWT
+def get_score(period: str, request, db: Session = Depends(_get_db)):
+    """Obtiene el score CENTINELA para un período YYYYMM.
+
+    SEGURIDAD: solo devuelve datos del tenant autenticado.
+    """
+    tenant_id = _get_tenant(request)
     row = db.execute(text(
-        "SELECT * FROM centinela_score WHERE period = :period ORDER BY created_at DESC LIMIT 1"
-    ), {"period": period}).fetchone()
+        "SELECT * FROM centinela_score "
+        "WHERE tenant_id = :tenant_id AND period = :period "
+        "ORDER BY created_at DESC LIMIT 1"
+    ), {"tenant_id": tenant_id, "period": period}).fetchone()
     if not row:
         return {"period": period, "score_total": 0, "nivel": "SIN_DATOS"}
     return dict(row._mapping)
 
 
 @router.get("/centinela/d270/{period}")
-def get_d270_preview(period: str, db: Session = Depends(_get_db)):
-    """Retorna el preview del D-270 para el período dado."""
+def get_d270_preview(period: str, request, db: Session = Depends(_get_db)):
+    """Retorna el preview del D-270 para el período dado.
+
+    SEGURIDAD: solo devuelve partidas del tenant autenticado.
+    """
     from services.conciliacion.fiscal_engine import generar_d270_resumen, D270_CODIGOS
+    tenant_id = _get_tenant(request)
 
     rows = db.execute(text("""
         SELECT bt.descripcion, bt.base_estimada AS monto, bt.d270_codigo,
                bt.accion AS observacion, br.period
         FROM bank_transactions bt
         JOIN bank_reconciliation br ON br.id = bt.recon_id
-        WHERE br.period = :period
+        WHERE br.tenant_id   = :tenant_id
+          AND br.period       = :period
           AND bt.d270_codigo IS NOT NULL
           AND bt.accion_tomada = FALSE
         ORDER BY bt.d270_codigo, bt.monto DESC
-    """), {"period": period}).fetchall()
+    """), {"tenant_id": tenant_id, "period": period}).fetchall()
 
     items = [dict(r._mapping) for r in rows]
     resumen = generar_d270_resumen(items)
@@ -590,10 +600,12 @@ def export_d270(period: str, db: Session = Depends(_get_db)):
 # ── Bank Rules ───────────────────────────────────────────────────────────────
 
 @router.post("/conciliacion/rule")
-def save_rule(rule: BankRule, db: Session = Depends(_get_db)):
-    """Guarda o actualiza una Bank Rule de clasificación."""
-    # tenant_id simplificado para esta implementación
-    tenant_id = "default"
+def save_rule(rule: BankRule, request, db: Session = Depends(_get_db)):
+    """Guarda o actualiza una Bank Rule de clasificación.
+
+    SEGURIDAD: las reglas se guardan bajo el tenant autenticado.
+    """
+    tenant_id = _get_tenant(request)
     db.execute(text("""
         INSERT INTO bank_rules (tenant_id, pattern, pattern_type, contact_name,
                                 ledger_account, d270_codigo, note)
@@ -613,9 +625,13 @@ def save_rule(rule: BankRule, db: Session = Depends(_get_db)):
 
 
 @router.get("/conciliacion/rules")
-def list_rules(db: Session = Depends(_get_db)):
-    """Lista las Bank Rules del tenant."""
+def list_rules(request, db: Session = Depends(_get_db)):
+    """Lista las Bank Rules del tenant autenticado.
+
+    SEGURIDAD: solo muestra las reglas del tenant del JWT.
+    """
+    tenant_id = _get_tenant(request)
     rows = db.execute(text(
-        "SELECT * FROM bank_rules WHERE tenant_id = 'default' ORDER BY uses_count DESC"
-    )).fetchall()
+        "SELECT * FROM bank_rules WHERE tenant_id = :tid ORDER BY uses_count DESC"
+    ), {"tid": tenant_id}).fetchall()
     return {"rules": [dict(r._mapping) for r in rows]}
