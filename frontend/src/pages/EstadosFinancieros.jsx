@@ -1044,6 +1044,233 @@ export default function EstadosFinancieros() {
         { id: 'not', label: '📋 Notas NIIF', badge: null },
     ]
 
+
+    // ── Exportar EEFF a Excel (CSV BOM UTF-8 — misma técnica que Balance) ──
+    function exportToExcel() {
+        if (!data) return
+        const fmtAcct = (n) => n != null
+            ? Number(n).toLocaleString('es-CR', { minimumFractionDigits: 0, maximumFractionDigits: 0 })
+            : '0'
+        const esf = data.esf || {}
+        const eri = data.eri || {}
+        const ecp = data.ecp || {}
+        const t   = esf.totals  || {}
+        const p   = esf.prior_totals || {}
+        const te  = eri.totals  || {}
+        const comparLabel = (showCompar && data.prior_year) ? data.prior_year : (parseInt(year) - 1)
+
+        const secRows = (lines = [], prior_lines = []) =>
+            (lines || []).map(l => [
+                l.code || '',
+                l.label || '',
+                showCompar ? fmtAcct(l.prior_amount ?? 0) : '',
+                fmtAcct(l.amount ?? 0),
+            ])
+
+        const sep  = (txt) => [txt, '', '', '']
+        const head = showCompar
+            ? ['CÓDIGO NIIF', 'PARTIDA', `${comparLabel} (CRC)`, `${year} (CRC)`]
+            : ['CÓDIGO NIIF', 'PARTIDA', `${year} (CRC)`]
+
+        const rows = [
+            [`ESTADOS FINANCIEROS — NIIF PYMES 3ª Ed. (Feb 2025)`],
+            [`Entidad: ${data.tenant_name || ''}`, `Año: ${year}`, `Generado: ${new Date().toLocaleDateString('es-CR')}`],
+            [],
+            // ─── ESF ───────────────────────────────────────────────────────
+            ['═══ ESTADO DE SITUACIÓN FINANCIERA ═══'],
+            head,
+            sep('── ACTIVOS ──'),
+            sep('Activo Corriente'),
+            ...secRows(esf.activo_corriente),
+            ['', 'Total Activo Corriente', showCompar ? fmtAcct(p.total_activo_corriente) : '', fmtAcct(t.total_activo_corriente)],
+            sep('Activo No Corriente'),
+            ...secRows(esf.activo_no_corriente),
+            ['', 'Total Activo No Corriente', showCompar ? fmtAcct(p.total_activo_no_corriente) : '', fmtAcct(t.total_activo_no_corriente)],
+            ['', 'TOTAL ACTIVOS', showCompar ? fmtAcct(p.total_activos) : '', fmtAcct(t.total_activos)],
+            [],
+            sep('── PASIVOS ──'),
+            sep('Pasivo Corriente'),
+            ...secRows(esf.pasivo_corriente),
+            ['', 'Total Pasivo Corriente', showCompar ? fmtAcct(p.total_pasivo_corriente) : '', fmtAcct(t.total_pasivo_corriente)],
+            sep('Pasivo No Corriente'),
+            ...secRows(esf.pasivo_no_corriente),
+            ['', 'Total Pasivo No Corriente', showCompar ? fmtAcct(p.total_pasivo_no_corriente) : '', fmtAcct(t.total_pasivo_no_corriente)],
+            ['', 'Total Pasivos', showCompar ? fmtAcct(p.total_pasivos) : '', fmtAcct(t.total_pasivos)],
+            [],
+            sep('── PATRIMONIO ──'),
+            ...secRows(esf.patrimonio),
+            ['', 'TOTAL PASIVOS + PATRIMONIO', showCompar ? fmtAcct((p.total_pasivos??0)+(p.total_patrimonio??0)) : '', fmtAcct(t.total_pasivo_patrimonio)],
+            [],
+            // ─── ERI ───────────────────────────────────────────────────────
+            ['═══ ESTADO DE RESULTADO INTEGRAL ═══'],
+            head,
+            sep('Ingresos de Actividades Ordinarias'),
+            ...secRows(eri.ingresos),
+            ['', 'Total Ingresos', '', fmtAcct(te.total_ingresos)],
+            sep('Costo de Ventas / Servicios'),
+            ...secRows(eri.costos),
+            ['', 'Total Costo de Ventas', '', fmtAcct(te.total_costo)],
+            ['', 'Utilidad Bruta', '', fmtAcct(te.utilidad_bruta)],
+            sep('Gastos Operativos'),
+            ...secRows(eri.gastos_operativos),
+            ['', 'Total Gastos Operativos', '', fmtAcct(te.total_gastos_op)],
+            sep('Gastos Financieros'),
+            ...secRows(eri.gastos_financieros),
+            ['', 'Total Gastos Financieros', '', fmtAcct(te.total_gastos_fin)],
+            ['', 'Utilidad antes de Impuestos', '', fmtAcct(te.utilidad_antes_isr)],
+            sep('ISR (Sec. 29)'),
+            ...secRows(eri.impuesto_renta),
+            ['', 'UTILIDAD / PÉRDIDA NETA', '', fmtAcct(te.utilidad_neta)],
+        ]
+
+        const csv = '\uFEFF' + rows
+            .map(r => (r.length === 0 ? '' : r.slice(0, showCompar ? 4 : 3).map(c => `"${String(c??'').replace(/"/g,'""')}"`).join(',')))
+            .join('\r\n')
+
+        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = `EEFF_${year}_${data?.tenant_name || 'empresa'}.csv`
+        a.click()
+        URL.revokeObjectURL(url)
+    }
+
+    // ── Imprimir EEFF — ventana HTML propia (igual que Balance) ──────────
+    function handlePrint() {
+        if (!data) return
+        const esf = data.esf || {}
+        const eri = data.eri || {}
+        const t   = esf.totals  || {}
+        const p   = esf.prior_totals || {}
+        const te  = eri.totals  || {}
+        const fmtN = (n) => n != null ? Number(n).toLocaleString('es-CR', { minimumFractionDigits: 0 }) : '—'
+        const comparLabel = data.prior_year || (parseInt(year) - 1)
+
+        const colHeader = showCompar
+            ? `<th class="num">${comparLabel}</th><th class="num">${year}</th>`
+            : `<th class="num">${year}</th>`
+
+        const lineRow = (l, color) => {
+            const prior = showCompar ? `<td class="num" style="color:#777">${fmtN(l.prior_amount ?? 0)}</td>` : ''
+            return `<tr><td style="padding-left:20px;color:${color};font-size:10px">${l.code||''}</td><td>${l.label||''}</td>${prior}<td class="num" style="color:${color}">${fmtN(l.amount)}</td></tr>`
+        }
+        const secHead = (txt, color) => `<tr class="sec-head"><td colspan="${showCompar?4:3}" style="color:${color}">${txt}</td></tr>`
+        const totRow  = (txt, prior, curr, color) => {
+            const priorCell = showCompar ? `<td class="num" style="font-weight:700;color:#555">${fmtN(prior)}</td>` : ''
+            return `<tr class="tot-row"><td></td><td style="font-weight:700;color:${color}">${txt}</td>${priorCell}<td class="num" style="font-weight:700;color:${color}">${fmtN(curr)}</td></tr>`
+        }
+        const grandRow = (txt, prior, curr) => {
+            const priorCell = showCompar ? `<td class="num" style="font-weight:900">${fmtN(prior)}</td>` : ''
+            return `<tr class="grand-row"><td></td><td>${txt}</td>${priorCell}<td class="num">${fmtN(curr)}</td></tr>`
+        }
+
+        const esfRows = [
+            secHead('ACTIVOS', '#166534'),
+            secHead('Activo Corriente', '#15803d'),
+            ...(esf.activo_corriente||[]).map(l => lineRow(l, '#166534')),
+            totRow('Total Activo Corriente', p.total_activo_corriente, t.total_activo_corriente, '#166534'),
+            secHead('Activo No Corriente', '#15803d'),
+            ...(esf.activo_no_corriente||[]).map(l => lineRow(l, '#166534')),
+            totRow('Total Activo No Corriente', p.total_activo_no_corriente, t.total_activo_no_corriente, '#166534'),
+            grandRow('TOTAL ACTIVOS', p.total_activos, t.total_activos),
+            `<tr><td colspan="${showCompar?4:3}" style="height:8px;background:#f5f5f5"></td></tr>`,
+            secHead('PASIVOS', '#92400e'),
+            secHead('Pasivo Corriente', '#b45309'),
+            ...(esf.pasivo_corriente||[]).map(l => lineRow(l, '#92400e')),
+            totRow('Total Pasivo Corriente', p.total_pasivo_corriente, t.total_pasivo_corriente, '#92400e'),
+            secHead('Pasivo No Corriente', '#b45309'),
+            ...(esf.pasivo_no_corriente||[]).map(l => lineRow(l, '#92400e')),
+            totRow('Total Pasivos', p.total_pasivos, t.total_pasivos, '#92400e'),
+            `<tr><td colspan="${showCompar?4:3}" style="height:8px;background:#f5f5f5"></td></tr>`,
+            secHead('PATRIMONIO', '#4c1d95'),
+            ...(esf.patrimonio||[]).map(l => lineRow(l, '#4c1d95')),
+            grandRow('TOTAL PASIVOS + PATRIMONIO', (p.total_pasivos??0)+(p.total_patrimonio??0), t.total_pasivo_patrimonio),
+        ].join('')
+
+        const eriRows = [
+            secHead('Ingresos de Actividades Ordinarias', '#065f46'),
+            ...(eri.ingresos||[]).map(l => lineRow(l, '#065f46')),
+            totRow('Total Ingresos', 0, te.total_ingresos, '#065f46'),
+            secHead('Costo de Ventas / Servicios', '#991b1b'),
+            ...(eri.costos||[]).map(l => lineRow(l, '#991b1b')),
+            totRow('Total Costo de Ventas', 0, te.total_costo, '#991b1b'),
+            grandRow('Utilidad Bruta', 0, te.utilidad_bruta),
+            secHead('Gastos Operativos', '#92400e'),
+            ...(eri.gastos_operativos||[]).map(l => lineRow(l, '#92400e')),
+            totRow('Total Gastos Operativos', 0, te.total_gastos_op, '#92400e'),
+            secHead('Gastos Financieros', '#92400e'),
+            ...(eri.gastos_financieros||[]).map(l => lineRow(l, '#92400e')),
+            grandRow('Utilidad antes de Impuestos', 0, te.utilidad_antes_isr),
+            secHead('ISR (Sec. 29)', '#374151'),
+            ...(eri.impuesto_renta||[]).map(l => lineRow(l, '#374151')),
+            grandRow(te.utilidad_neta < 0 ? '⬇ PÉRDIDA NETA' : '⬆ UTILIDAD NETA DEL PERÍODO', 0, te.utilidad_neta),
+        ].join('')
+
+        const html = `<!DOCTYPE html>
+<html lang="es"><head><meta charset="UTF-8">
+<title>Estados Financieros ${year} — NIIF PYMES</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: Arial, sans-serif; font-size: 10px; color: #111; margin: 0; padding: 16px; }
+  h1 { font-size: 14px; margin: 0 0 2px; }
+  h2 { font-size: 11px; margin: 16px 0 4px; padding: 4px 8px; background: #f3f4f6; border-left: 3px solid #374151; }
+  .sub { font-size: 9px; color: #555; margin: 2px 0 10px; }
+  table { width: 100%; border-collapse: collapse; margin-bottom: 4px; }
+  th { background: #e5e7eb; padding: 5px 8px; text-align: left; border: 1px solid #d1d5db; font-size: 9px; }
+  th.num { text-align: right; }
+  td { padding: 3px 8px; border-bottom: 1px solid #f0f0f0; }
+  td.num { text-align: right; }
+  .sec-head td { background: #f9fafb; font-weight: 700; font-size: 9px; letter-spacing: 0.05em; text-transform: uppercase; padding: 5px 8px; border-top: 1px solid #ddd; }
+  .tot-row td { background: #f3f4f6; }
+  .grand-row td { background: #1f2937; color: #fff !important; font-weight: 900; font-size: 11px; padding: 7px 8px; border-top: 2px solid #374151; }
+  .check { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 9px; font-weight: 700; }
+  .ok { background: #dcfce7; color: #166534; } .err { background: #fee2e2; color: #991b1b; }
+  @page { margin: 10mm; size: A4 portrait; }
+  .page-break { page-break-before: always; }
+</style></head><body>
+<h1>📊 Estados Financieros — NIIF PYMES 3ª Ed. (Feb 2025)</h1>
+<p class="sub">
+  Entidad: <strong>${data.tenant_name || ''}</strong> &nbsp;|&nbsp;
+  Período: <strong>Al 31 de diciembre de ${year}</strong> &nbsp;|&nbsp;
+  Generado: ${new Date().toLocaleDateString('es-CR')} &nbsp;|&nbsp;
+  <span class="${t.balanced ? 'ok check' : 'err check'}">${t.balanced ? '✓ ESF cuadrado (A=P+Pat)' : '✗ ESF desbalanceado'}</span>
+  ${showCompar ? `&nbsp;|&nbsp; Comparativo: ${comparLabel} vs ${year}` : ''}
+</p>
+
+<h2>⚖️ Estado de Situación Financiera</h2>
+<table>
+  <thead><tr>
+    <th style="width:8%">Código</th>
+    <th>Partida</th>
+    ${showCompar ? `<th class="num" style="width:18%">${comparLabel} (₡)</th>` : ''}
+    <th class="num" style="width:18%">${year} (₡)</th>
+  </tr></thead>
+  <tbody>${esfRows}</tbody>
+</table>
+
+<div class="page-break"></div>
+<h2>📈 Estado de Resultado Integral</h2>
+<table>
+  <thead><tr>
+    <th style="width:8%">Código</th>
+    <th>Partida</th>
+    <th class="num" style="width:18%">${year} (₡)</th>
+  </tr></thead>
+  <tbody>${eriRows}</tbody>
+</table>
+
+<p class="sub" style="margin-top:12px">
+  📖 NIIF PYMES Sección 3 (Presentación) · Sección 4 (ESF) · Sección 5 (ERI) · Clasificación corriente/no corriente aplicada
+</p>
+<script>window.onload = () => { window.print(); }<\/script>
+</body></html>`
+
+        const win = window.open('', '_blank', 'width=1000,height=750')
+        win.document.write(html)
+        win.document.close()
+    }
+
     return (
         <div style={{ padding: '24px', maxWidth: 1100, margin: '0 auto', fontFamily: 'Inter, sans-serif' }}>
             <PrintStyleInjector />
@@ -1119,21 +1346,40 @@ export default function EstadosFinancieros() {
                     >
                         {loading ? '⏳ Calculando...' : '🔄 Generar EEFF'}
                     </button>
-                    {/* Botón Imprimir */}
+                    {/* ── Botones Excel + Imprimir — estilo Balance de Comprobación ── */}
                     {data && (
-                        <button
-                            id="eeff-imprimir-btn"
-                            onClick={() => window.print()}
-                            style={{
-                                background: 'rgba(245,158,11,0.1)',
-                                border: '1px solid rgba(245,158,11,0.3)',
-                                color: '#f59e0b', borderRadius: 8,
-                                padding: '7px 14px', fontSize: '0.8rem',
-                                fontWeight: 600, cursor: 'pointer',
-                            }}
-                        >
-                            🖨️ Imprimir
-                        </button>
+                        <>
+                            <button
+                                id="eeff-excel-btn"
+                                onClick={exportToExcel}
+                                title="Exportar EEFF a Excel (CSV)"
+                                style={{
+                                    display: 'flex', alignItems: 'center', gap: 5,
+                                    padding: '7px 14px', borderRadius: 8, cursor: 'pointer',
+                                    fontSize: '0.82rem', fontWeight: 600,
+                                    border: '1px solid rgba(34,197,94,0.45)',
+                                    background: 'rgba(34,197,94,0.12)',
+                                    color: '#22c55e',
+                                }}
+                            >
+                                📥 Excel
+                            </button>
+                            <button
+                                id="eeff-imprimir-btn"
+                                onClick={handlePrint}
+                                title="Imprimir estados financieros"
+                                style={{
+                                    display: 'flex', alignItems: 'center', gap: 5,
+                                    padding: '7px 14px', borderRadius: 8, cursor: 'pointer',
+                                    fontSize: '0.82rem', fontWeight: 600,
+                                    border: '1px solid rgba(245,158,11,0.45)',
+                                    background: 'rgba(245,158,11,0.12)',
+                                    color: '#f59e0b',
+                                }}
+                            >
+                                🖨️ Imprimir
+                            </button>
+                        </>
                     )}
                 </div>
             </div>
