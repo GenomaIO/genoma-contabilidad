@@ -299,7 +299,7 @@ function FileUploader({ token, onTransacciones }) {
     const [banco, setBanco] = useState('')
     const [period, setPeriod] = useState(currentPeriod())
     const [entidades, setEntidades] = useState([])
-    const [file, setFile] = useState(null)
+    const [files, setFiles] = useState([])          // ← array multi-archivo
     const [loading, setLoading] = useState(false)
     const [msg, setMsg] = useState(null)
     const fileRef = useRef()
@@ -315,109 +315,134 @@ function FileUploader({ token, onTransacciones }) {
     }, [token])
 
     function handleFile(e) {
-        const f = e.target.files?.[0]
-        if (!f) return
-        setFile(f)
+        const f = Array.from(e.target.files || [])
+        if (!f.length) return
+        setFiles(f)
         setMsg(null)
     }
 
+    // Procesa UN archivo y retorna su resultado estándar
+    async function parsearArchivo(file, idx, total) {
+        const fname = file.name.toLowerCase()
+        if (total > 1) {
+            setMsg({ ok: true, text: `⏳ Procesando ${idx + 1}/${total}: ${file.name}` })
+        }
+
+        if (fname.endsWith('.csv') || fname.endsWith('.txt')) {
+            const text = await file.text()
+            const r = await fetch(`${API}/conciliacion/parse`, {
+                method: 'POST',
+                headers: authJ(token),
+                body: JSON.stringify({ text, banco }),
+            })
+            const d = await r.json()
+            if (!r.ok) throw new Error(d.detail || `Error CSV: ${file.name}`)
+            return d
+        }
+
+        if (fname.endsWith('.pdf')) {
+            const buffer = await file.arrayBuffer()
+            const pdfDoc = await pdfjsLib.getDocument({ data: buffer }).promise
+            const pages = []
+            for (let i = 1; i <= pdfDoc.numPages; i++) {
+                const page = await pdfDoc.getPage(i)
+                const content = await page.getTextContent()
+                const items = content.items.sort((a, b) => {
+                    const dy = Math.round(b.transform[5]) - Math.round(a.transform[5])
+                    return dy !== 0 ? dy : a.transform[4] - b.transform[4]
+                })
+                pages.push(items.map(it => it.str).join(' '))
+            }
+            const text = pages.join('\n')
+            const r = await fetch(`${API}/conciliacion/parse`, {
+                method: 'POST',
+                headers: authJ(token),
+                body: JSON.stringify({ text, banco }),
+            })
+            const d = await r.json()
+            if (!r.ok) throw new Error(d.detail || `Error PDF: ${file.name}`)
+            return d
+        }
+
+        if (fname.endsWith('.xlsx') || fname.endsWith('.xls')) {
+            const form = new FormData()
+            form.append('file', file)
+            form.append('banco', banco)
+            const r = await fetch(`${API}/conciliacion/parse-file`, {
+                method: 'POST', headers: authH(token), body: form,
+            })
+            const d = await r.json()
+            if (!r.ok) throw new Error(d.detail || `Error Excel: ${file.name}`)
+            return d
+        }
+
+        if (fname.match(/\.(jpg|jpeg|png|webp)$/)) {
+            const form = new FormData()
+            form.append('file', file)
+            form.append('banco', banco)
+            const r = await fetch(`${API}/conciliacion/ocr-image`, {
+                method: 'POST', headers: authH(token), body: form,
+            })
+            const d = await r.json()
+            if (!r.ok) throw new Error(d.detail || `Error OCR: ${file.name}`)
+            return d
+        }
+
+        throw new Error(`Formato no soportado: ${file.name}`)
+    }
+
     async function parsear() {
-        if (!file || !banco) {
-            setMsg({ ok: false, text: 'Selecciona banco y archivo' })
+        if (!files.length || !banco) {
+            setMsg({ ok: false, text: 'Selecciona banco y al menos un archivo' })
             return
         }
         setLoading(true); setMsg(null)
-        const fname = file.name.toLowerCase()
         try {
-            let d = null
+            // Procesar todos los archivos secuencialmente
+            let todosLasTxns = []
+            let todosPeriodos = new Set()
+            let saldoInicial = 0, saldoFinal = 0
+            let usaGemini = false
+            const errores = []
 
-            // ── CSV / TXT → leer como texto y enviar al endpoint /parse ──
-            if (fname.endsWith('.csv') || fname.endsWith('.txt')) {
-                const text = await file.text()
-                const r = await fetch(`${API}/conciliacion/parse`, {
-                    method: 'POST',
-                    headers: authJ(token),
-                    body: JSON.stringify({ text, banco }),
-                })
-                d = await r.json()
-                if (!r.ok) throw new Error(d.detail || 'Error al parsear CSV')
-            }
-
-            // ── PDF → pdf.js extrae texto → /parse ─────────────────────
-            else if (fname.endsWith('.pdf')) {
-                setMsg({ ok: true, text: '⏳ Leyendo PDF con pdf.js...' })
-                const buffer = await file.arrayBuffer()
-                const pdfDoc = await pdfjsLib.getDocument({ data: buffer }).promise
-                const pages = []
-                for (let i = 1; i <= pdfDoc.numPages; i++) {
-                    const page = await pdfDoc.getPage(i)
-                    const content = await page.getTextContent()
-                    // Ordenar ítems por posición Y (de arriba a abajo) y X
-                    const items = content.items
-                        .sort((a, b) => {
-                            const dy = Math.round(b.transform[5]) - Math.round(a.transform[5])
-                            return dy !== 0 ? dy : a.transform[4] - b.transform[4]
-                        })
-                    pages.push(items.map(it => it.str).join(' '))
+            for (let i = 0; i < files.length; i++) {
+                try {
+                    const d = await parsearArchivo(files[i], i, files.length)
+                    todosLasTxns = todosLasTxns.concat(d.transacciones || [])
+                        ; (d.periodos_detectados || []).forEach(p => todosPeriodos.add(p))
+                    if (i === 0) saldoInicial = d.saldo_inicial || 0
+                    saldoFinal = d.saldo_final || saldoFinal
+                    if (d.fuente === 'gemini-vision') usaGemini = true
+                } catch (err) {
+                    errores.push(`${files[i].name}: ${err.message}`)
                 }
-                const text = pages.join('\n')
-                setMsg({ ok: true, text: '📤 Enviando texto al servidor...' })
-                const r = await fetch(`${API}/conciliacion/parse`, {
-                    method: 'POST',
-                    headers: authJ(token),
-                    body: JSON.stringify({ text, banco }),
-                })
-                d = await r.json()
-                if (!r.ok) throw new Error(d.detail || 'Error al parsear PDF')
             }
 
-            // ── XLSX / XLS → multipart → /parse-file (backend usa openpyxl) ─
-            else if (fname.endsWith('.xlsx') || fname.endsWith('.xls')) {
-                setMsg({ ok: true, text: '⏳ Procesando Excel...' })
-                const form = new FormData()
-                form.append('file', file)
-                form.append('banco', banco)
-                const r = await fetch(`${API}/conciliacion/parse-file`, {
-                    method: 'POST',
-                    headers: authH(token),   // sin Content-Type, el browser lo pone
-                    body: form,
-                })
-                d = await r.json()
-                if (!r.ok) throw new Error(d.detail || 'Error al parsear Excel')
-            }
-
-            // ── Imágenes → OCR con Gemini Vision → /ocr-image ──────────
-            else if (
-                fname.endsWith('.jpg') || fname.endsWith('.jpeg') ||
-                fname.endsWith('.png') || fname.endsWith('.webp')
-            ) {
-                setMsg({ ok: true, text: '🔍 Analizando imagen con IA (Gemini Vision)...' })
-                const form = new FormData()
-                form.append('file', file)
-                form.append('banco', banco)
-                const r = await fetch(`${API}/conciliacion/ocr-image`, {
-                    method: 'POST',
-                    headers: authH(token),
-                    body: form,
-                })
-                d = await r.json()
-                if (!r.ok) throw new Error(d.detail || 'Error OCR imagen')
-            }
-
-            else {
-                throw new Error(`Formato no soportado: ${file.name}. Usa PDF, CSV, XLSX, JPG o PNG.`)
-            }
-
-            // ── Resultado común ────────────────────────────────────────
-            const periodos = d.periodos_detectados?.length
-                ? ` | Períodos: ${d.periodos_detectados.join(', ')}`
-                : ''
-            const fuente = d.fuente === 'gemini-vision' ? ' (OCR Gemini ✨)' : ''
-            setMsg({
-                ok: true,
-                text: `✅ ${d.total_transacciones} transacciones de ${banco}${fuente}${periodos}`,
+            // Deduplicar: misma fecha + mismo monto + misma descripción = duplicado
+            const seen = new Set()
+            const txnsFusionadas = todosLasTxns.filter(t => {
+                const key = `${t.fecha}|${t.monto}|${t.descripcion?.slice(0, 30)}`
+                if (seen.has(key)) return false
+                seen.add(key)
+                return true
             })
-            onTransacciones(d.transacciones, banco, period, d.saldo_inicial, d.saldo_final)
+
+            // Ordenar por fecha
+            txnsFusionadas.sort((a, b) => (a.fecha || '').localeCompare(b.fecha || ''))
+
+            const periodosStr = [...todosPeriodos].sort().join(', ')
+            const fuenteStr = usaGemini ? ' (OCR Gemini ✨)' : ''
+            const errorStr = errores.length ? ` | ⚠️ ${errores.length} error(es)` : ''
+
+            if (txnsFusionadas.length === 0 && errores.length) {
+                setMsg({ ok: false, text: `Error procesando archivos: ${errores.join('; ')}` })
+            } else {
+                setMsg({
+                    ok: true,
+                    text: `✅ ${txnsFusionadas.length} transacciones de ${files.length} archivo(s)${fuenteStr} | Períodos: ${periodosStr || period}${errorStr}`,
+                })
+                onTransacciones(txnsFusionadas, banco, period, saldoInicial, saldoFinal)
+            }
 
         } catch (e) {
             setMsg({ ok: false, text: String(e.message || e) })
@@ -482,28 +507,42 @@ function FileUploader({ token, onTransacciones }) {
                 </div>
             </div>
 
-            {/* Archivo */}
+            {/* Archivo — drop zone multi-select */}
             <div>
                 <label style={labelStyle}>Estado de cuenta</label>
                 <div style={{
                     border: '2px dashed var(--border)', borderRadius: 10,
                     padding: '18px', textAlign: 'center', cursor: 'pointer',
-                    background: file ? 'rgba(34,197,94,0.05)' : 'var(--bg-secondary)',
+                    background: files.length ? 'rgba(34,197,94,0.05)' : 'var(--bg-secondary)',
                     transition: 'all 0.2s',
                 }} onClick={() => fileRef.current?.click()}>
                     <div style={{ fontSize: '1.5rem', marginBottom: 4 }}>
-                        {file ? '📄' : '📂'}
+                        {files.length ? '📂' : '📂'}
                     </div>
-                    <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
-                        {file ? file.name : 'CSV, XLSX o PDF'}
-                    </div>
-                    {file && (
-                        <div style={{ fontSize: '0.7rem', color: '#16a34a', marginTop: 2 }}>
-                            {(file.size / 1024).toFixed(1)} KB
+                    {files.length === 0 ? (
+                        <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                            CSV, XLSX, PDF o imagen<br />
+                            <span style={{ fontSize: '0.7rem', opacity: 0.7 }}>
+                                Podés seleccionar varios a la vez
+                            </span>
+                        </div>
+                    ) : (
+                        <div style={{ textAlign: 'left', fontSize: '0.75rem' }}>
+                            {files.map((f, i) => (
+                                <div key={i} style={{ color: '#16a34a', marginBottom: 2 }}>
+                                    📄 {f.name}
+                                    <span style={{ color: 'var(--text-muted)', marginLeft: 6 }}>
+                                        ({(f.size / 1024).toFixed(0)} KB)
+                                    </span>
+                                </div>
+                            ))}
+                            <div style={{ marginTop: 6, fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+                                Clic para cambiar / agregar más
+                            </div>
                         </div>
                     )}
                 </div>
-                <input ref={fileRef} type="file"
+                <input ref={fileRef} type="file" multiple
                     accept=".csv,.txt,.xlsx,.xls,.pdf,.jpg,.jpeg,.png,.webp"
                     style={{ display: 'none' }}
                     onChange={handleFile} />
@@ -511,8 +550,8 @@ function FileUploader({ token, onTransacciones }) {
 
             {/* Botón + mensaje */}
             <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', gap: 8 }}>
-                <button onClick={parsear} disabled={loading || !file || !banco} style={btnPrimary}>
-                    {loading ? '⏳ Procesando...' : '🏦 Parsear estado de cuenta'}
+                <button onClick={parsear} disabled={loading || !files.length || !banco} style={btnPrimary}>
+                    {loading ? '⏳ Procesando...' : `🏦 Parsear${files.length > 1 ? ` ${files.length} archivos` : ' estado de cuenta'}`}
                 </button>
                 {msg && (
                     <div style={{
