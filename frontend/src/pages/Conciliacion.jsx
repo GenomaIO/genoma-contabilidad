@@ -641,6 +641,11 @@ export default function Conciliacion() {
     const [step, setStep] = useState('upload') // upload | review | done
     const [period, setPeriodPage] = useState(currentPeriod())
 
+    // Historial de sesiones pasadas
+    const [historial, setHistorial] = useState([])
+    const [historialExpanded, setHistorialExpanded] = useState(false)
+    const [activeReconId, setActiveReconId] = useState(null)
+
     // Guardar sesión — selector de cuenta contable bancaria
     const [accountCode, setAccountCode] = useState('')
     const [cuentasBanco, setCuentasBanco] = useState([])
@@ -655,12 +660,39 @@ export default function Conciliacion() {
             .then(d => {
                 const cuentas = Array.isArray(d) ? d : (d.accounts || d.items || [])
                 setCuentasBanco(cuentas)
-                // Pre-seleccionar la primera cuenta de efectivo (código 1xxx)
                 const caja = cuentas.find(c => String(c.code || c.account_code || '').startsWith('1'))
                 if (caja) setAccountCode(caja.code || caja.account_code || '')
             })
             .catch(() => setCuentasBanco([]))
     }, [token]) // eslint-disable-line
+
+    // Cargar historial de sesiones pasadas al montar
+    useEffect(() => {
+        if (!token) return
+        fetch(`${API}/conciliacion/sesiones`, { headers: authH(token) })
+            .then(r => r.ok ? r.json() : { sesiones: [] })
+            .then(d => setHistorial(d.sesiones || []))
+            .catch(() => { })
+    }, [token]) // eslint-disable-line
+
+    // Cargar una sesión pasada sin subir PDF
+    async function loadSesion(recon_id) {
+        try {
+            const r = await fetch(`${API}/conciliacion/sesion/${recon_id}/detalle`, { headers: authH(token) })
+            if (!r.ok) return
+            const d = await r.json()
+            const ses = d.sesion || {}
+            setTxns(d.transacciones || [])
+            setPeriodPage(ses.period ? `${ses.period.slice(0, 4)}${ses.period.slice(5, 7)}` : period)
+            setBancoActual(ses.banco || '')
+            setSaldoSesion({ ini: ses.saldo_inicial || 0, fin: ses.saldo_final || 0 })
+            setReconId(recon_id)
+            setActiveReconId(recon_id)
+            setStats(null); setSaldoDiff(null); setCentinelaScore(null)
+            setStep('done')
+        } catch (_) { }
+    }
+
 
     function handleTransacciones(data, banco, per, saldoIni, saldoFin) {
         setTxns(data.map((t, i) => ({ ...t, id: t.id || `tmp_${i}`, match_estado: 'PENDIENTE' })))
@@ -878,6 +910,58 @@ export default function Conciliacion() {
                     </div>
                 </div>
             </div>
+
+            {/* ── Barra de historial de sesiones ───────────────────────── */}
+            {historial.length > 0 && (
+                <div style={{
+                    display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
+                    padding: '10px 14px', marginBottom: 16,
+                    background: 'var(--bg-card)', borderRadius: 10,
+                    border: '1px solid var(--border)',
+                }}>
+                    <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)', fontWeight: 600, whiteSpace: 'nowrap' }}>
+                        📚 Historial:
+                    </span>
+
+                    {(historialExpanded ? historial : historial.slice(0, 4)).map(ses => {
+                        const isActive = ses.id === activeReconId
+                        const pLabel = ses.period
+                            ? `${['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Set', 'Oct', 'Nov', 'Dic'][parseInt(ses.period.slice(5, 7)) - 1]} ${ses.period.slice(0, 4)}`
+                            : ses.id.slice(0, 6)
+                        const scoreColor = !ses.score_riesgo ? '#64748b'
+                            : ses.score_riesgo >= 80 ? '#16a34a'
+                                : ses.score_riesgo >= 50 ? '#d97706'
+                                    : '#dc2626'
+                        return (
+                            <button key={ses.id} onClick={() => loadSesion(ses.id)} style={{
+                                padding: '4px 12px', borderRadius: 20, fontSize: '0.75rem',
+                                fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap',
+                                border: `1px solid ${isActive ? scoreColor : 'var(--border)'}`,
+                                background: isActive ? `${scoreColor}22` : 'transparent',
+                                color: isActive ? scoreColor : 'var(--text-secondary)',
+                                transition: 'all 0.15s',
+                            }}>
+                                {pLabel}
+                                {ses.n_con_fe != null && (
+                                    <span style={{ marginLeft: 5, opacity: 0.75 }}>
+                                        {ses.n_con_fe > 0 ? '✅' : '⚠️'}
+                                    </span>
+                                )}
+                            </button>
+                        )
+                    })}
+
+                    {historial.length > 4 && (
+                        <button onClick={() => setHistorialExpanded(p => !p)} style={{
+                            padding: '4px 10px', borderRadius: 20, fontSize: '0.72rem',
+                            border: '1px solid var(--border)', background: 'transparent',
+                            color: 'var(--text-muted)', cursor: 'pointer',
+                        }}>
+                            {historialExpanded ? 'Ver menos' : `+ ${historial.length - 4} más`}
+                        </button>
+                    )}
+                </div>
+            )}
 
             {/* Banner de estado del período */}
             <PeriodBanner period={period} />
