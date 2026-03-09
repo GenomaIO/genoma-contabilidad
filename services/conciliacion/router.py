@@ -66,8 +66,8 @@ def _get_db():
         yield session
 
 def _get_tenant(request):
-    """Extrae tenant_id del JWT. Simplificado para usar el mismo patrón del proyecto."""
-    from services.auth.jwt_utils import decode_token
+    """Extrae tenant_id del JWT. Usa services.auth.security (módulo real del proyecto)."""
+    from services.auth.security import decode_token
     from fastapi import Request
     auth = request.headers.get("Authorization", "")
     if not auth.startswith("Bearer "):
