@@ -290,6 +290,7 @@ export default function Centinela() {
     const token = state.token || localStorage.getItem('gc_token')
 
     const [period, setPeriod] = useState(currentPeriod())
+    const [showInfo, setShowInfo] = useState(false)  // tooltip Info hover
     const [scoreData, setScoreData] = useState(null)
     const [fugas, setFugas] = useState([])
     const [d270, setD270] = useState(null)
@@ -376,7 +377,7 @@ export default function Centinela() {
                     </p>
                 </div>
 
-                {/* Selector de período */}
+                {/* Selector de período + Info tooltip */}
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                     <input
                         type="text"
@@ -389,6 +390,59 @@ export default function Centinela() {
                     <span style={{ fontSize: '0.82rem', color: 'var(--text-muted)', fontWeight: 600 }}>
                         {periodLabel(period)}
                     </span>
+
+                    {/* 💡 Info hover tooltip */}
+                    <div style={{ position: 'relative', display: 'inline-flex' }}>
+                        <button
+                            id="btn-centinela-info"
+                            onMouseEnter={() => setShowInfo(true)}
+                            onMouseLeave={() => setShowInfo(false)}
+                            style={{
+                                background: 'var(--bg-card)', border: '1px solid var(--border)',
+                                borderRadius: 20, padding: '4px 13px', cursor: 'default',
+                                fontSize: '0.78rem', color: 'var(--text-muted)',
+                                display: 'flex', alignItems: 'center', gap: 5, fontWeight: 600,
+                            }}
+                        >
+                            💡 Info
+                        </button>
+                        {showInfo && (
+                            <div
+                                onMouseEnter={() => setShowInfo(true)}
+                                onMouseLeave={() => setShowInfo(false)}
+                                style={{
+                                    position: 'absolute', top: 'calc(100% + 6px)', right: 0,
+                                    zIndex: 1200, width: 330,
+                                    background: 'var(--bg-card)',
+                                    border: '1px solid var(--border)',
+                                    borderRadius: 12, padding: '16px 18px',
+                                    boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
+                                }}
+                            >
+                                <div style={{ fontWeight: 700, fontSize: '0.85rem', marginBottom: 12 }}>
+                                    💡 Normativa fiscal aplicada
+                                </div>
+                                {[
+                                    { icon: '⚖️', label: 'Decreto 44739-H', desc: 'SINPE debe tener FE con código 06' },
+                                    { icon: '📋', label: 'D-270', desc: 'Gastos sin FE a declarar antes del día 10' },
+                                    { icon: '📊', label: 'IVA', desc: 'monto ÷ 1.13 × 0.13 = IVA incluido' },
+                                    { icon: '🏗️', label: 'Renta', desc: 'base estimada × 15% (conservador)' },
+                                ].map(row => (
+                                    <div key={row.label} style={{
+                                        display: 'flex', gap: 10, alignItems: 'flex-start',
+                                        padding: '7px 0', borderBottom: '1px solid var(--border)',
+                                        fontSize: '0.78rem',
+                                    }}>
+                                        <span style={{ fontSize: '1rem', flexShrink: 0 }}>{row.icon}</span>
+                                        <div>
+                                            <span style={{ fontWeight: 700, color: 'var(--text-primary)' }}>{row.label}</span>
+                                            <span style={{ color: 'var(--text-muted)', marginLeft: 6 }}>— {row.desc}</span>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
                 </div>
             </div>
 
@@ -488,68 +542,6 @@ export default function Centinela() {
             )}
 
             {/* ── Botón Info + Tooltip de normativa fiscal ─────────────────── */}
-            {(() => {
-                const [showInfo, setShowInfo] = React.useState(false)
-                React.useEffect(() => {
-                    if (!showInfo) return
-                    const close = () => setShowInfo(false)
-                    document.addEventListener('click', close)
-                    return () => document.removeEventListener('click', close)
-                }, [showInfo])
-                return (
-                    <div style={{ position: 'relative', display: 'inline-block', marginBottom: 16 }}>
-                        <button
-                            id="btn-centinela-info"
-                            onClick={e => { e.stopPropagation(); setShowInfo(p => !p) }}
-                            style={{
-                                background: 'var(--bg-card)', border: '1px solid var(--border)',
-                                borderRadius: 20, padding: '5px 14px', cursor: 'pointer',
-                                fontSize: '0.8rem', color: 'var(--text-muted)',
-                                display: 'flex', alignItems: 'center', gap: 6, fontWeight: 600,
-                                boxShadow: showInfo ? '0 2px 8px rgba(0,0,0,0.18)' : 'none',
-                                transition: 'box-shadow 0.15s',
-                            }}
-                        >
-                            💡 Info
-                        </button>
-                        {showInfo && (
-                            <div
-                                onClick={e => e.stopPropagation()}
-                                style={{
-                                    position: 'absolute', top: 'calc(100% + 8px)', left: 0,
-                                    zIndex: 1200, width: 320,
-                                    background: 'var(--bg-card)',
-                                    border: '1px solid var(--border)',
-                                    borderRadius: 12, padding: '16px 18px',
-                                    boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
-                                }}
-                            >
-                                <div style={{ fontWeight: 700, fontSize: '0.85rem', marginBottom: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
-                                    💡 Normativa fiscal aplicada
-                                </div>
-                                {[
-                                    { icon: '⚖️', label: 'Decreto 44739-H', desc: 'SINPE debe tener FE con código 06' },
-                                    { icon: '📋', label: 'D-270', desc: 'Gastos sin FE a declarar antes del día 10' },
-                                    { icon: '📊', label: 'IVA', desc: 'monto ÷ 1.13 × 0.13 = IVA incluido' },
-                                    { icon: '🏛️', label: 'Renta', desc: 'base estimada × 15% (conservador)' },
-                                ].map(row => (
-                                    <div key={row.label} style={{
-                                        display: 'flex', gap: 10, alignItems: 'flex-start',
-                                        padding: '7px 0', borderBottom: '1px solid var(--border)',
-                                        fontSize: '0.78rem',
-                                    }}>
-                                        <span style={{ fontSize: '1rem', flexShrink: 0 }}>{row.icon}</span>
-                                        <div>
-                                            <span style={{ fontWeight: 700, color: 'var(--text-primary)' }}>{row.label}</span>
-                                            <span style={{ color: 'var(--text-muted)', marginLeft: 6 }}>— {row.desc}</span>
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        )}
-                    </div>
-                )
-            })()}
 
             {/* Tabs: Score / Tabla / Fugas / D-270 */}
             <div style={{ display: 'flex', gap: 4, marginBottom: 16, flexWrap: 'wrap', alignItems: 'center' }}>
