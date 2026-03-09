@@ -1,10 +1,53 @@
-import { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { useApp } from '../context/AppContext'
 
 const API = import.meta.env.VITE_API_URL || ''
 const MESES_LABEL = ['', 'Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic']
 
+/* ── Estado del período post-cierre ───────────────────────── */
+function getPeriodStatus(period) {
+    if (!period || period.length < 6) return 'DESCONOCIDO'
+    const year = parseInt(period.slice(0, 4))
+    const month = parseInt(period.slice(4, 6))
+    if (isNaN(year) || isNaN(month)) return 'DESCONOCIDO'
+    const today = new Date(), curY = today.getFullYear(), curM = today.getMonth() + 1, curD = today.getDate()
+    if (year > curY || (year === curY && month > curM)) return 'FUTURO'
+    if (year === curY && month === curM) return 'ABIERTO'
+    const diff = (curY - year) * 12 + (curM - month)
+    if (diff === 1 && curD <= 10) return 'RECIENTE'
+    return 'CERRADO'
+}
+const PERIOD_BANNER = {
+    FUTURO: { bg: 'rgba(148,163,184,0.12)', border: '#94a3b8', color: '#475569', emoji: '📅', titulo: 'Período futuro', texto: 'Este período aún no ha iniciado.', acciones: [] },
+    ABIERTO: { bg: 'rgba(34,197,94,0.08)', border: '#16a34a', color: '#15803d', emoji: '🟢', titulo: 'Período abierto — Ventana óptima', texto: 'Momentáneo ideal. Podés emitir FE, crear asientos correctivos y corregir antes del cierre.', acciones: ['✅ Emitir FE faltantes', '✅ Crear asientos correctivos'] },
+    RECIENTE: { bg: 'rgba(251,191,36,0.10)', border: '#d97706', color: '#b45309', emoji: '🟡', titulo: 'Período cerrado — D-270 aún en plazo', texto: 'El mes cerró pero la D-270 se puede presentar antes del día 10.', acciones: ['✅ Score CENTINELA (solo lectura)', '✅ Exportar D-270 a Tribu-CR antes del día 10', '⚠️ FE extemporánea requiere análisis previo', '❌ No se agregan asientos al período cerrado'] },
+    CERRADO: { bg: 'rgba(239,68,68,0.08)', border: '#dc2626', color: '#b91c1c', emoji: '🔴', titulo: 'Período cerrado — Revisión preventiva ✔', texto: 'El plazo D-270 venció. Esta revisión es válida para identificar patrones y corregir en el mes actual.', acciones: ['✅ Score como referencia histórica', '✅ Detectar patrones para NO repetir', '⚠️ FE extemporánea posible con multa', '❌ D-270 ordinaria fuera de plazo'] },
+    DESCONOCIDO: { bg: 'var(--bg-secondary)', border: 'var(--border)', color: 'var(--text-muted)', emoji: 'ℹ️', titulo: 'Período inválido', texto: 'Escribe el período en formato YYYYMM.', acciones: [] },
+}
+function PeriodBanner({ period }) {
+    const [open, setOpen] = React.useState(true)
+    const status = getPeriodStatus(period)
+    const cfg = PERIOD_BANNER[status] || PERIOD_BANNER.DESCONOCIDO
+    if (status === 'ABIERTO' && !open) return null
+    return (
+        <div style={{ border: `1px solid ${cfg.border}40`, background: cfg.bg, borderRadius: 10, padding: '12px 16px', marginBottom: 18, display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+            <div style={{ fontSize: '1.3rem', flexShrink: 0 }}>{cfg.emoji}</div>
+            <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 700, fontSize: '0.85rem', color: cfg.color, marginBottom: 3 }}>{cfg.titulo}</div>
+                <div style={{ fontSize: '0.78rem', color: cfg.color, opacity: 0.85, marginBottom: cfg.acciones.length ? 8 : 0 }}>{cfg.texto}</div>
+                {cfg.acciones.length > 0 && (
+                    <ul style={{ margin: 0, paddingLeft: 18, fontSize: '0.75rem', color: cfg.color, opacity: 0.8 }}>
+                        {cfg.acciones.map((a, i) => <li key={i} style={{ marginBottom: 2 }}>{a}</li>)}
+                    </ul>
+                )}
+            </div>
+            <button onClick={() => setOpen(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: cfg.color, fontSize: '1rem', opacity: 0.5, flexShrink: 0, padding: 0 }}>×</button>
+        </div>
+    )
+}
+
 function authH(t) { return { Authorization: `Bearer ${t}` } }
+
 function authJ(t) { return { 'Content-Type': 'application/json', Authorization: `Bearer ${t}` } }
 function formatCRC(n) {
     if (n == null || isNaN(n)) return '₡0'
@@ -311,6 +354,9 @@ export default function Centinela() {
                     </span>
                 </div>
             </div>
+
+            {/* Banner de estado del período */}
+            <PeriodBanner period={period} />
 
             {/* ── Fila superior: Score + Exposición ── */}
             <div style={{ display: 'grid', gridTemplateColumns: '220px 1fr', gap: 16, marginBottom: 20 }}>

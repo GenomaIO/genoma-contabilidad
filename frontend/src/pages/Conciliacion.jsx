@@ -1,8 +1,94 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { useApp } from '../context/AppContext'
 
 const API = import.meta.env.VITE_API_URL || ''
 const MESES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic']
+
+/* ── Estado del período post-cierre ───────────────────────────────── */
+function getPeriodStatus(period) {
+    if (!period || period.length < 6) return 'DESCONOCIDO'
+    const year = parseInt(period.slice(0, 4))
+    const month = parseInt(period.slice(4, 6))
+    if (isNaN(year) || isNaN(month)) return 'DESCONOCIDO'
+    const today = new Date()
+    const curY = today.getFullYear()
+    const curM = today.getMonth() + 1
+    const curD = today.getDate()
+    if (year > curY || (year === curY && month > curM)) return 'FUTURO'
+    if (year === curY && month === curM) return 'ABIERTO'
+    const diff = (curY - year) * 12 + (curM - month)
+    if (diff === 1 && curD <= 10) return 'RECIENTE'  // D-270 aún en plazo
+    return 'CERRADO'
+}
+
+const PERIOD_BANNER = {
+    FUTURO: {
+        bg: 'rgba(148,163,184,0.12)', border: '#94a3b8', color: '#475569',
+        emoji: '📅',
+        titulo: 'Período futuro',
+        texto: 'Este período aún no ha iniciado. Puedes preparar la conciliación con anticipación.',
+        acciones: [],
+    },
+    ABIERTO: {
+        bg: 'rgba(34,197,94,0.08)', border: '#16a34a', color: '#15803d',
+        emoji: '🟢',
+        titulo: 'Período abierto — Ventana óptima',
+        texto: 'Estás en el momento ideal. Podés emitir FE faltantes, crear asientos y corregir todo antes del cierre.',
+        acciones: ['✅ Emitir FE faltantes (aún en período corriente)', '✅ Crear asientos correctivos', '✅ Configurar Bank Rules para el futuro'],
+    },
+    RECIENTE: {
+        bg: 'rgba(251,191,36,0.10)', border: '#d97706', color: '#b45309',
+        emoji: '🟡',
+        titulo: 'Período cerrado — D-270 aún en plazo',
+        texto: 'El mes ya cerró pero el plazo para presentar la D-270 no ha vencido (día 10 del mes siguiente).',
+        acciones: ['✅ Ver score CENTINELA (solo lectura)', '✅ Exportar D-270 → subir a Tribu-CR ANTES del día 10', '⚠️ Emitir FE extemporánea previo análisis con tu contador', '❌ No se pueden agregar asientos al período cerrado'],
+    },
+    CERRADO: {
+        bg: 'rgba(239,68,68,0.08)', border: '#dc2626', color: '#b91c1c',
+        emoji: '🔴',
+        titulo: 'Período cerrado — Revisión preventiva',
+        texto: 'El período está cerrado y el plazo D-270 venció. Esta revisión es preventiva para identificar patrones y corregir en el período actual.',
+        acciones: ['✅ Score CENTINELA como referencia histórica', '✅ Identificar patrones para NO repetir', '⚠️ FE extemporánea posible con multa (consultar norma)', '❌ D-270 fuera de plazo ordinario — aplica D-270 extemporánea'],
+    },
+    DESCONOCIDO: {
+        bg: 'var(--bg-secondary)', border: 'var(--border)', color: 'var(--text-muted)',
+        emoji: 'ℹ️', titulo: 'Ingresa un período válido', texto: 'Escribe el período en formato YYYYMM (ej: 202601 = enero 2026).', acciones: [],
+    },
+}
+
+function PeriodBanner({ period }) {
+    const [open, setOpen] = React.useState(true)
+    const status = getPeriodStatus(period)
+    const cfg = PERIOD_BANNER[status] || PERIOD_BANNER.DESCONOCIDO
+    if (status === 'ABIERTO' && !open) return null
+    return (
+        <div style={{
+            border: `1px solid ${cfg.border}40`,
+            background: cfg.bg, borderRadius: 10,
+            padding: '12px 16px', marginBottom: 18,
+            display: 'flex', gap: 12, alignItems: 'flex-start',
+        }}>
+            <div style={{ fontSize: '1.3rem', flexShrink: 0 }}>{cfg.emoji}</div>
+            <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 700, fontSize: '0.85rem', color: cfg.color, marginBottom: 3 }}>
+                    {cfg.titulo}
+                </div>
+                <div style={{ fontSize: '0.78rem', color: cfg.color, opacity: 0.85, marginBottom: cfg.acciones.length ? 8 : 0 }}>
+                    {cfg.texto}
+                </div>
+                {cfg.acciones.length > 0 && (
+                    <ul style={{ margin: 0, paddingLeft: 18, fontSize: '0.75rem', color: cfg.color, opacity: 0.8 }}>
+                        {cfg.acciones.map((a, i) => <li key={i} style={{ marginBottom: 2 }}>{a}</li>)}
+                    </ul>
+                )}
+            </div>
+            <button onClick={() => setOpen(false)} style={{
+                background: 'none', border: 'none', cursor: 'pointer',
+                color: cfg.color, fontSize: '1rem', opacity: 0.5, flexShrink: 0, padding: 0,
+            }}>✕</button>
+        </div>
+    )
+}
 
 function authH(token) {
     return { Authorization: `Bearer ${token}` }
@@ -370,9 +456,11 @@ export default function Conciliacion() {
     const [matching, setMatching] = useState(false)
     const [matchMsg, setMatchMsg] = useState(null)
     const [step, setStep] = useState('upload') // upload | review | done
+    const [period, setPeriodPage] = useState(currentPeriod()) // para el banner
 
-    function handleTransacciones(data, banco, period, saldoIni, saldoFin) {
+    function handleTransacciones(data, banco, per, saldoIni, saldoFin) {
         setTxns(data.map((t, i) => ({ ...t, id: t.id || `tmp_${i}`, match_estado: 'PENDIENTE' })))
+        if (per) setPeriodPage(per)
         setStep('review')
         setReconId(null)
         setStats(null)
@@ -430,6 +518,9 @@ export default function Conciliacion() {
                     </button>
                 )}
             </div>
+
+            {/* Banner de estado del período */}
+            <PeriodBanner period={period} />
 
             {/* Steps indicator */}
             <div style={{ display: 'flex', gap: 0, marginBottom: 24, background: 'var(--bg-card)', borderRadius: 12, overflow: 'hidden', border: '1px solid var(--border)' }}>
