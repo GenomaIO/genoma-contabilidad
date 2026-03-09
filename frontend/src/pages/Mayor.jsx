@@ -139,27 +139,36 @@ export default function Mayor() {
         const acc = mayorData
         const filename = `Mayor_${acc.account_code}_${fromDate}_${toDate}.csv`.replace(/:/g, '-')
 
+        // Fila de apertura
+        const aperturaRow = acc.opening_balance != null ? [
+            acc.from_date || fromDate, 'APER', '← Saldo de Apertura',
+            '', '', acc.opening_balance.toFixed(2)
+        ] : []
+
         const rows = [
             ['Libro Mayor — T-Account', '', '', '', '', ''],
             [`Cuenta: ${acc.account_code} – ${acc.account_name}`, '', '', '', '', ''],
             [`Período: ${fromDate} → ${toDate}`, '', '', '', '', ''],
             ['', '', '', '', '', ''],
-            [`Saldo Inicial (Apertura): ${acc.opening_balance?.toFixed(2) ?? '0.00'} CRC`, '', '', '', '', ''],
+            [`Saldo Inicial (Apertura): ${(acc.opening_balance ?? 0).toFixed(2)} CRC`, '', '', '', '', ''],
             ['', '', '', '', '', ''],
             ['FECHA', 'REFERENCIA', 'DESCRIPCIÓN', 'DEBE (DR)', 'HABER (CR)', 'SALDO'],
-            ...(acc.lines || []).map(l => [
-                l.date || '',
-                l.ref || '',
-                l.description || '',
-                l.debit > 0 ? l.debit.toFixed(2) : '0.00',
-                l.credit > 0 ? l.credit.toFixed(2) : '0.00',
-                typeof l.running_balance !== 'undefined' ? l.running_balance.toFixed(2) : '',
+            // ✅ Usa acc.movements (no acc.lines) — campo real del API
+            ...(acc.movements || []).map(m => [
+                m.date || '',
+                // ✅ Usa m.source_ref (no m.ref)
+                m.source_ref || `#${String(m.entry_id || '').slice(-6)}`,
+                m.description || '',
+                m.debit > 0 ? m.debit.toFixed(2) : '0.00',
+                m.credit > 0 ? m.credit.toFixed(2) : '0.00',
+                // ✅ Usa m.balance (no m.running_balance)
+                typeof m.balance !== 'undefined' ? m.balance.toFixed(2) : '',
             ]),
             ['', '', '', '', '', ''],
-            ['', 'TOTALES DEL PERÍODO',
-                '',
-                (acc.period_debit ?? 0).toFixed(2),
-                (acc.period_credit ?? 0).toFixed(2),
+            // ✅ Usa acc.total_debit / acc.total_credit (no acc.period_debit/credit)
+            ['', 'TOTALES DEL PERÍODO', '',
+                (acc.total_debit ?? 0).toFixed(2),
+                (acc.total_credit ?? 0).toFixed(2),
                 (acc.closing_balance ?? 0).toFixed(2)
             ],
         ]
@@ -175,7 +184,71 @@ export default function Mayor() {
         URL.revokeObjectURL(url)
     }
 
-    function handlePrint() { window.print() }
+    function handlePrint() {
+        if (!mayorData) return
+        const acc = mayorData
+        const ref = (m) => m.source_ref || `#${String(m.entry_id || '').slice(-6)}`
+        const fmtN = (n) => n != null ? Number(n).toLocaleString('es-CR', { minimumFractionDigits: 2 }) : '—'
+
+        const movRows = (acc.movements || []).map(m => `
+            <tr>
+                <td>${m.date || ''}</td>
+                <td style="color:#7c3aed;font-weight:600">${ref(m)}</td>
+                <td>${m.description || ''}</td>
+                <td style="text-align:right;color:#2563eb">${m.debit > 0 ? fmtN(m.debit) : ''}</td>
+                <td style="text-align:right;color:#dc2626">${m.credit > 0 ? fmtN(m.credit) : ''}</td>
+                <td style="text-align:right;font-weight:700">${fmtN(m.balance)}</td>
+            </tr>`).join('')
+
+        const html = `<!DOCTYPE html>
+<html lang="es"><head>
+<meta charset="UTF-8">
+<title>Mayor — ${acc.account_code} ${acc.account_name}</title>
+<style>
+  body { font-family: Arial, sans-serif; font-size: 11px; color: #111; margin: 20px; }
+  h2 { font-size: 16px; margin: 0 0 4px; } p { margin: 2px 0; color: #555; font-size: 10px; }
+  table { width: 100%; border-collapse: collapse; margin-top: 14px; }
+  th { background: #e8e0ff; padding: 6px 8px; text-align: left; border: 1px solid #bbb; font-size: 10px; }
+  td { padding: 5px 8px; border: 1px solid #ddd; }
+  tr:nth-child(even) td { background: #f9f9f9; }
+  .aper-row td { background: #0a2a1a; color: #10b981; font-style: italic; }
+  .total-row td { font-weight: bold; background: #f0edff; border-top: 2px solid #7c3aed; }
+  @page { margin: 12mm; size: A4 landscape; }
+</style></head><body>
+<h2>📒 Libro Mayor — ${acc.account_code} ${acc.account_name}</h2>
+<p>Período: ${fromDate} → ${toDate} &nbsp;|&nbsp; Saldo Inicial (Apertura): ${fmtN(acc.opening_balance)} CRC</p>
+<table>
+  <thead><tr>
+    <th>FECHA</th><th>REF</th><th>DESCRIPCIÓN</th>
+    <th style="text-align:right">DEBE (DR)</th>
+    <th style="text-align:right">HABER (CR)</th>
+    <th style="text-align:right">SALDO</th>
+  </tr></thead>
+  <tbody>
+    <tr class="aper-row">
+      <td>${acc.from_date || fromDate}</td><td>APER</td>
+      <td>← Saldo de Apertura</td><td></td><td></td>
+      <td style="text-align:right;font-weight:bold">${fmtN(acc.opening_balance)}</td>
+    </tr>
+    ${movRows}
+    <tr class="total-row">
+      <td colspan="3"><strong>TOTALES DEL PERÍODO</strong></td>
+      <td style="text-align:right">${fmtN(acc.total_debit)}</td>
+      <td style="text-align:right">${fmtN(acc.total_credit)}</td>
+      <td style="text-align:right">${fmtN(acc.closing_balance)}</td>
+    </tr>
+  </tbody>
+</table>
+<p style="margin-top:12px;font-size:9px;color:#888">
+  Período: ${fromDate} → ${toDate} · ${(acc.movements || []).length} movimientos · Solo asientos POSTED
+</p>
+<script>window.onload = () => { window.print(); }</script>
+</body></html>`
+
+        const win = window.open('', '_blank', 'width=1000,height=700')
+        win.document.write(html)
+        win.document.close()
+    }
 
     // ────────────────────────────────────────────────────────────────
     return (
