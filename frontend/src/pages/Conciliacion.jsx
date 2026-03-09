@@ -341,23 +341,13 @@ function FileUploader({ token, onTransacciones, onPeriodChange }) {
         }
 
         if (fname.endsWith('.pdf')) {
-            const buffer = await file.arrayBuffer()
-            const pdfDoc = await pdfjsLib.getDocument({ data: buffer }).promise
-            const pages = []
-            for (let i = 1; i <= pdfDoc.numPages; i++) {
-                const page = await pdfDoc.getPage(i)
-                const content = await page.getTextContent()
-                const items = content.items.sort((a, b) => {
-                    const dy = Math.round(b.transform[5]) - Math.round(a.transform[5])
-                    return dy !== 0 ? dy : a.transform[4] - b.transform[4]
-                })
-                pages.push(items.map(it => it.str).join(' '))
-            }
-            const text = pages.join('\n')
-            const r = await fetch(`${API}/conciliacion/parse`, {
-                method: 'POST',
-                headers: authJ(token),
-                body: JSON.stringify({ text, banco }),
+            // PDF → pdfplumber en el backend (tablas BN correctamente)
+            // pdf.js client-side desordena columnas de tablas → 0 txns
+            const form = new FormData()
+            form.append('file', file)
+            form.append('banco', banco)
+            const r = await fetch(`${API}/conciliacion/parse-file`, {
+                method: 'POST', headers: authH(token), body: form,
             })
             const d = await r.json()
             if (!r.ok) throw new Error(d.detail || `Error PDF: ${file.name}`)
