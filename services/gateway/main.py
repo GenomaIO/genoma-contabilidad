@@ -562,6 +562,40 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning(f"⚠️  Migración M_CENTINELA_V1 omitida: {e}")
 
+        # ── Migración M_CENTINELA_V2: tabla bank_counterparties ────────────────
+        # Acumula datos de beneficiarios cross-meses para análisis fiscal.
+        # Regla de Oro: tenant_id en TODA tabla — aislamiento multi-tenant absoluto.
+        try:
+            with _engine.begin() as conn:
+                conn.execute(text("""
+                    CREATE TABLE IF NOT EXISTS bank_counterparties (
+                        id                  TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+                        tenant_id           TEXT NOT NULL,
+                        nombre_norm         TEXT NOT NULL,
+                        telefono            TEXT,
+                        categoria           TEXT DEFAULT 'TERCERO',
+                        total_debitos       NUMERIC(18,2) DEFAULT 0,
+                        total_creditos      NUMERIC(18,2) DEFAULT 0,
+                        n_transacciones     INTEGER DEFAULT 0,
+                        primer_periodo      TEXT,
+                        ultimo_periodo      TEXT,
+                        d150_monto_anual    NUMERIC(18,2) DEFAULT 0,
+                        d150_flag           BOOLEAN DEFAULT FALSE,
+                        riesgo_nivel        TEXT DEFAULT 'VERDE',
+                        updated_at          TIMESTAMPTZ DEFAULT NOW(),
+                        UNIQUE (tenant_id, nombre_norm)
+                    )
+                """))
+                conn.execute(text(
+                    "CREATE INDEX IF NOT EXISTS idx_counterparties_tenant "
+                    "ON bank_counterparties (tenant_id)"
+                ))
+            logger.info("✅ Migración M_CENTINELA_V2: tabla bank_counterparties creada")
+        except Exception as e:
+            logger.warning(f"⚠️  Migración M_CENTINELA_V2 omitida: {e}")
+
+
+
 
 
 

@@ -343,6 +343,69 @@ def crear_sesion(req: UploadSession, request: Request, db: Session = Depends(_ge
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ── Historial de sesiones (consultable, no efímero) ──────────────────────────
+
+@router.get("/conciliacion/sesiones")
+def list_sesiones(request: Request, db: Session = Depends(_get_db)):
+    """
+    Lista todas las sesiones de conciliación del tenant autenticado.
+    Ordenadas por fecha descendente — consultables en cualquier momento.
+
+    SEGURIDAD: tenant_id del JWT, nunca del body.
+    """
+    tenant_id = _get_tenant(request)
+    rows = db.execute(text("""
+        SELECT id, banco, period, account_code,
+               saldo_inicial, saldo_final, estado, score_riesgo,
+               created_at,
+               (SELECT COUNT(*) FROM bank_transactions bt WHERE bt.recon_id = br.id) AS n_txns,
+               (SELECT COUNT(*) FROM bank_transactions bt
+                WHERE bt.recon_id = br.id AND bt.match_estado = 'CON_FE') AS n_con_fe,
+               (SELECT COUNT(*) FROM bank_transactions bt
+                WHERE bt.recon_id = br.id AND bt.match_estado = 'SIN_FE') AS n_sin_fe
+        FROM bank_reconciliation br
+        WHERE tenant_id = :tid
+        ORDER BY created_at DESC
+        LIMIT 50
+    """), {"tid": tenant_id}).fetchall()
+    return {"sesiones": [dict(r._mapping) for r in rows]}
+
+
+@router.get("/conciliacion/sesion/{recon_id}/detalle")
+def get_sesion_detalle(recon_id: str, request: Request, db: Session = Depends(_get_db)):
+    """
+    Devuelve el detalle completo de una sesión: cabecera + todas sus transacciones.
+    Permite consultar resultados de análisis previos sin re-subir el PDF.
+
+    SEGURIDAD: verifica que el recon_id pertenece al tenant del JWT.
+    """
+    tenant_id = _get_tenant(request)
+
+    sesion = db.execute(text(
+        "SELECT * FROM bank_reconciliation WHERE id = :id AND tenant_id = :tid"
+    ), {"id": recon_id, "tid": tenant_id}).fetchone()
+
+    if not sesion:
+        raise HTTPException(status_code=404, detail="Sesión no encontrada o sin acceso")
+
+    txns = db.execute(text("""
+        SELECT id, fecha, descripcion, monto, tipo, moneda, telefono,
+               match_estado, beneficiario_nombre, beneficiario_categoria,
+               tiene_fe, fe_numero, iva_estimado, base_estimada, tarifa_iva,
+               d270_codigo, accion, score_puntos
+        FROM bank_transactions
+        WHERE recon_id = :id
+        ORDER BY fecha, tipo DESC
+    """), {"id": recon_id}).fetchall()
+
+    return {
+        "sesion":       dict(sesion._mapping),
+        "transacciones": [dict(r._mapping) for r in txns],
+        "total":        len(txns),
+    }
+
+
+
 class BulkTransactionItem(BaseModel):
     fecha: str
     descripcion: str
