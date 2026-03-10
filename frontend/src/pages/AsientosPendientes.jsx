@@ -62,6 +62,82 @@ export default function AsientosPendientes() {
     const [error, setError] = useState(null)
     const [openingMonth, setOpeningMonth] = useState(null) // '2026-01' — del API /ledger/opening-entry
 
+    // ── Auto-importación FE/FEC desde Genoma Contable ──
+    const [importLoading, setImportLoading] = useState(false)
+    const [importMsg, setImportMsg] = useState(null)  // {ok, text}
+    const [cabysVisible, setCabysVisible] = useState(
+        () => localStorage.getItem('genoma_inbox_cabys_visible') !== 'false'
+    )
+    const [cabysExpanded, setCabysExpanded] = useState({})  // {entryId: bool}
+
+    // Convierte period 'YYYY-MM' → 'YYYYMM' para la API de pull
+    const getPeriodYYYYMM = () => period.replace('-', '')
+
+    // Alterna CABYS global y persiste en localStorage (Rule #394)
+    const toggleCabysVisible = () => {
+        setCabysVisible(v => {
+            const next = !v
+            localStorage.setItem('genoma_inbox_cabys_visible', next)
+            return next
+        })
+    }
+
+    async function handleImportarMes() {
+        setImportLoading(true); setImportMsg(null)
+        try {
+            // Pull enviados + recibidos en paralelo
+            const p = getPeriodYYYYMM()
+            const [envRes, recRes] = await Promise.all([
+                fetch(`${apiUrl}/integration/pull-enviados?period=${p}&import_all=true`, {
+                    headers: { Authorization: `Bearer ${token}` }
+                }),
+                fetch(`${apiUrl}/integration/pull-recibidos?period=${p}&import_all=true`, {
+                    headers: { Authorization: `Bearer ${token}` }
+                }),
+            ])
+            const [envData, recData] = await Promise.all([envRes.json(), recRes.json()])
+            const allDocs = [...(envData.items || []), ...(recData.items || [])]
+            const nuevos = allDocs.filter(d => !d.ya_importado)
+
+            if (nuevos.length === 0) {
+                setImportMsg({ ok: true, text: '✅ No hay documentos nuevos — todo ya estaba importado.' })
+                return
+            }
+
+            // Importar los que son nuevos
+            const batchRes = await fetch(`${apiUrl}/integration/import-batch`, {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    doc_ids: nuevos.map(d => d.clave),
+                    period: p,
+                    docs_data: nuevos,
+                }),
+            })
+            const batchData = await batchRes.json()
+            setImportMsg({
+                ok: batchData.ok,
+                text: batchData.ok
+                    ? `✅ ${batchData.message}`
+                    : `⚠️ Error al importar: ${batchData.error}`,
+            })
+            if (batchData.ok) { fetchEntries(); setActiveTab('DRAFT') }
+        } catch (e) {
+            setImportMsg({ ok: false, text: `⚠️ Error: ${e.message}` })
+        } finally {
+            setImportLoading(false)
+        }
+    }
+
+    async function handleAprobarVerdes() {
+        const verdes = filteredEntries.filter(
+            e => e.status === 'DRAFT' && (e.confidence_score || 0) >= 0.9
+        )
+        if (verdes.length === 0) { alert('No hay borradores con confianza alta (≥90%) para aprobar'); return }
+        if (!window.confirm(`¿Aprobar ${verdes.length} asientos con confianza ≥90%?`)) return
+        for (const e of verdes) await handleApprove(e.id)
+    }
+
     // ── E1: estado del formulario nuevo asiento ──
     const [showForm, setShowForm] = useState(false)
     // accounts: SOLO cuentas de movimiento (hojas) desde /posteable — con display_code
@@ -566,20 +642,68 @@ export default function AsientosPendientes() {
                     <select id="period-select" value={period} onChange={e => setPeriod(e.target.value)} style={selStyle}>
                         {periodOptions.map(o => <option key={o.val} value={o.val}>{o.label}</option>)}
                     </select>
-                    {/* E1: Botón nuevo asiento */}
                     {canWrite && (
-                        <button
-                            id="btn-nuevo-asiento"
-                            onClick={() => setShowForm(true)}
-                            style={{
-                                padding: '8px 18px', background: '#7c3aed', border: 'none',
-                                borderRadius: 8, color: 'white', fontWeight: 700,
-                                cursor: 'pointer', fontSize: '0.88rem', display: 'flex',
-                                alignItems: 'center', gap: 6, whiteSpace: 'nowrap'
-                            }}
-                        >
-                            ✦ Nuevo asiento
-                        </button>
+                        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                            {/* 📥 Importar del mes — pull FE+FEC desde Genoma Contable */}
+                            <button
+                                id="btn-importar-mes"
+                                onClick={handleImportarMes}
+                                disabled={importLoading}
+                                title="Importar FE y FEC aceptados por Hacienda desde Genoma Contable"
+                                style={{
+                                    padding: '8px 14px', background: importLoading ? '#374151' : '#0f766e',
+                                    border: 'none', borderRadius: 8, color: 'white', fontWeight: 700,
+                                    cursor: importLoading ? 'wait' : 'pointer', fontSize: '0.82rem',
+                                    display: 'flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap'
+                                }}
+                            >
+                                {importLoading ? '⏳ Importando...' : '📥 Importar del mes'}
+                            </button>
+                            {/* 👁 Toggle CABYS */}
+                            <button
+                                id="btn-toggle-cabys"
+                                onClick={toggleCabysVisible}
+                                title={cabysVisible ? 'Ocultar columna CABYS' : 'Mostrar columna CABYS'}
+                                style={{
+                                    padding: '8px 12px', background: cabysVisible ? 'rgba(124,58,237,0.15)' : 'transparent',
+                                    border: `1px solid ${cabysVisible ? '#7c3aed' : 'var(--border-color)'}`,
+                                    borderRadius: 8, color: cabysVisible ? '#a78bfa' : 'var(--text-muted)',
+                                    cursor: 'pointer', fontSize: '0.82rem', fontWeight: 600,
+                                    display: 'flex', alignItems: 'center', gap: 5, whiteSpace: 'nowrap'
+                                }}
+                            >
+                                👁 CABYS {cabysVisible ? '(visible)' : '(oculto)'}
+                            </button>
+                            {/* ✓ Aprobar verdes */}
+                            {activeTab === 'DRAFT' && filteredEntries.some(e => (e.confidence_score || 0) >= 0.9) && (
+                                <button
+                                    id="btn-aprobar-verdes"
+                                    onClick={handleAprobarVerdes}
+                                    title="Aprobar todos los borradores con confianza ≥90%"
+                                    style={{
+                                        padding: '8px 14px', background: 'rgba(16,185,129,0.15)',
+                                        border: '1px solid rgba(16,185,129,0.4)', borderRadius: 8,
+                                        color: '#10b981', fontWeight: 700, cursor: 'pointer',
+                                        fontSize: '0.82rem', whiteSpace: 'nowrap'
+                                    }}
+                                >
+                                    ✅ Aprobar 🟢
+                                </button>
+                            )}
+                            {/* ✦ Nuevo asiento */}
+                            <button
+                                id="btn-nuevo-asiento"
+                                onClick={() => setShowForm(true)}
+                                style={{
+                                    padding: '8px 18px', background: '#7c3aed', border: 'none',
+                                    borderRadius: 8, color: 'white', fontWeight: 700,
+                                    cursor: 'pointer', fontSize: '0.88rem', display: 'flex',
+                                    alignItems: 'center', gap: 6, whiteSpace: 'nowrap'
+                                }}
+                            >
+                                ✦ Nuevo asiento
+                            </button>
+                        </div>
                     )}
                 </div>
             </div>
@@ -620,6 +744,20 @@ export default function AsientosPendientes() {
                 })}
             </div>
 
+            {/* ── Feedback de importación ── */}
+            {importMsg && (
+                <div style={{
+                    background: importMsg.ok ? 'rgba(16,185,129,0.1)' : 'rgba(245,158,11,0.1)',
+                    border: `1px solid ${importMsg.ok ? 'rgba(16,185,129,0.3)' : 'rgba(245,158,11,0.3)'}`,
+                    borderRadius: 8, padding: '10px 14px', marginBottom: 12,
+                    fontSize: '0.84rem', color: importMsg.ok ? '#10b981' : '#f59e0b',
+                    display: 'flex', justifyContent: 'space-between'
+                }}>
+                    <span>{importMsg.text}</span>
+                    <button onClick={() => setImportMsg(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'inherit', fontSize: '0.9rem' }}>✕</button>
+                </div>
+            )}
+
             {error && (
                 <div style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 8, padding: '10px 14px', color: '#ef4444', marginBottom: 16, fontSize: '0.88rem' }}>
                     ⚠️ {error}
@@ -649,8 +787,10 @@ export default function AsientosPendientes() {
                             <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1 }}>
                                 <span style={{ fontSize: '1.2rem' }}>{ico}</span>
                                 <div>
-                                    <div style={{ fontSize: '0.88rem', color: 'var(--text-primary)', fontWeight: 600 }}>
+                                    <div style={{ fontSize: '0.88rem', color: 'var(--text-primary)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>
                                         {entry.description?.slice(0, 80)}{entry.description?.length > 80 ? '...' : ''}
+                                        {/* ⚡ Needs review (posible activo) */}
+                                        {entry.needs_review && <span title="Requiere decisión: Gasto o Activo" style={{ fontSize: '0.8rem', cursor: 'help' }}>⚡</span>}
                                     </div>
                                     <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: 2 }}>
                                         {entry.date} · {entry.source}
@@ -659,6 +799,19 @@ export default function AsientosPendientes() {
                                 </div>
                             </div>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                                {/* 🟢🟡🔴 Semáforo de confianza — solo en entries FE/FEC/TE importadas */}
+                                {entry.confidence_score != null && (
+                                    <span
+                                        title={`Confianza de clasificación: ${Math.round(entry.confidence_score * 100)}%`}
+                                        style={{
+                                            fontSize: '0.75rem', fontWeight: 700,
+                                            color: entry.confidence_score >= 0.9 ? '#10b981' : entry.confidence_score >= 0.7 ? '#f59e0b' : '#ef4444'
+                                        }}
+                                    >
+                                        {entry.confidence_score >= 0.9 ? '🟢' : entry.confidence_score >= 0.7 ? '🟡' : '🔴'}
+                                        {' '}{Math.round(entry.confidence_score * 100)}%
+                                    </span>
+                                )}
                                 <span style={{ fontSize: '0.75rem', color: balanced ? '#10b981' : '#ef4444' }}>
                                     {balanced ? '⚖️' : '⚠️'} ¢{totalDR.toLocaleString('es-CR', { minimumFractionDigits: 2 })}
                                 </span>
@@ -754,18 +907,33 @@ export default function AsientosPendientes() {
                                     <span>FISCAL</span>
                                 </div>
                                 {entry.lines.map((line, i) => (
-                                    <div key={line.id} style={{ display: 'grid', gridTemplateColumns: '100px 1fr 110px 110px 80px', gap: 8, padding: '7px 16px', fontSize: '0.8rem', borderTop: '1px solid rgba(255,255,255,0.04)', background: i % 2 === 0 ? 'transparent' : 'rgba(0,0,0,0.04)' }}>
-                                        <span style={{ fontFamily: 'monospace', color: '#7c3aed', fontWeight: 700 }}>{line.account_code}</span>
-                                        <span style={{ color: 'var(--text-secondary)' }}>{line.description || '—'}</span>
-                                        <span style={{ textAlign: 'right', color: line.debit > 0 ? '#3b82f6' : 'var(--text-muted)' }}>
-                                            {line.debit > 0 ? `¢${Number(line.debit).toLocaleString('es-CR', { minimumFractionDigits: 2 })}` : '—'}
-                                        </span>
-                                        <span style={{ textAlign: 'right', color: line.credit > 0 ? '#10b981' : 'var(--text-muted)' }}>
-                                            {line.credit > 0 ? `¢${Number(line.credit).toLocaleString('es-CR', { minimumFractionDigits: 2 })}` : '—'}
-                                        </span>
-                                        <span style={{ fontSize: '0.68rem', color: line.deductible_status === 'DEDUCTIBLE' ? '#10b981' : line.deductible_status === 'NON_DEDUCTIBLE' ? '#ef4444' : '#6b7280' }}>
-                                            {(!line.deductible_status || line.deductible_status === 'PENDING') ? '—' : line.deductible_status.slice(0, 8)}
-                                        </span>
+                                    <div key={line.id}>
+                                        <div style={{ display: 'grid', gridTemplateColumns: '100px 1fr 110px 110px 80px', gap: 8, padding: '7px 16px', fontSize: '0.8rem', borderTop: '1px solid rgba(255,255,255,0.04)', background: i % 2 === 0 ? 'transparent' : 'rgba(0,0,0,0.04)' }}>
+                                            <span style={{ fontFamily: 'monospace', color: '#7c3aed', fontWeight: 700 }}>{line.account_code}</span>
+                                            <span style={{ color: 'var(--text-secondary)' }}>{line.description || '—'}</span>
+                                            <span style={{ textAlign: 'right', color: line.debit > 0 ? '#3b82f6' : 'var(--text-muted)' }}>
+                                                {line.debit > 0 ? `¢${Number(line.debit).toLocaleString('es-CR', { minimumFractionDigits: 2 })}` : '—'}
+                                            </span>
+                                            <span style={{ textAlign: 'right', color: line.credit > 0 ? '#10b981' : 'var(--text-muted)' }}>
+                                                {line.credit > 0 ? `¢${Number(line.credit).toLocaleString('es-CR', { minimumFractionDigits: 2 })}` : '—'}
+                                            </span>
+                                            <span style={{ fontSize: '0.68rem', color: line.deductible_status === 'DEDUCTIBLE' ? '#10b981' : line.deductible_status === 'NON_DEDUCTIBLE' ? '#ef4444' : '#6b7280' }}>
+                                                {(!line.deductible_status || line.deductible_status === 'PENDING') ? '—' : line.deductible_status.slice(0, 8)}
+                                            </span>
+                                        </div>
+                                        {/* 🧬 CABYS accordion — solo si cabysVisible y la línea tiene cabys_code */}
+                                        {cabysVisible && line.cabys_code && (
+                                            <div style={{ padding: '4px 16px 4px 36px', fontSize: '0.7rem', color: 'var(--text-muted)', background: 'rgba(124,58,237,0.05)', borderTop: '1px solid rgba(124,58,237,0.1)', display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+                                                <span title="Código CABYS de Hacienda" style={{ fontFamily: 'monospace', color: '#a78bfa', fontWeight: 700 }}>CABYS: {line.cabys_code}</span>
+                                                {line.iva_tipo && <span title="Tratamiento IVA">IVA: <strong>{line.iva_tipo}</strong>{line.iva_tarifa != null ? ` ${line.iva_tarifa}%` : ''}</span>}
+                                                {line.confidence_score != null && (
+                                                    <span title="Score de confianza de la clasificación">
+                                                        Confianza: <strong style={{ color: line.confidence_score >= 0.9 ? '#10b981' : line.confidence_score >= 0.7 ? '#f59e0b' : '#ef4444' }}>{Math.round(line.confidence_score * 100)}%</strong>
+                                                        {line.clasificacion_fuente && <span style={{ marginLeft: 4, opacity: 0.7 }}>·&nbsp;{line.clasificacion_fuente}</span>}
+                                                    </span>
+                                                )}
+                                            </div>
+                                        )}
                                     </div>
                                 ))}
                                 <div style={{ display: 'grid', gridTemplateColumns: '100px 1fr 110px 110px 80px', gap: 8, padding: '8px 16px', borderTop: `1px solid ${sc.color}40`, fontWeight: 700, fontSize: '0.8rem', background: 'rgba(0,0,0,0.06)' }}>
