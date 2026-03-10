@@ -582,45 +582,14 @@ export default function Centinela() {
                 {tab === 'score' && (
                     <div style={{ padding: '20px' }}>
                         {!scoreData || nivelScore === 'SIN_DATOS' ? (
-                            <div style={{ textAlign: 'center', padding: '40px 20px' }}>
-                                <div style={{ fontSize: '3rem', marginBottom: 16 }}>🛡️</div>
-                                <div style={{ fontSize: '0.95rem', color: 'var(--text-primary)', fontWeight: 600, marginBottom: 6 }}>
-                                    No hay análisis CENTINELA para {periodLabel(period)} aún
+                            <div style={{ textAlign: 'center', padding: '48px 20px', color: 'var(--text-muted)' }}>
+                                <div style={{ fontSize: '2.5rem', marginBottom: 12 }}>🛡️</div>
+                                <div style={{ fontSize: '0.9rem' }}>
+                                    Sin datos de conciliación para {periodLabel(period)}.
                                 </div>
-                                <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: 24 }}>
-                                    Corre el análisis directamente desde aquí o ve a Conciliación Bancaria primero.
+                                <div style={{ fontSize: '0.78rem', marginTop: 6 }}>
+                                    Realiza la conciliación bancaria del período primero.
                                 </div>
-                                <button
-                                    id="btn-analizar-period-centinela"
-                                    disabled={analyzing}
-                                    onClick={async () => {
-                                        if (!period || period.length < 6) return
-                                        setAnalyzing(true)
-                                        try {
-                                            const r = await fetch(`${API}/centinela/analyze-period/${period}`, {
-                                                method: 'POST',
-                                                headers: { Authorization: `Bearer ${token}` }
-                                            })
-                                            if (r.ok) {
-                                                // Recargar score
-                                                const r2 = await fetch(`${API}/centinela/score/${period}`, {
-                                                    headers: { Authorization: `Bearer ${token}` }
-                                                })
-                                                if (r2.ok) setScoreData(await r2.json())
-                                            }
-                                        } catch (_) { }
-                                        setAnalyzing(false)
-                                    }}
-                                    style={{
-                                        padding: '10px 28px', borderRadius: 10, fontWeight: 700,
-                                        fontSize: '0.9rem', cursor: analyzing ? 'wait' : 'pointer',
-                                        background: analyzing ? 'var(--bg-secondary)' : 'linear-gradient(135deg,#7c3aed,#6d28d9)',
-                                        color: '#fff', border: 'none',
-                                        boxShadow: '0 2px 12px rgba(124,58,237,0.3)',
-                                    }}
-                                >
-                                    {analyzing ? '⏳ Analizando…' : `🔬 Analizar ${periodLabel(period)}`}
-                                </button>
                             </div>
                         ) : isV2 ? (
                             /* ── Score V2: 5 indicadores DGT ─────────────────────────── */
