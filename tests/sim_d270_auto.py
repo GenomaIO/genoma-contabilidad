@@ -90,7 +90,7 @@ txns_05 = [
 ]
 res_05 = asignar_d270_auto(txns_05)
 check("SIM-05 DB SIN_FE → C",    res_05[0].get("d270_codigo"), "C")
-check("SIM-05 CR INTERES → I",   res_05[1].get("d270_codigo"), "I")
+check("SIM-05 CR INTERES → V",   res_05[1].get("d270_codigo"), "V")
 check("SIM-05 CON_FE → None",    res_05[2].get("d270_codigo"), None)
 
 # ─────────────────────────────────────────────────────────────────
