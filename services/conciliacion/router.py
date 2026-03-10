@@ -1279,31 +1279,125 @@ def get_score(period: str, request: Request, db: Session = Depends(_get_db)):
 
     SEGURIDAD: solo devuelve datos del tenant autenticado.
     """
+    import json as _json
     tenant_id = _get_tenant(request)
+    year  = period[:4]
+    month = period[4:6] if len(period) >= 6 else "01"
+    period_fmt = f"{year}-{month}"
+
+    # ── 1. Buscar score guardado ───────────────────────────────────────────────
     row = db.execute(text(
         "SELECT * FROM centinela_score "
         "WHERE tenant_id = :tenant_id AND period = :period "
         "ORDER BY created_at DESC LIMIT 1"
     ), {"tenant_id": tenant_id, "period": period}).fetchone()
-    if not row:
+
+    def _unpack(row_dict: dict) -> dict:
+        """Desempaca score_detalle JSONB → incluye version/indicadores/totales."""
+        detalle = row_dict.get("score_detalle") or {}
+        if isinstance(detalle, str):
+            try:
+                detalle = _json.loads(detalle)
+            except Exception:
+                detalle = {}
+        for key in ("version", "indicadores", "totales", "nivel", "emoji", "saldo_diff"):
+            if key in detalle and key not in row_dict:
+                row_dict[key] = detalle[key]
+        return row_dict
+
+    if row:
+        return _unpack(dict(row._mapping))
+
+    # ── 2. Sin score guardado → auto-compute si hay sesiones ──────────────────
+    from services.conciliacion.fiscal_engine import calcular_score_v2
+
+    sesiones_rows = db.execute(text("""
+        SELECT DISTINCT ON (account_code) id, banco, account_code, saldo_final
+        FROM bank_reconciliation
+        WHERE tenant_id = :tid
+          AND (period = :period OR period = :period_fmt)
+        ORDER BY account_code, created_at DESC
+    """), {"tid": tenant_id, "period": period, "period_fmt": period_fmt}).fetchall()
+
+    if not sesiones_rows:
         return {"period": period, "score_total": 0, "nivel": "SIN_DATOS"}
 
-    import json as _json
-    data = dict(row._mapping)
-
-    # Desempacar score_detalle → incluir version, indicadores, totales, nivel, emoji
-    detalle = data.get("score_detalle") or {}
-    if isinstance(detalle, str):
+    sesiones = [dict(r._mapping) for r in sesiones_rows]
+    all_txns_all: list[dict] = []
+    for sesion in sesiones:
         try:
-            detalle = _json.loads(detalle)
+            txns = db.execute(text(
+                "SELECT * FROM bank_transactions WHERE recon_id = :id"
+            ), {"id": sesion["id"]}).fetchall()
+            all_txns_all.extend([dict(t._mapping) for t in txns])
         except Exception:
-            detalle = {}
+            db.rollback()
 
-    for key in ("version", "indicadores", "totales", "nivel", "emoji", "saldo_diff"):
-        if key in detalle and key not in data:
-            data[key] = detalle[key]
+    if not all_txns_all:
+        return {"period": period, "score_total": 0, "nivel": "SIN_DATOS"}
 
-    return data
+    # FE emitidas del período
+    try:
+        fe_rows = db.execute(text("""
+            SELECT * FROM journal_entries
+            WHERE tenant_id = :tid AND period = :p
+              AND source IN ('FE','TE','NC','ND') AND status = 'POSTED'
+        """), {"tid": tenant_id, "p": period_fmt}).fetchall()
+        fe_emitidas = [dict(r._mapping) for r in fe_rows]
+    except Exception:
+        db.rollback()
+        fe_emitidas = []
+
+    saldo_banco  = sum(float(s.get("saldo_final") or 0) for s in sesiones)
+    try:
+        saldo_libros = float(db.execute(text("""
+            SELECT COALESCE(SUM(jl.credit),0)-COALESCE(SUM(jl.debit),0)
+            FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
+            WHERE jl.tenant_id=:tid AND je.period=:p AND je.status='POSTED'
+        """), {"tid": tenant_id, "p": period_fmt}).scalar() or 0)
+    except Exception:
+        db.rollback()
+        saldo_libros = 0.0
+
+    result = calcular_score_v2(
+        bank_txns    = all_txns_all,
+        fe_emitidas  = fe_emitidas,
+        fe_recibidas = [],
+        saldo_banco  = saldo_banco,
+        saldo_libros = saldo_libros,
+    )
+
+    # Guardar para proximas visitas
+    try:
+        score_det = _json.dumps({
+            "version":     result.get("version", "v2"),
+            "indicadores": result.get("indicadores", {}),
+            "totales":     result.get("totales", {}),
+            "nivel":       result.get("nivel", ""),
+            "emoji":       result.get("emoji", ""),
+            "saldo_diff":  result.get("saldo_diff", 0),
+        }, ensure_ascii=False)
+        db.execute(text("""
+            INSERT INTO centinela_score
+              (tenant_id, period, score_total, fugas_tipo_a, fugas_tipo_b, fugas_tipo_c,
+               exposicion_iva, exposicion_renta, exposicion_total, d270_regs, score_detalle)
+            VALUES (:tid,:period,:score,0,0,0,:iva,:renta,:total,0,CAST(:det AS JSONB))
+            ON CONFLICT (tenant_id, period) DO UPDATE SET
+              score_total=EXCLUDED.score_total,
+              exposicion_iva=EXCLUDED.exposicion_iva,
+              score_detalle=EXCLUDED.score_detalle
+        """), {
+            "tid": tenant_id, "period": period,
+            "score": result["score_total"],
+            "iva": result["exposicion_iva"], "renta": result["exposicion_renta"],
+            "total": result["exposicion_total"], "det": score_det,
+        })
+        db.commit()
+    except Exception as e:
+        logger.warning(f"⚠️ auto-save centinela_score: {e}")
+        db.rollback()
+
+    return {**result, "period": period}
 
 
 @router.get("/centinela/d270/{period}")
