@@ -1084,9 +1084,11 @@ def run_centinela_period(period: str, request: Request, db: Session = Depends(_g
             logger.warning(f"⚠️  txn {txn.get('id')}: {e_upd}")
             db.rollback()
 
-    # ── 5. Score consolidado ──────────────────────────────────────────────────
-    total_fe_monto = sum(float(fe.get("total_amount", 0) or 0) for fe in fe_emitidas)
-    ingresos_banco = sum(float(t.get("monto", 0)) for t in all_txns_all if t.get("tipo") == "CR")
+    # ── 5. Score V2 consolidado (motor con 5 indicadores DGT) ───────────────
+    from services.conciliacion.fiscal_engine import calcular_score_v2
+    import json as _json
+
+    saldo_final_total = sum(float(s.get("saldo_final") or 0) for s in sesiones)
     try:
         saldo_libros = float(db.execute(text("""
             SELECT COALESCE(SUM(jl.credit), 0) - COALESCE(SUM(jl.debit), 0)
@@ -1097,9 +1099,19 @@ def run_centinela_period(period: str, request: Request, db: Session = Depends(_g
         db.rollback()
         saldo_libros = 0.0
 
-    saldo_final_total = sum(float(s.get("saldo_final") or 0) for s in sesiones)
-    diff   = calcular_diferencia_saldo(saldo_final_total, saldo_libros)
-    result = calcular_score(fugas, diff, ingresos_banco, total_fe_monto)
+    # calcular_score_v2 necesita TODAS las txns (no solo SIN_FE)
+    result = calcular_score_v2(
+        bank_txns    = all_txns_all,
+        fe_emitidas  = fe_emitidas,
+        fe_recibidas = fe_recibidas,
+        saldo_banco  = saldo_final_total,
+        saldo_libros = saldo_libros,
+    )
+    # Compat: calcular_score v1 usaba fugas_tipo_a/b/c separados
+    result.setdefault("fugas_tipo_a", sum(1 for f in fugas if f.get("fuga_tipo")=="A"))
+    result.setdefault("fugas_tipo_b", sum(1 for f in fugas if f.get("fuga_tipo")=="B"))
+    result.setdefault("fugas_tipo_c", sum(1 for f in fugas if f.get("fuga_tipo")=="C"))
+    result.setdefault("d270_regs", len([f for f in fugas if f.get("d270_codigo")]))
 
     # ── 6. Acumular bank_counterparties ───────────────────────────────────────
     por_beneficiario: dict = defaultdict(lambda: {
@@ -1146,6 +1158,15 @@ def run_centinela_period(period: str, request: Request, db: Session = Depends(_g
 
     # ── 7. Guardar score + marcar sesiones ────────────────────────────────────
     try:
+        score_detalle_json = _json.dumps({
+            "cuentas":     cuentas_procesadas,
+            "version":     result.get("version", "v2"),
+            "indicadores": result.get("indicadores", {}),
+            "totales":     result.get("totales", {}),
+            "nivel":       result.get("nivel", ""),
+            "emoji":       result.get("emoji", ""),
+            "saldo_diff":  result.get("saldo_diff", 0),
+        }, ensure_ascii=False)
         db.execute(text("""
             INSERT INTO centinela_score
               (tenant_id, period, score_total, fugas_tipo_a, fugas_tipo_b, fugas_tipo_c,
@@ -1162,7 +1183,7 @@ def run_centinela_period(period: str, request: Request, db: Session = Depends(_g
             "b": result["fugas_tipo_b"], "c": result["fugas_tipo_c"],
             "iva": result["exposicion_iva"], "renta": result["exposicion_renta"],
             "total": result["exposicion_total"], "d270": result["d270_regs"],
-            "det": str({"cuentas": cuentas_procesadas, "detalle": result["detalle"]}),
+            "det": score_detalle_json,
         })
     except Exception as e_score:
         logger.warning(f"⚠️  centinela_score: {e_score}")
@@ -1266,7 +1287,23 @@ def get_score(period: str, request: Request, db: Session = Depends(_get_db)):
     ), {"tenant_id": tenant_id, "period": period}).fetchone()
     if not row:
         return {"period": period, "score_total": 0, "nivel": "SIN_DATOS"}
-    return dict(row._mapping)
+
+    import json as _json
+    data = dict(row._mapping)
+
+    # Desempacar score_detalle → incluir version, indicadores, totales, nivel, emoji
+    detalle = data.get("score_detalle") or {}
+    if isinstance(detalle, str):
+        try:
+            detalle = _json.loads(detalle)
+        except Exception:
+            detalle = {}
+
+    for key in ("version", "indicadores", "totales", "nivel", "emoji", "saldo_diff"):
+        if key in detalle and key not in data:
+            data[key] = detalle[key]
+
+    return data
 
 
 @router.get("/centinela/d270/{period}")
