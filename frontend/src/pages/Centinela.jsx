@@ -467,105 +467,109 @@ export default function Centinela() {
                     </div>
                 </div>
 
-                {/* Tarjetas compactas: cobertura */}
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 14 }}>
-                    <div style={{ ...cardStyle, padding: '12px 16px', background: 'rgba(34,197,94,0.06)', borderColor: '#22c55e30' }}>
-                        <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginBottom: 2 }}>✅ CON FE</div>
-                        <div style={{ fontSize: '1.5rem', fontWeight: 800, color: '#16a34a' }}>{totalesV2.con_fe ?? 0}</div>
-                        <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', marginTop: 2 }}>{totalesV2.total_txns ?? 0} txns totales</div>
+                {/* ── Columna derecha: cobertura + historia fiscal ────────── */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+
+                    {/* Tarjetas compactas: cobertura */}
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                        <div style={{ ...cardStyle, padding: '12px 16px', background: 'rgba(34,197,94,0.06)', borderColor: '#22c55e30' }}>
+                            <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginBottom: 2 }}>✅ CON FE</div>
+                            <div style={{ fontSize: '1.5rem', fontWeight: 800, color: '#16a34a' }}>{totalesV2.con_fe ?? 0}</div>
+                            <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', marginTop: 2 }}>{totalesV2.total_txns ?? 0} txns totales</div>
+                        </div>
+                        <div style={{ ...cardStyle, padding: '12px 16px', background: 'rgba(239,68,68,0.06)', borderColor: '#ef444430' }}>
+                            <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginBottom: 2 }}>🔴 SIN FE (riesgo)</div>
+                            <div style={{ fontSize: '1.5rem', fontWeight: 800, color: '#dc2626' }}>{totalesV2.sin_fe ?? 0}</div>
+                            <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', marginTop: 2 }}>Sin comprobante fiscal</div>
+                        </div>
                     </div>
-                    <div style={{ ...cardStyle, padding: '12px 16px', background: 'rgba(239,68,68,0.06)', borderColor: '#ef444430' }}>
-                        <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginBottom: 2 }}>🔴 SIN FE (riesgo)</div>
-                        <div style={{ fontSize: '1.5rem', fontWeight: 800, color: '#dc2626' }}>{totalesV2.sin_fe ?? 0}</div>
-                        <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', marginTop: 2 }}>Sin comprobante fiscal</div>
-                    </div>
-                </div>
 
-                {/* ── Historia fiscal: INGRESOS vs GASTOS sin FE ──────────────── */}
-                {desglose && (desglose.ingresos_sin_fe > 0 || desglose.gastos_sin_fe > 0) && (() => {
-                    const fmt = formatCRC
-                    const cobrosHacienda = (desglose.iva_presunto_cr || 0) + (desglose.renta_presunta_cr || 0)
-                    const perdidaTuya = (desglose.iva_no_acreditable || 0) + (desglose.escudo_renta_perdido || 0)
-                    const rowStyle = { display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', padding: '2px 0' }
-                    return (
-                        <>
-                            {/* Banner de alerta */}
-                            <div style={{
-                                background: 'linear-gradient(135deg,rgba(245,158,11,0.1),rgba(239,68,68,0.07))',
-                                border: '1px solid rgba(245,158,11,0.3)', borderRadius: 10,
-                                padding: '9px 14px', marginBottom: 10,
-                                fontSize: '0.76rem', color: '#92400e', fontWeight: 600,
-                            }}>
-                                ⚠️ {(totalesV2.sin_fe ?? 0)} mov. sin comprobante ·
-                                {desglose.ingresos_sin_fe > 0 && <> <b>{fmt(desglose.ingresos_sin_fe)}</b> ingresaron sin FE</>}
-                                {desglose.gastos_sin_fe > 0 && <> · <b>{fmt(desglose.gastos_sin_fe)}</b> salieron sin FE</>}
-                            </div>
-
-                            {/* 2 columnas: ingresos | gastos */}
-                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 10 }}>
-
-                                {/* INGRESOS sin FE */}
+                    {/* ── Historia fiscal: INGRESOS vs GASTOS sin FE ──────────────── */}
+                    {desglose && (desglose.ingresos_sin_fe > 0 || desglose.gastos_sin_fe > 0) && (() => {
+                        const fmt = formatCRC
+                        const cobrosHacienda = (desglose.iva_presunto_cr || 0) + (desglose.renta_presunta_cr || 0)
+                        const perdidaTuya = (desglose.iva_no_acreditable || 0) + (desglose.escudo_renta_perdido || 0)
+                        const rowStyle = { display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', padding: '2px 0' }
+                        return (
+                            <>
+                                {/* Banner de alerta */}
                                 <div style={{
-                                    ...cardStyle, padding: '14px',
-                                    background: 'rgba(239,68,68,0.04)',
-                                    borderColor: '#ef444420',
-                                    borderLeft: '3px solid #dc2626',
+                                    background: 'linear-gradient(135deg,rgba(245,158,11,0.1),rgba(239,68,68,0.07))',
+                                    border: '1px solid rgba(245,158,11,0.3)', borderRadius: 10,
+                                    padding: '9px 14px', marginBottom: 10,
+                                    fontSize: '0.76rem', color: '#92400e', fontWeight: 600,
                                 }}>
-                                    <div style={{ fontSize: '0.7rem', fontWeight: 800, color: '#dc2626', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4 }}>🔴 Ingresos sin FE</div>
-                                    <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', marginBottom: 10 }}>Lo que Hacienda te puede cobrar</div>
-                                    <div style={rowStyle}><span style={{ color: 'var(--text-muted)' }}>Recibiste sin FE:</span><span style={{ fontWeight: 600 }}>{fmt(desglose.ingresos_sin_fe)}</span></div>
-                                    <div style={rowStyle}><span style={{ color: 'var(--text-muted)' }}>IVA presunto (13/113):</span><span style={{ color: '#dc2626', fontWeight: 600 }}>{fmt(desglose.iva_presunto_cr)}</span></div>
-                                    <div style={rowStyle}><span style={{ color: 'var(--text-muted)' }}>ISR de oficio (25%):</span><span style={{ color: '#dc2626', fontWeight: 600 }}>{fmt(desglose.renta_presunta_cr)}</span></div>
-                                    <div style={{ borderTop: '1px solid rgba(239,68,68,0.2)', marginTop: 8, paddingTop: 6, display: 'flex', justifyContent: 'space-between', fontWeight: 800, color: '#dc2626', fontSize: '0.78rem' }}>
-                                        <span>Cobro Hacienda:</span><span>{fmt(cobrosHacienda)}</span>
+                                    ⚠️ {(totalesV2.sin_fe ?? 0)} mov. sin comprobante ·
+                                    {desglose.ingresos_sin_fe > 0 && <> <b>{fmt(desglose.ingresos_sin_fe)}</b> ingresaron sin FE</>}
+                                    {desglose.gastos_sin_fe > 0 && <> · <b>{fmt(desglose.gastos_sin_fe)}</b> salieron sin FE</>}
+                                </div>
+
+                                {/* 2 columnas: ingresos | gastos */}
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 10 }}>
+
+                                    {/* INGRESOS sin FE */}
+                                    <div style={{
+                                        ...cardStyle, padding: '14px',
+                                        background: 'rgba(239,68,68,0.04)',
+                                        borderColor: '#ef444420',
+                                        borderLeft: '3px solid #dc2626',
+                                    }}>
+                                        <div style={{ fontSize: '0.7rem', fontWeight: 800, color: '#dc2626', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4 }}>🔴 Ingresos sin FE</div>
+                                        <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', marginBottom: 10 }}>Lo que Hacienda te puede cobrar</div>
+                                        <div style={rowStyle}><span style={{ color: 'var(--text-muted)' }}>Recibiste sin FE:</span><span style={{ fontWeight: 600 }}>{fmt(desglose.ingresos_sin_fe)}</span></div>
+                                        <div style={rowStyle}><span style={{ color: 'var(--text-muted)' }}>IVA presunto (13/113):</span><span style={{ color: '#dc2626', fontWeight: 600 }}>{fmt(desglose.iva_presunto_cr)}</span></div>
+                                        <div style={rowStyle}><span style={{ color: 'var(--text-muted)' }}>ISR de oficio (25%):</span><span style={{ color: '#dc2626', fontWeight: 600 }}>{fmt(desglose.renta_presunta_cr)}</span></div>
+                                        <div style={{ borderTop: '1px solid rgba(239,68,68,0.2)', marginTop: 8, paddingTop: 6, display: 'flex', justifyContent: 'space-between', fontWeight: 800, color: '#dc2626', fontSize: '0.78rem' }}>
+                                            <span>Cobro Hacienda:</span><span>{fmt(cobrosHacienda)}</span>
+                                        </div>
+                                    </div>
+
+                                    {/* GASTOS sin FE */}
+                                    <div style={{
+                                        ...cardStyle, padding: '14px',
+                                        background: 'rgba(245,158,11,0.04)',
+                                        borderColor: '#f59e0b20',
+                                        borderLeft: '3px solid #d97706',
+                                    }}>
+                                        <div style={{ fontSize: '0.7rem', fontWeight: 800, color: '#d97706', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4 }}>🟡 Gastos sin FE</div>
+                                        <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', marginBottom: 10 }}>Lo que perdés tú</div>
+                                        <div style={rowStyle}><span style={{ color: 'var(--text-muted)' }}>Pagaste sin FE:</span><span style={{ fontWeight: 600 }}>{fmt(desglose.gastos_sin_fe)}</span></div>
+                                        <div style={rowStyle}><span style={{ color: 'var(--text-muted)' }}>IVA no acreditable:</span><span style={{ color: '#d97706', fontWeight: 600 }}>{fmt(desglose.iva_no_acreditable)}</span></div>
+                                        <div style={rowStyle}><span style={{ color: 'var(--text-muted)' }}>Escudo renta perdido:</span><span style={{ color: '#d97706', fontWeight: 600 }}>{fmt(desglose.escudo_renta_perdido)}</span></div>
+                                        <div style={{ borderTop: '1px solid rgba(245,158,11,0.2)', marginTop: 8, paddingTop: 6, display: 'flex', justifyContent: 'space-between', fontWeight: 800, color: '#d97706', fontSize: '0.78rem' }}>
+                                            <span>Pérdida fiscal:</span><span>{fmt(perdidaTuya)}</span>
+                                        </div>
                                     </div>
                                 </div>
 
-                                {/* GASTOS sin FE */}
+                                {/* Bloque riesgo máximo */}
                                 <div style={{
-                                    ...cardStyle, padding: '14px',
-                                    background: 'rgba(245,158,11,0.04)',
-                                    borderColor: '#f59e0b20',
-                                    borderLeft: '3px solid #d97706',
+                                    background: 'linear-gradient(135deg,#1e1b4b,#312e81)',
+                                    borderRadius: 12, padding: '16px 20px', marginBottom: 4, color: '#fff',
                                 }}>
-                                    <div style={{ fontSize: '0.7rem', fontWeight: 800, color: '#d97706', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4 }}>🟡 Gastos sin FE</div>
-                                    <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', marginBottom: 10 }}>Lo que perdés tú</div>
-                                    <div style={rowStyle}><span style={{ color: 'var(--text-muted)' }}>Pagaste sin FE:</span><span style={{ fontWeight: 600 }}>{fmt(desglose.gastos_sin_fe)}</span></div>
-                                    <div style={rowStyle}><span style={{ color: 'var(--text-muted)' }}>IVA no acreditable:</span><span style={{ color: '#d97706', fontWeight: 600 }}>{fmt(desglose.iva_no_acreditable)}</span></div>
-                                    <div style={rowStyle}><span style={{ color: 'var(--text-muted)' }}>Escudo renta perdido:</span><span style={{ color: '#d97706', fontWeight: 600 }}>{fmt(desglose.escudo_renta_perdido)}</span></div>
-                                    <div style={{ borderTop: '1px solid rgba(245,158,11,0.2)', marginTop: 8, paddingTop: 6, display: 'flex', justifyContent: 'space-between', fontWeight: 800, color: '#d97706', fontSize: '0.78rem' }}>
-                                        <span>Pérdida fiscal:</span><span>{fmt(perdidaTuya)}</span>
+                                    <div style={{ fontSize: '0.76rem', fontWeight: 700, marginBottom: 12, opacity: 0.9 }}>
+                                        🔴 Si Hacienda audita {periodLabel(period)} hoy:
+                                    </div>
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: 5, fontSize: '0.8rem' }}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', opacity: 0.8 }}>
+                                            <span>Cobros potenciales:</span><span>{fmt(exposicionTotal)}</span>
+                                        </div>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', opacity: 0.8 }}>
+                                            <span>+ Multa estimada (50%):</span><span>{fmt(desglose.multa_estimada_50pct)}</span>
+                                        </div>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 800, fontSize: '1rem', borderTop: '1px solid rgba(255,255,255,0.15)', paddingTop: 8, marginTop: 2 }}>
+                                            <span>= RIESGO MÁXIMO:</span>
+                                            <span style={{ color: '#fbbf24' }}>{fmt(desglose.riesgo_maximo)}</span>
+                                        </div>
+                                    </div>
+                                    <div style={{ marginTop: 10, background: 'rgba(251,191,36,0.15)', border: '1px solid rgba(251,191,36,0.25)', borderRadius: 8, padding: '6px 12px', fontSize: '0.7rem', color: '#fbbf24', textAlign: 'center' }}>
+                                        📋 Recomendación: Declarar D-270 antes del día 15 de {periodLabel(period)}
                                     </div>
                                 </div>
-                            </div>
-
-                            {/* Bloque riesgo máximo */}
-                            <div style={{
-                                background: 'linear-gradient(135deg,#1e1b4b,#312e81)',
-                                borderRadius: 12, padding: '16px 20px', marginBottom: 4, color: '#fff',
-                            }}>
-                                <div style={{ fontSize: '0.76rem', fontWeight: 700, marginBottom: 12, opacity: 0.9 }}>
-                                    🔴 Si Hacienda audita {periodLabel(period)} hoy:
-                                </div>
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: 5, fontSize: '0.8rem' }}>
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', opacity: 0.8 }}>
-                                        <span>Cobros potenciales:</span><span>{fmt(exposicionTotal)}</span>
-                                    </div>
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', opacity: 0.8 }}>
-                                        <span>+ Multa estimada (50%):</span><span>{fmt(desglose.multa_estimada_50pct)}</span>
-                                    </div>
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 800, fontSize: '1rem', borderTop: '1px solid rgba(255,255,255,0.15)', paddingTop: 8, marginTop: 2 }}>
-                                        <span>= RIESGO MÁXIMO:</span>
-                                        <span style={{ color: '#fbbf24' }}>{fmt(desglose.riesgo_maximo)}</span>
-                                    </div>
-                                </div>
-                                <div style={{ marginTop: 10, background: 'rgba(251,191,36,0.15)', border: '1px solid rgba(251,191,36,0.25)', borderRadius: 8, padding: '6px 12px', fontSize: '0.7rem', color: '#fbbf24', textAlign: 'center' }}>
-                                    📋 Recomendación: Declarar D-270 antes del día 15 de {periodLabel(period)}
-                                </div>
-                            </div>
-                        </>
-                    )
-                })()}
+                            </>
+                        )
+                    })()}
+                </div> {/* end columna derecha */}
             </div>
 
             {/* Barra de reglas disparadas */}
