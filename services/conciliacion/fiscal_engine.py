@@ -574,14 +574,14 @@ def calcular_score_v2(
     ingresos_sin_fe_cr  = sum(abs(float(t.get("monto", 0)))
                               for t in sin_fe if t.get("tipo") == "CR")
     iva_presunto_cr     = round(ingresos_sin_fe_cr * 13 / 113, 2)
-    renta_presunta_cr   = round((ingresos_sin_fe_cr - iva_presunto_cr) * 0.30, 2)
+    renta_presunta_cr   = round((ingresos_sin_fe_cr - iva_presunto_cr) * 0.25, 2)
 
     # GASTOS sin FE (débitos bancarios SIN_FE):
     #   Hacienda rechaza crédito IVA + rechaza deducción de renta
     gastos_sin_fe_db    = sum(abs(float(t.get("monto", 0)))
                               for t in sin_fe if t.get("tipo") == "DB")
     iva_no_acreditable  = round(gastos_sin_fe_db * 13 / 113, 2)
-    escudo_renta_perdido= round(gastos_sin_fe_db * 0.30, 2)
+    escudo_renta_perdido= round(gastos_sin_fe_db * 0.25, 2)
 
     exposicion_iva   = round(iva_presunto_cr + iva_no_acreditable, 2)
     exposicion_renta = round(renta_presunta_cr + escudo_renta_perdido, 2)

@@ -49,7 +49,7 @@ txns_01 = [make_txn("CR", 113_000, "SIN_FE")]   # 100k base + 13k IVA incluido
 r01 = calcular_score_v2(txns_01, [], [], 113_000, 0)
 
 iva_esperado_cr    = round(113_000 * 13 / 113, 2)   # ≈ 13,000
-renta_esperada_cr  = round((113_000 - iva_esperado_cr) * 0.30, 2)  # ≈ 30,000
+renta_esperada_cr  = round((113_000 - iva_esperado_cr) * 0.25, 2)  # tasa max PF 2025
 check("SIM-01 exposicion_iva (solo CR)",   r01["exposicion_iva"],   iva_esperado_cr,   50)
 check("SIM-01 exposicion_renta (solo CR)", r01["exposicion_renta"], renta_esperada_cr, 200)
 check("SIM-01 version = v2",               r01.get("version"),      "v2",              0)
@@ -60,7 +60,7 @@ txns_02 = [make_txn("DB", 113_000, "SIN_FE")]
 r02 = calcular_score_v2(txns_02, [], [], 0, 0)
 
 iva_no_acred  = round(113_000 * 13 / 113, 2)   # ≈ 13,000
-escudo_perdido = round(113_000 * 0.30, 2)       # ≈ 33,900
+escudo_perdido = round(113_000 * 0.25, 2)       # tasa max PF 2025
 check("SIM-02 exposicion_iva (DB no_acred)",    r02["exposicion_iva"],   iva_no_acred,   50)
 check("SIM-02 exposicion_renta (DB escudo)",    r02["exposicion_renta"], escudo_perdido, 200)
 

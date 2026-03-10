@@ -476,7 +476,7 @@ export default function Centinela() {
                         },
                         {
                             label: 'Exposición Renta', value: formatCRC(scoreData?.exposicion_renta),
-                            sub: 'Renta estimada en riesgo', color: '#d97706',
+                            sub: 'ISR de oficio estimado (Art. 13 Ley 7092)', color: '#d97706',
                             bg: 'rgba(251,191,36,0.06)', emoji: '🟡'
                         },
                         {
