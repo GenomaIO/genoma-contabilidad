@@ -190,7 +190,7 @@ def clasificar_fuga(txn: dict, fe_emitidas: list[dict], fe_recibidas: list[dict]
     if tipo == "CR":
         # Buscar FE emitida por monto similar en el período
         fecha = txn.get("fecha", "")
-        period = fecha[:7].replace("-", "") if fecha else ""
+        period = str(fecha)[:7].replace("-", "") if fecha else ""
         fe_match = _find_fe_match(monto, period, fe_emitidas)
 
         if "SINPE" in desc:
@@ -230,7 +230,7 @@ def clasificar_fuga(txn: dict, fe_emitidas: list[dict], fe_recibidas: list[dict]
     elif tipo == "DB":
         # Buscar FE recibida por monto similar
         fecha = txn.get("fecha", "")
-        period = fecha[:7].replace("-", "") if fecha else ""
+        period = str(fecha)[:7].replace("-", "") if fecha else ""
         fe_match = _find_fe_match(monto, period, fe_recibidas)
 
         if fe_match:
