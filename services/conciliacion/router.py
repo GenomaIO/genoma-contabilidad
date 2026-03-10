@@ -1359,6 +1359,16 @@ def get_score(period: str, request: Request, db: Session = Depends(_get_db)):
         db.rollback()
         saldo_libros = 0.0
 
+    # Estimar IVA en memoria (iva_estimado puede ser null en DB si classify no corrió)
+    from services.conciliacion.fiscal_engine import estimar_tarifa, calcular_iva_incluido
+    for txn in all_txns_all:
+        if txn.get("iva_estimado") is None and txn.get("match_estado") in ("SIN_FE", "SIN_ASIENTO", "SOLO_LIBROS"):
+            desc   = (txn.get("descripcion") or "").upper()
+            cat    = txn.get("beneficiario_categoria") or "TERCERO"
+            tarifa = estimar_tarifa(desc, cat)
+            calc   = calcular_iva_incluido(abs(float(txn.get("monto") or 0)), tarifa)
+            txn["iva_estimado"] = calc["iva"]
+
     result = calcular_score_v2(
         bank_txns    = all_txns_all,
         fe_emitidas  = fe_emitidas,
