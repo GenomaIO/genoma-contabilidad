@@ -609,6 +609,17 @@ def calcular_score_v2(
         "exposicion_renta": exposicion_renta,
         "exposicion_total": round(exposicion_iva + exposicion_renta, 2),
         "saldo_diff":       round(saldo_banco - saldo_libros, 2),
+        # Desglose granular para el layout "INGRESOS vs GASTOS sin FE"
+        "desglose": {
+            "ingresos_sin_fe":      round(ingresos_sin_fe_cr, 2),
+            "iva_presunto_cr":      iva_presunto_cr,
+            "renta_presunta_cr":    renta_presunta_cr,
+            "gastos_sin_fe":        round(gastos_sin_fe_db, 2),
+            "iva_no_acreditable":   iva_no_acreditable,
+            "escudo_renta_perdido": escudo_renta_perdido,
+            "multa_estimada_50pct": round((exposicion_iva + exposicion_renta) * 0.50, 2),
+            "riesgo_maximo":        round((exposicion_iva + exposicion_renta) * 1.50, 2),
+        },
     }
 
 
