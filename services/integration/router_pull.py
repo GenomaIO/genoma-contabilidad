@@ -3,16 +3,28 @@ integration/router_pull.py
 ════════════════════════════════════════════════════════════
 APIs Pull — Auto-Importación de Documentos Fiscales
 
+Arquitectura v3 (correcta):
+  El gc_token del contador (partner) contiene:
+    - facturador_token : token de sesión en el Facturador (X-Partner-Token)
+    - tenant_id        : tenant_id DEL CLIENTE (Álvaro) en el Facturador
+                         (cuando el contador seleccionó a Álvaro en /select)
+
+  Estos se pasan a genoma_client.py para llamar:
+    GET /api/partners/portal/cliente/{tenant_id}/documentos
+        ?tipo=enviados|recibidos&period=YYYYMM
+    Header: X-Partner-Token: {facturador_token}
+
 Endpoints:
   GET  /integration/pull-enviados     → FE/TE/ND/NC desde Genoma Contable
   GET  /integration/pull-recibidos    → FEC/compras desde Genoma Contable
   POST /integration/import-batch      → Importa lote seleccionado al Diario
+  GET  /integration/ping              → Diagnóstico de conectividad
 
 Reglas de Oro:
-  - Idempotente: dedup por source_ref (clave Hacienda 50 chars)
-  - Transacción por lote completo — rollback si falla cualquier doc
+  - Idempotente: dedup por source_ref (clave Hacienda)
+  - Transacción por lote — rollback si falla cualquier doc
   - tenant_id siempre del JWT — nunca del payload
-  - Timeout 10s al llamar Genoma Contable (en genoma_client.py)
+  - TOKEN_EXPIRADO → 401 claro con instrucción de renovación
 """
 import uuid
 import logging
@@ -135,29 +147,30 @@ def get_ping_genoma(
 ):
     """
     Diagnóstico de conectividad con Genoma Contable.
-    Informa: URL configurada, estado de autenticación, y si hay docs en el período.
-    Útil para saber exactamente por qué falla el botón 'Importar del mes'.
+    Informa: token del Facturador, cliente_tenant_id activo, y docs en el período.
     """
-    import os
     from services.integration.genoma_client import GENOMA_CONTABLE_URL, pull_documentos_enviados
 
-    tenant_id    = current_user["tenant_id"]
-    tenant_token = current_user.get("token", "")
-    url_config   = GENOMA_CONTABLE_URL
+    # v3: facturador_token viene en el gc_token (del handoff de partner)
+    # cliente_tenant_id es el tenant_id que se guardó al seleccionar al cliente
+    tenant_id         = current_user["tenant_id"]
+    facturador_token  = current_user.get("facturador_token", "")
+    url_config        = GENOMA_CONTABLE_URL
 
     diag = {
-        "genoma_contable_url":  url_config,
-        "url_configurada":      url_config != "https://api.genoma.io",
-        "token_presente":       bool(tenant_token),
-        "tenant_id":            tenant_id[:8] + "...",
-        "periodo_consultado":   period,
-        "enviados_check":       None,
-        "error":                None,
+        "genoma_contable_url":   url_config,
+        "url_configurada":       url_config != "https://app.genomaio.com",
+        "facturador_token":      "presente" if facturador_token else "AUSENTE",
+        "cliente_tenant_id":     tenant_id[:8] + "...",
+        "periodo_consultado":    period,
+        "enviados_check":        None,
+        "error":                 None,
     }
 
-    if period:
+    if period and facturador_token:
         result = pull_documentos_enviados(
-            tenant_token=tenant_token,
+            facturador_token=facturador_token,
+            cliente_tenant_id=tenant_id,
             period=period,
             page=1,
             limit=5,
@@ -172,24 +185,23 @@ def get_ping_genoma(
             diag["enviados_check"] = {"ok": False, "error": result.get("error")}
             diag["error"] = result.get("error")
 
-    # Diagnóstico claro del problema más probable
-    if not diag["url_configurada"]:
+    if not facturador_token:
         diag["diagnostico"] = (
-            "🔴 GENOMA_CONTABLE_URL no está configurada en el entorno del servidor. "
-            f"Actualmente apunta a '{url_config}'. "
-            "Agrega GENOMA_CONTABLE_URL=https://tu-instancia-genoma.io en las variables de entorno de Render."
+            "🔴 Token del Facturador ausente. "
+            "Volvé al Panel de Partners (app.genomaio.com) y hacé clic en 'Sistema de Contabilidad'."
         )
-    elif not diag["token_presente"]:
-        diag["diagnostico"] = "🔴 Token del contador no está disponible en el JWT. Cierra sesión y vuelve a entrar."
     elif diag["enviados_check"] and not diag["enviados_check"]["ok"]:
-        diag["diagnostico"] = f"🔴 Genoma Contable rechazó la consulta: {diag['error']}"
+        err = result.get("error", "")
+        if err == "TOKEN_EXPIRADO":
+            diag["diagnostico"] = "🔴 Sesión expirada. Volvé al Panel de Partners y hacé clic en 'Sistema de Contabilidad'."
+        else:
+            diag["diagnostico"] = f"🔴 Genoma Contable rechazó la consulta: {diag['error']}"
     else:
         diag["diagnostico"] = "🟢 Conexión OK"
 
     return diag
 
 @router.get("/pull-enviados")
-
 def get_pull_enviados(
     period:     str           = Query(..., description="Período YYYYMM"),
     page:       int           = Query(1,   ge=1),
@@ -199,25 +211,36 @@ def get_pull_enviados(
     current_user: dict        = Depends(get_current_user),
 ):
     """
-    Consulta documentos FE/TE/ND/NC enviados del tenant en Genoma Contable.
-    No importa aún — solo lista lo disponible + estado de importación.
+    Consulta FE/TE/ND/NC enviados ACEPTADOS por Hacienda del cliente seleccionado.
+    Autenticación: X-Partner-Token del Facturador (en gc_token como facturador_token).
     """
-    tenant_id    = current_user["tenant_id"]
-    tenant_token = current_user.get("token", "")  # JWT del contador
+    tenant_id        = current_user["tenant_id"]          # = tenant_id de Álvaro en el Facturador
+    facturador_token = current_user.get("facturador_token", "")
 
-    # Pull desde Genoma Contable
+    if not facturador_token:
+        raise HTTPException(
+            status_code=401,
+            detail=(
+                "Sesión con el Facturador no disponible. "
+                "Volvé al Panel de Partners y hacé clic en 'Sistema de Contabilidad'."
+            )
+        )
+
     result = pull_documentos_enviados(
-        tenant_token=tenant_token,
+        facturador_token=facturador_token,
+        cliente_tenant_id=tenant_id,
         period=period,
         page=1 if import_all else page,
         limit=1000 if import_all else limit,
     )
     if not result["ok"]:
-        raise HTTPException(503, detail=f"Genoma Contable no disponible: {result.get('error')}")
+        err = result.get("error", "")
+        detail = result.get("error_detail") or f"Genoma Contable no disponible: {err}"
+        code   = 401 if err == "TOKEN_EXPIRADO" else 503
+        raise HTTPException(status_code=code, detail=detail)
 
     docs = result.get("items", [])
 
-    # Marcar cuáles ya están importados
     for doc in docs:
         doc["ya_importado"] = _is_already_imported(db, tenant_id, doc.get("clave", ""))
 
@@ -237,20 +260,33 @@ def get_pull_recibidos(
     current_user: dict        = Depends(get_current_user),
 ):
     """
-    Consulta documentos FEC/RECIBIDOS del tenant en Genoma Contable.
-    Incluye líneas con código CABYS por ítem (para el accordion de la UI).
+    Consulta FEC recibidos ACEPTADOS por Hacienda del cliente seleccionado.
+    Retorna condicion_impuesto + iva_acreditado + iva_gasto para el asiento.
     """
-    tenant_id    = current_user["tenant_id"]
-    tenant_token = current_user.get("token", "")
+    tenant_id        = current_user["tenant_id"]
+    facturador_token = current_user.get("facturador_token", "")
+
+    if not facturador_token:
+        raise HTTPException(
+            status_code=401,
+            detail=(
+                "Sesión con el Facturador no disponible. "
+                "Volvé al Panel de Partners y hacé clic en 'Sistema de Contabilidad'."
+            )
+        )
 
     result = pull_documentos_recibidos(
-        tenant_token=tenant_token,
+        facturador_token=facturador_token,
+        cliente_tenant_id=tenant_id,
         period=period,
         page=1 if import_all else page,
         limit=1000 if import_all else limit,
     )
     if not result["ok"]:
-        raise HTTPException(503, detail=f"Genoma Contable no disponible: {result.get('error')}")
+        err = result.get("error", "")
+        detail = result.get("error_detail") or f"Genoma Contable no disponible: {err}"
+        code   = 401 if err == "TOKEN_EXPIRADO" else 503
+        raise HTTPException(status_code=code, detail=detail)
 
     docs = result.get("items", [])
 
