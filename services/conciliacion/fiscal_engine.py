@@ -568,8 +568,23 @@ def calcular_score_v2(
     else:
         nivel, emoji = "CRITICO",  "🔴"
 
-    exposicion_iva   = round(iva_total, 2)
-    exposicion_renta = round(iva_total * 0.15 / 0.13, 2)  # estimado proporcional
+    # ── Exposición fiscal real (metodología Hacienda CR) ─────────────────────
+    # INGRESOS sin FE (créditos bancarios SIN_FE):
+    #   Hacienda presume son ventas → cobra IVA 13/113 + Renta 30% sobre base
+    ingresos_sin_fe_cr  = sum(abs(float(t.get("monto", 0)))
+                              for t in sin_fe if t.get("tipo") == "CR")
+    iva_presunto_cr     = round(ingresos_sin_fe_cr * 13 / 113, 2)
+    renta_presunta_cr   = round((ingresos_sin_fe_cr - iva_presunto_cr) * 0.30, 2)
+
+    # GASTOS sin FE (débitos bancarios SIN_FE):
+    #   Hacienda rechaza crédito IVA + rechaza deducción de renta
+    gastos_sin_fe_db    = sum(abs(float(t.get("monto", 0)))
+                              for t in sin_fe if t.get("tipo") == "DB")
+    iva_no_acreditable  = round(gastos_sin_fe_db * 13 / 113, 2)
+    escudo_renta_perdido= round(gastos_sin_fe_db * 0.30, 2)
+
+    exposicion_iva   = round(iva_presunto_cr + iva_no_acreditable, 2)
+    exposicion_renta = round(renta_presunta_cr + escudo_renta_perdido, 2)
 
     return {
         "score_total":      score,
