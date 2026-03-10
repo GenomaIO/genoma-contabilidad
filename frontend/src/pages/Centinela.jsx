@@ -615,21 +615,6 @@ export default function Centinela() {
                         </button>
                     ))}
                 </div>
-                {/* Botones de export rápido */}
-                <div style={{ display: 'flex', gap: 8 }}>
-                    <button onClick={() => exportarResultado(scoreData?.recon_id)} disabled={exportingCSV} style={{
-                        ...btnChoice, background: 'rgba(14,165,233,0.1)', color: '#0ea5e9',
-                        borderColor: '#0ea5e9', fontSize: '0.75rem',
-                    }}>
-                        {exportingCSV ? '⏳' : '⬇️ Excel'}
-                    </button>
-                    <button onClick={exportarD150} style={{
-                        ...btnChoice, background: 'rgba(124,58,237,0.1)', color: '#7c3aed',
-                        borderColor: '#7c3aed', fontSize: '0.75rem',
-                    }}>
-                        📑 D-150
-                    </button>
-                </div>
             </div>
 
             {/* Contenido de tabs */}
