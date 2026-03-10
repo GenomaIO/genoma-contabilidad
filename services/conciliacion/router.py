@@ -990,16 +990,20 @@ def run_centinela_period(period: str, request: Request, db: Session = Depends(_g
     period_fmt  = f"{year}-{month}"
 
     # ── 1. Todos los recon_ids del tenant para este período ───────────────────
+    # bank_reconciliation guarda period en formato 'YYYY-MM' (con guión)
+    # pero el endpoint recibe 'YYYYMM' → normalizamos ambos
     sesiones_rows = db.execute(text("""
         SELECT id, banco, account_code, saldo_final
         FROM bank_reconciliation
-        WHERE tenant_id = :tid AND period = :period
+        WHERE tenant_id = :tid
+          AND (period = :period OR period = :period_fmt)
         ORDER BY created_at DESC
-    """), {"tid": tenant_id, "period": period}).fetchall()
+    """), {"tid": tenant_id, "period": period, "period_fmt": period_fmt}).fetchall()
 
     if not sesiones_rows:
         raise HTTPException(status_code=404,
             detail=f"No hay sesiones de conciliación para el período {period}")
+
 
     sesiones   = [dict(r._mapping) for r in sesiones_rows]
     recon_ids  = [s["id"] for s in sesiones]
@@ -1274,17 +1278,21 @@ def get_d270_preview(period: str, request: Request, db: Session = Depends(_get_d
     from services.conciliacion.fiscal_engine import generar_d270_resumen, D270_CODIGOS
     tenant_id = _get_tenant(request)
 
+    year_d = period[:4]
+    month_d = period[4:6] if len(period) >= 6 else "01"
+    period_fmt_d = f"{year_d}-{month_d}"
+
     rows = db.execute(text("""
         SELECT bt.descripcion, bt.base_estimada AS monto, bt.d270_codigo,
                bt.accion AS observacion, br.period
         FROM bank_transactions bt
         JOIN bank_reconciliation br ON br.id = bt.recon_id
         WHERE br.tenant_id   = :tenant_id
-          AND br.period       = :period
+          AND (br.period = :period OR br.period = :period_fmt)
           AND bt.d270_codigo IS NOT NULL
           AND bt.accion_tomada = FALSE
         ORDER BY bt.d270_codigo, bt.monto DESC
-    """), {"tenant_id": tenant_id, "period": period}).fetchall()
+    """), {"tenant_id": tenant_id, "period": period, "period_fmt": period_fmt_d}).fetchall()
 
     items = [dict(r._mapping) for r in rows]
     resumen = generar_d270_resumen(items)
