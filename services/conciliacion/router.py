@@ -1305,10 +1305,10 @@ def get_score(period: str, request: Request, db: Session = Depends(_get_db)):
                 row_dict[key] = detalle[key]
         return row_dict
 
-    if row:
-        return _unpack(dict(row._mapping))
+    # Score siempre se recalcula desde bank_transactions para que las
+    # fórmulas actuales apliquen. El UPSERT al final sobreescribe el caché.
+    # (Si no hay sesiones de banco, devolvemos SIN_DATOS al final)
 
-    # ── 2. Sin score guardado → auto-compute si hay sesiones ──────────────────
     from services.conciliacion.fiscal_engine import calcular_score_v2
 
     sesiones_rows = db.execute(text("""
