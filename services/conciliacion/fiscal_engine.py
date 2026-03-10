@@ -417,10 +417,9 @@ def asignar_d270_auto(txns: list[dict]) -> list[dict]:
     No modifica las que ya tienen código asignado ni las CON_FE.
 
     Reglas:
-      CR + palabras de interés en descripción → I (Intereses)
-      CR genérico SIN_FE                     → V (Ventas sin comprobante)
-      DB SIN_FE con monto ≥ 1                → C (Compras sin comprobante)
-      CON_FE / CONCILIADO / PROBABLE         → sin código (None)
+      CR SIN_FE (ingresos, incluyendo intereses recibidos) → V
+      DB SIN_FE ≥ ₡1 (todos los gastos/salidas sin FE)   → C
+      CON_FE / CONCILIADO                                  → sin código
     """
     estados_sin_fe = {"SIN_FE", "SIN_ASIENTO"}
 
@@ -430,18 +429,13 @@ def asignar_d270_auto(txns: list[dict]) -> list[dict]:
         if txn.get("d270_codigo"):
             continue                          # ya tiene código → respetar
 
-        desc  = (txn.get("descripcion") or "").upper()
         tipo  = (txn.get("tipo") or "DB").upper()
         monto = abs(float(txn.get("monto", 0)))
 
         if tipo == "CR":
-            if any(k in desc for k in _PALABRAS_INTERES):
-                txn["d270_codigo"] = "I"
-            else:
-                txn["d270_codigo"] = "V"
-        else:  # DB
-            if monto >= 1:
-                txn["d270_codigo"] = "C"
+            txn["d270_codigo"] = "V"          # todo ingreso sin FE → V
+        elif monto >= 1:
+            txn["d270_codigo"] = "C"          # todo gasto/salida sin FE → C
 
     return txns
 

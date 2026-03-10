@@ -40,7 +40,7 @@ check("SIM-01 compra grande → C",      res_01[0].get("d270_codigo"), "C")
 check("SIM-01 compra ₡1    → C",       res_01[1].get("d270_codigo"), "C")
 
 # ─── SIM-02: CR SIN_FE con palabras de interés → I ─────────────
-print("\nSIM-02: CR SIN_FE con INTERES/RDTO → I")
+print("\nSIM-02: CR SIN_FE con INTERES/RDTO → V (ingreso sin FE, no I)")
 txns_02 = [
     {"id": 3, "tipo": "CR", "monto": 9238,  "match_estado": "SIN_FE",
      "descripcion": "BNCR/INTERESES GANADOS EN SU C..."},
@@ -50,9 +50,9 @@ txns_02 = [
      "descripcion": "RENDIMIENTO PLAZO FIJO"},
 ]
 res_02 = asignar_d270_auto(txns_02)
-check("SIM-02 INTERESES   → I", res_02[0].get("d270_codigo"), "I")
-check("SIM-02 RDTO        → I", res_02[1].get("d270_codigo"), "I")
-check("SIM-02 RENDIMIENTO → I", res_02[2].get("d270_codigo"), "I")
+check("SIM-02 INTERESES recibido → V", res_02[0].get("d270_codigo"), "V")
+check("SIM-02 RDTO recibido      → V", res_02[1].get("d270_codigo"), "V")
+check("SIM-02 RENDIMIENTO recib. → V", res_02[2].get("d270_codigo"), "V")
 
 # ─── SIM-03: CR SIN_FE genérico → V ─────────────────────────────
 print("\nSIM-03: CR SIN_FE genérico → V (ventas)")
