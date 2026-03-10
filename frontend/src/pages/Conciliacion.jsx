@@ -186,14 +186,13 @@ function TxnTable({ txns, onApprove }) {
                             <th style={th}>Moneda</th>
                             <th style={th}>Tel.</th>
                             <th style={th}>Estado</th>
-                            <th style={th}>Conf.</th>
-                            <th style={th}>Acción</th>
+                            <th style={th}>Recomendación</th>
                         </tr>
                     </thead>
                     <tbody>
                         {filtered.length === 0 ? (
                             <tr>
-                                <td colSpan={8} style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)' }}>
+                                <td colSpan={7} style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)' }}>
                                     Sin transacciones en esta categoría
                                 </td>
                             </tr>
@@ -240,22 +239,34 @@ function TxnTable({ txns, onApprove }) {
                                 <td style={td}>
                                     <Badge estado={t.match_estado || 'PENDIENTE'} />
                                 </td>
-                                <td style={{ ...td, textAlign: 'center' }}>
-                                    {t.match_confianza > 0 && (
-                                        <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
-                                            {t.match_confianza}%
-                                        </span>
-                                    )}
-                                </td>
                                 <td style={td}>
-                                    {(t.match_estado === 'SIN_FE' || t.match_estado === 'SIN_ASIENTO') && (
-                                        <button
-                                            onClick={() => onApprove(t)}
-                                            style={{ ...btnPrimary, fontSize: '0.72rem', padding: '3px 8px' }}
-                                        >
-                                            + Asiento
-                                        </button>
-                                    )}
+                                    {(() => {
+                                        if (t.match_estado === 'CON_FE' || t.match_estado === 'CONCILIADO') {
+                                            return null
+                                        }
+                                        if (t.match_estado !== 'SIN_FE' && t.match_estado !== 'SIN_ASIENTO') {
+                                            return null
+                                        }
+                                        const hoy = new Date()
+                                        const periodoHoy = `${hoy.getFullYear()}${String(hoy.getMonth() + 1).padStart(2, '0')}`
+                                        const periodoTxn = t.fecha ? t.fecha.substring(0, 7).replace('-', '') : ''
+                                        const yaVencio = periodoTxn < periodoHoy
+                                        return yaVencio ? (
+                                            <span title="El mes ya cerró — declarar en formulario D-270" style={{
+                                                fontSize: '0.7rem', padding: '3px 8px', borderRadius: 6, fontWeight: 700,
+                                                background: 'rgba(249,115,22,0.12)', color: '#f97316',
+                                                border: '1px solid rgba(249,115,22,0.3)', cursor: 'default',
+                                                whiteSpace: 'nowrap',
+                                            }}>📋 D-270</span>
+                                        ) : (
+                                            <span title="Mes en curso — podés emitir una FEC-08 para regularizar" style={{
+                                                fontSize: '0.7rem', padding: '3px 8px', borderRadius: 6, fontWeight: 700,
+                                                background: 'rgba(99,102,241,0.12)', color: '#6366f1',
+                                                border: '1px solid rgba(99,102,241,0.3)', cursor: 'default',
+                                                whiteSpace: 'nowrap',
+                                            }}>📝 FEC-08</span>
+                                        )
+                                    })()}
                                 </td>
                             </tr>
                         ))}
