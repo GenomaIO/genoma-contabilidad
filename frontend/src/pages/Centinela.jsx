@@ -602,7 +602,7 @@ export default function Centinela() {
                 <div style={{ display: 'flex', gap: 4, flex: 1, flexWrap: 'wrap' }}>
                     {[
                         { k: 'score', label: '📊 Score' },
-                        { k: 'fugas', label: '🔴 Fugas' },
+
                         { k: 'd270', label: '📋 D-270' },
                     ].map(t => (
                         <button key={t.k} onClick={() => setTab(t.k)} style={{
