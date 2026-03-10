@@ -1401,11 +1401,19 @@ def get_score(period: str, request: Request, db: Session = Depends(_get_db)):
             if txn.get("d270_codigo") and txn.get("id"):
                 db.execute(text("""
                     UPDATE bank_transactions
-                    SET d270_codigo = :code
+                    SET d270_codigo    = :code,
+                        base_estimada  = CASE WHEN base_estimada IS NULL
+                                              THEN :base
+                                              ELSE base_estimada END
                     WHERE id = :id AND d270_codigo IS NULL
-                """), {"code": txn["d270_codigo"], "id": txn["id"]})
+                """), {
+                    "code": txn["d270_codigo"],
+                    "id":   txn["id"],
+                    "base": abs(float(txn.get("monto") or 0)),
+                })
         db.commit()
-    except Exception:
+    except Exception as e_d270:
+        logger.warning(f"⚠️  auto-assign d270: {e_d270}")
         db.rollback()
 
     result["d270_regs"] = sum(1 for t in all_txns_all if t.get("d270_codigo"))
@@ -1457,15 +1465,17 @@ def get_d270_preview(period: str, request: Request, db: Session = Depends(_get_d
     period_fmt_d = f"{year_d}-{month_d}"
 
     rows = db.execute(text("""
-        SELECT bt.descripcion, bt.base_estimada AS monto, bt.d270_codigo,
+        SELECT bt.descripcion,
+               COALESCE(bt.base_estimada, ABS(bt.monto)) AS monto,
+               bt.d270_codigo,
                bt.accion AS observacion, br.period
         FROM bank_transactions bt
         JOIN bank_reconciliation br ON br.id = bt.recon_id
         WHERE br.tenant_id   = :tenant_id
           AND (br.period = :period OR br.period = :period_fmt)
           AND bt.d270_codigo IS NOT NULL
-          AND bt.accion_tomada = FALSE
-        ORDER BY bt.d270_codigo, bt.monto DESC
+          AND COALESCE(bt.accion_tomada, FALSE) = FALSE
+        ORDER BY bt.d270_codigo, ABS(bt.monto) DESC
     """), {"tenant_id": tenant_id, "period": period, "period_fmt": period_fmt_d}).fetchall()
 
     items = [dict(r._mapping) for r in rows]
