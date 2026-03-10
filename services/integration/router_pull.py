@@ -127,7 +127,69 @@ def _process_import_batch(
 # Endpoints
 # ─────────────────────────────────────────────────────────────────
 
+@router.get("/ping")
+def get_ping_genoma(
+    period:       str    = Query(None, description="Período YYYYMM para verificar documentos"),
+    db:           Session = Depends(get_session),
+    current_user: dict    = Depends(get_current_user),
+):
+    """
+    Diagnóstico de conectividad con Genoma Contable.
+    Informa: URL configurada, estado de autenticación, y si hay docs en el período.
+    Útil para saber exactamente por qué falla el botón 'Importar del mes'.
+    """
+    import os
+    from services.integration.genoma_client import GENOMA_CONTABLE_URL, pull_documentos_enviados
+
+    tenant_id    = current_user["tenant_id"]
+    tenant_token = current_user.get("token", "")
+    url_config   = GENOMA_CONTABLE_URL
+
+    diag = {
+        "genoma_contable_url":  url_config,
+        "url_configurada":      url_config != "https://api.genoma.io",
+        "token_presente":       bool(tenant_token),
+        "tenant_id":            tenant_id[:8] + "...",
+        "periodo_consultado":   period,
+        "enviados_check":       None,
+        "error":                None,
+    }
+
+    if period:
+        result = pull_documentos_enviados(
+            tenant_token=tenant_token,
+            period=period,
+            page=1,
+            limit=5,
+        )
+        if result["ok"]:
+            diag["enviados_check"] = {
+                "ok": True,
+                "total_disponibles": result.get("total", 0),
+                "muestra": [d.get("numero_doc") for d in result.get("items", [])[:5]],
+            }
+        else:
+            diag["enviados_check"] = {"ok": False, "error": result.get("error")}
+            diag["error"] = result.get("error")
+
+    # Diagnóstico claro del problema más probable
+    if not diag["url_configurada"]:
+        diag["diagnostico"] = (
+            "🔴 GENOMA_CONTABLE_URL no está configurada en el entorno del servidor. "
+            f"Actualmente apunta a '{url_config}'. "
+            "Agrega GENOMA_CONTABLE_URL=https://tu-instancia-genoma.io en las variables de entorno de Render."
+        )
+    elif not diag["token_presente"]:
+        diag["diagnostico"] = "🔴 Token del contador no está disponible en el JWT. Cierra sesión y vuelve a entrar."
+    elif diag["enviados_check"] and not diag["enviados_check"]["ok"]:
+        diag["diagnostico"] = f"🔴 Genoma Contable rechazó la consulta: {diag['error']}"
+    else:
+        diag["diagnostico"] = "🟢 Conexión OK"
+
+    return diag
+
 @router.get("/pull-enviados")
+
 def get_pull_enviados(
     period:     str           = Query(..., description="Período YYYYMM"),
     page:       int           = Query(1,   ge=1),

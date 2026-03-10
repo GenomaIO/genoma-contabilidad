@@ -85,8 +85,9 @@ export default function AsientosPendientes() {
     async function handleImportarMes() {
         setImportLoading(true); setImportMsg(null)
         try {
-            // Pull enviados + recibidos en paralelo
             const p = getPeriodYYYYMM()
+
+            // Pull enviados + recibidos en paralelo
             const [envRes, recRes] = await Promise.all([
                 fetch(`${apiUrl}/integration/pull-enviados?period=${p}&import_all=true`, {
                     headers: { Authorization: `Bearer ${token}` }
@@ -95,12 +96,42 @@ export default function AsientosPendientes() {
                     headers: { Authorization: `Bearer ${token}` }
                 }),
             ])
+
+            // ── 🔴 FIX: verificar HTTP status ANTES de procesar JSON ────────
+            // Si Genoma Contable no está disponible, un 503 se leía antes como
+            // lista vacía y el sistema mostraba "No hay documentos nuevos" en silencio.
+            if (!envRes.ok || !recRes.ok) {
+                const errEnv = !envRes.ok ? await envRes.json().catch(() => ({})) : {}
+                const errRec = !recRes.ok ? await recRes.json().catch(() => ({})) : {}
+                const detalle = errEnv.detail || errRec.detail || `HTTP ${envRes.status}/${recRes.status}`
+                setImportMsg({
+                    ok: false,
+                    text: `🔴 No se pudo conectar con Genoma Contable: ${detalle}. Verifica que GENOMA_CONTABLE_URL esté configurado en el entorno del servidor.`
+                })
+                return
+            }
+
             const [envData, recData] = await Promise.all([envRes.json(), recRes.json()])
             const allDocs = [...(envData.items || []), ...(recData.items || [])]
+
+            // ── Diagnóstico: si la API respondió OK pero devolvió 0 docs ────
+            if (allDocs.length === 0) {
+                setImportMsg({
+                    ok: true,
+                    text: `ℹ️ Genoma Contable no tiene documentos aceptados para el período ${period}. ` +
+                        `Si esperas documentos, verifica que el token del contador esté activo y que el período sea correcto.`
+                })
+                return
+            }
+
             const nuevos = allDocs.filter(d => !d.ya_importado)
+            const yaImportados = allDocs.length - nuevos.length
 
             if (nuevos.length === 0) {
-                setImportMsg({ ok: true, text: '✅ No hay documentos nuevos — todo ya estaba importado.' })
+                setImportMsg({
+                    ok: true,
+                    text: `✅ Los ${yaImportados} documento${yaImportados !== 1 ? 's' : ''} del período ya estaban importados — sin duplicados.`
+                })
                 return
             }
 
@@ -114,16 +145,23 @@ export default function AsientosPendientes() {
                     docs_data: nuevos,
                 }),
             })
+
+            if (!batchRes.ok) {
+                const errB = await batchRes.json().catch(() => ({}))
+                setImportMsg({ ok: false, text: `⚠️ Error al importar: ${errB.detail || errB.error || batchRes.status}` })
+                return
+            }
+
             const batchData = await batchRes.json()
             setImportMsg({
                 ok: batchData.ok,
                 text: batchData.ok
-                    ? `✅ ${batchData.message}`
+                    ? `✅ ${batchData.message}${yaImportados > 0 ? ` · ${yaImportados} ya existían (sin duplicados)` : ''}`
                     : `⚠️ Error al importar: ${batchData.error}`,
             })
             if (batchData.ok) { fetchEntries(); setActiveTab('DRAFT') }
         } catch (e) {
-            setImportMsg({ ok: false, text: `⚠️ Error: ${e.message}` })
+            setImportMsg({ ok: false, text: `⚠️ Error de red: ${e.message}` })
         } finally {
             setImportLoading(false)
         }
