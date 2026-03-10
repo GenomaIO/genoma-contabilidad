@@ -545,8 +545,7 @@ export default function Centinela() {
             <div style={{ display: 'flex', gap: 4, marginBottom: 16, flexWrap: 'wrap', alignItems: 'center' }}>
                 <div style={{ display: 'flex', gap: 4, flex: 1, flexWrap: 'wrap' }}>
                     {[
-                        { k: 'score', label: '📊 Score V2' },
-                        { k: 'tabla', label: '📄 Conciliación' },
+                        { k: 'score', label: '📊 Score' },
                         { k: 'fugas', label: '🔴 Fugas' },
                         { k: 'd270', label: '📋 D-270' },
                     ].map(t => (
