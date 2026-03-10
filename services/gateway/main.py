@@ -18,6 +18,7 @@ from services.auth.router import router as auth_router
 from services.catalog.router import router as catalog_router
 from services.ledger.router import router as ledger_router
 from services.integration.webhook_receiver import router as integration_router
+from services.integration.router_pull      import router as pull_router
 from services.assets.router import router as assets_router
 from services.tax.router import router as tax_router
 from services.reporting.router import router as reporting_router
@@ -942,6 +943,8 @@ app.include_router(auth_router)
 app.include_router(catalog_router)
 app.include_router(ledger_router)
 app.include_router(integration_router)
+app.include_router(pull_router)          # Auto-importación FE/FEC desde Genoma Contable
+
 app.include_router(assets_router)
 app.include_router(tax_router)
 app.include_router(reporting_router)
