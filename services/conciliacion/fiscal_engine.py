@@ -404,6 +404,48 @@ D270_CODIGOS = {
     "I":  "Intereses a entidades financieras",
 }
 
+# Palabras clave para detectar ingresos por intereses bancarios
+_PALABRAS_INTERES = [
+    "INTERES", "INTERÉS", "RDTO", "RENDIMIENTO", "RENTA FIJA",
+    "CAPITALIZACION", "CAPITALIZACIÓN",
+]
+
+
+def asignar_d270_auto(txns: list[dict]) -> list[dict]:
+    """
+    Asigna código D-270 automáticamente a transacciones SIN_FE/SIN_ASIENTO.
+    No modifica las que ya tienen código asignado ni las CON_FE.
+
+    Reglas:
+      CR + palabras de interés en descripción → I (Intereses)
+      CR genérico SIN_FE                     → V (Ventas sin comprobante)
+      DB SIN_FE con monto ≥ 1                → C (Compras sin comprobante)
+      CON_FE / CONCILIADO / PROBABLE         → sin código (None)
+    """
+    estados_sin_fe = {"SIN_FE", "SIN_ASIENTO"}
+
+    for txn in txns:
+        if txn.get("match_estado") not in estados_sin_fe:
+            continue                          # CON_FE / CONCILIADO → skip
+        if txn.get("d270_codigo"):
+            continue                          # ya tiene código → respetar
+
+        desc  = (txn.get("descripcion") or "").upper()
+        tipo  = (txn.get("tipo") or "DB").upper()
+        monto = abs(float(txn.get("monto", 0)))
+
+        if tipo == "CR":
+            if any(k in desc for k in _PALABRAS_INTERES):
+                txn["d270_codigo"] = "I"
+            else:
+                txn["d270_codigo"] = "V"
+        else:  # DB
+            if monto >= 1:
+                txn["d270_codigo"] = "C"
+
+    return txns
+
+
 
 def generar_d270_csv(
     tenant_id: str,

@@ -1107,11 +1107,27 @@ def run_centinela_period(period: str, request: Request, db: Session = Depends(_g
         saldo_banco  = saldo_final_total,
         saldo_libros = saldo_libros,
     )
+
+    # Asignar código D-270 automáticamente a txns SIN_FE y persistir en DB
+    from services.conciliacion.fiscal_engine import asignar_d270_auto
+    asignar_d270_auto(all_txns_all)
+    try:
+        for txn in all_txns_all:
+            if txn.get("d270_codigo") and txn.get("id"):
+                db.execute(text("""
+                    UPDATE bank_transactions
+                    SET d270_codigo = :code
+                    WHERE id = :id AND d270_codigo IS NULL
+                """), {"code": txn["d270_codigo"], "id": txn["id"]})
+        db.commit()
+    except Exception:
+        db.rollback()
+
     # Compat: calcular_score v1 usaba fugas_tipo_a/b/c separados
     result.setdefault("fugas_tipo_a", sum(1 for f in fugas if f.get("fuga_tipo")=="A"))
     result.setdefault("fugas_tipo_b", sum(1 for f in fugas if f.get("fuga_tipo")=="B"))
     result.setdefault("fugas_tipo_c", sum(1 for f in fugas if f.get("fuga_tipo")=="C"))
-    result.setdefault("d270_regs", len([f for f in fugas if f.get("d270_codigo")]))
+    result["d270_regs"] = sum(1 for t in all_txns_all if t.get("d270_codigo"))
 
     # ── 6. Acumular bank_counterparties ───────────────────────────────────────
     por_beneficiario: dict = defaultdict(lambda: {
@@ -1376,6 +1392,23 @@ def get_score(period: str, request: Request, db: Session = Depends(_get_db)):
         saldo_banco  = saldo_banco,
         saldo_libros = saldo_libros,
     )
+
+    # Asignar código D-270 automáticamente a txns SIN_FE y persistir en DB
+    from services.conciliacion.fiscal_engine import asignar_d270_auto
+    asignar_d270_auto(all_txns_all)
+    try:
+        for txn in all_txns_all:
+            if txn.get("d270_codigo") and txn.get("id"):
+                db.execute(text("""
+                    UPDATE bank_transactions
+                    SET d270_codigo = :code
+                    WHERE id = :id AND d270_codigo IS NULL
+                """), {"code": txn["d270_codigo"], "id": txn["id"]})
+        db.commit()
+    except Exception:
+        db.rollback()
+
+    result["d270_regs"] = sum(1 for t in all_txns_all if t.get("d270_codigo"))
 
     # Guardar para proximas visitas
     try:
