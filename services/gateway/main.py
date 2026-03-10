@@ -643,6 +643,76 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning(f"⚠️  Migración M_ENUM_DEPRECIACION omitida: {e}")
 
+        # ── Migración M_AUTOIMPOR: Auto-Importación desde Genoma Contable ──
+        # Tablas y columnas para el módulo de importación de FE/FEC.
+        # 100% idempotente: IF NOT EXISTS + ADD COLUMN IF NOT EXISTS.
+        # Cero riesgo de romper tablas existentes — solo adiciones.
+        try:
+            with _engine.begin() as conn:
+                # Tabla de reglas CABYS → cuenta (aprende del contador)
+                conn.execute(text("""
+                    CREATE TABLE IF NOT EXISTS cabys_account_rules (
+                        id           TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+                        tenant_id    TEXT NOT NULL,
+                        cabys_code   TEXT,
+                        cabys_prefix TEXT,
+                        account_code TEXT NOT NULL,
+                        asset_flag   BOOLEAN DEFAULT FALSE,
+                        min_amount   NUMERIC(18,5),
+                        fuente       TEXT DEFAULT 'MANUAL',
+                        prioridad    INT DEFAULT 10,
+                        created_at   TIMESTAMPTZ DEFAULT now(),
+                        UNIQUE (tenant_id, cabys_code)
+                    )
+                """))
+                conn.execute(text(
+                    "CREATE INDEX IF NOT EXISTS idx_cabys_rules_tenant "
+                    "ON cabys_account_rules (tenant_id, cabys_code)"
+                ))
+
+                # Tabla de sesiones de importación (dedup + auditoría)
+                conn.execute(text("""
+                    CREATE TABLE IF NOT EXISTS import_batch (
+                        id          TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+                        tenant_id   TEXT NOT NULL,
+                        period      TEXT NOT NULL,
+                        tipo        TEXT NOT NULL,
+                        total_docs  INT DEFAULT 0,
+                        importados  INT DEFAULT 0,
+                        skipped     INT DEFAULT 0,
+                        estado      TEXT DEFAULT 'PENDIENTE',
+                        created_at  TIMESTAMPTZ DEFAULT now()
+                    )
+                """))
+                conn.execute(text(
+                    "CREATE INDEX IF NOT EXISTS idx_import_batch_tenant_period "
+                    "ON import_batch (tenant_id, period)"
+                ))
+
+                # Columnas nuevas en journal_lines (trazabilidad CABYS)
+                for col_sql in [
+                    "ALTER TABLE journal_lines ADD COLUMN IF NOT EXISTS cabys_code TEXT",
+                    "ALTER TABLE journal_lines ADD COLUMN IF NOT EXISTS cabys_descripcion TEXT",
+                    "ALTER TABLE journal_lines ADD COLUMN IF NOT EXISTS iva_tarifa NUMERIC(5,2)",
+                    "ALTER TABLE journal_lines ADD COLUMN IF NOT EXISTS iva_tipo TEXT",
+                    "ALTER TABLE journal_lines ADD COLUMN IF NOT EXISTS confidence_score NUMERIC(3,2)",
+                    "ALTER TABLE journal_lines ADD COLUMN IF NOT EXISTS clasificacion_fuente TEXT",
+                ]:
+                    conn.execute(text(col_sql))
+
+                # Columnas nuevas en journal_entries (revisión del contador)
+                for col_sql in [
+                    "ALTER TABLE journal_entries ADD COLUMN IF NOT EXISTS needs_review BOOLEAN DEFAULT FALSE",
+                    "ALTER TABLE journal_entries ADD COLUMN IF NOT EXISTS confidence_score NUMERIC(3,2)",
+                    "ALTER TABLE journal_entries ADD COLUMN IF NOT EXISTS source_doc_lines JSONB",
+                ]:
+                    conn.execute(text(col_sql))
+
+            logger.info("✅ Migración M_AUTOIMPOR: cabys_account_rules, import_batch y columnas CABYS creadas")
+        except Exception as e:
+            logger.warning(f"⚠️  Migración M_AUTOIMPOR omitida: {e}")
+
+
     # ── Auto-reseed: al arrancar, aplica cuentas nuevas del seed a TODOS
     # los tenants con cuentas existentes. Usa seed_standard_catalog()
     # con raw SQL / ON CONFLICT DO NOTHING — igual que el boton Sembrar.
