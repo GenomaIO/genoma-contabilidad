@@ -989,15 +989,15 @@ def run_centinela_period(period: str, request: Request, db: Session = Depends(_g
     month       = period[4:6] if len(period) >= 6 else "01"
     period_fmt  = f"{year}-{month}"
 
-    # ── 1. Todos los recon_ids del tenant para este período ───────────────────
-    # bank_reconciliation guarda period en formato 'YYYY-MM' (con guión)
-    # pero el endpoint recibe 'YYYYMM' → normalizamos ambos
+    # ── 1. Sesión más reciente por cuenta bancaria (account_code) ────────────
+    # DISTINCT ON evita contar duplicados cuando se generaron varias sesiones
+    # de prueba para la misma cuenta en el mismo período.
     sesiones_rows = db.execute(text("""
-        SELECT id, banco, account_code, saldo_final
+        SELECT DISTINCT ON (account_code) id, banco, account_code, saldo_final
         FROM bank_reconciliation
         WHERE tenant_id = :tid
           AND (period = :period OR period = :period_fmt)
-        ORDER BY created_at DESC
+        ORDER BY account_code, created_at DESC
     """), {"tid": tenant_id, "period": period, "period_fmt": period_fmt}).fetchall()
 
     if not sesiones_rows:
