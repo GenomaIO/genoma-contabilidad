@@ -926,7 +926,7 @@ def run_centinela(recon_id: str, db: Session = Depends(_get_db)):
           (tenant_id, period, score_total, fugas_tipo_a, fugas_tipo_b, fugas_tipo_c,
            exposicion_iva, exposicion_renta, exposicion_total, d270_regs, score_detalle)
         VALUES
-          (:tenant_id, :period, :score, :a, :b, :c, :iva, :renta, :total, :d270, :det::jsonb)
+          (:tenant_id, :period, :score, :a, :b, :c, :iva, :renta, :total, :d270, CAST(:det AS JSONB))
         ON CONFLICT (tenant_id, period)
         DO UPDATE SET
           score_total = EXCLUDED.score_total, fugas_tipo_a = EXCLUDED.fugas_tipo_a,
@@ -1150,7 +1150,7 @@ def run_centinela_period(period: str, request: Request, db: Session = Depends(_g
             INSERT INTO centinela_score
               (tenant_id, period, score_total, fugas_tipo_a, fugas_tipo_b, fugas_tipo_c,
                exposicion_iva, exposicion_renta, exposicion_total, d270_regs, score_detalle)
-            VALUES (:tid,:period,:score,:a,:b,:c,:iva,:renta,:total,:d270,:det::jsonb)
+            VALUES (:tid,:period,:score,:a,:b,:c,:iva,:renta,:total,:d270,CAST(:det AS JSONB))
             ON CONFLICT (tenant_id, period) DO UPDATE SET
               score_total=EXCLUDED.score_total, fugas_tipo_a=EXCLUDED.fugas_tipo_a,
               fugas_tipo_b=EXCLUDED.fugas_tipo_b, fugas_tipo_c=EXCLUDED.fugas_tipo_c,
