@@ -41,19 +41,47 @@ export default function ClientSelector() {
             })
     }, [])
 
-    // Al seleccionar una empresa — guarda contexto completo para documentos fiscales
+    // Al seleccionar una empresa — guarda contexto y dispara auto-pull en background
     function selectClient(client) {
         dispatch({
             type: 'SET_TENANT',
             payload: {
                 tenant_id: client.tenant_id,
-                emisor_id: client.emisor_id || null,  // puerta a FE/TE/recibidos
+                emisor_id: client.emisor_id || null,
                 nombre: client.nombre,
                 estado: client.estado || client.status || 'ACTIVO',
                 origen: client.origen || 'contabilidad',
                 numero: client.numero || null,
             }
         })
+
+        // Auto-pull: solo para clientes del Facturador (partner_linked)
+        // client.tenant_id viene FRESCO de la API — sin depender de state.tenant
+        // Corre en background: el contador navega de inmediato al Dashboard
+        if (client.origen === 'facturador' && client.tenant_id) {
+            const now = new Date()
+            const period = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`
+            const ftid = encodeURIComponent(client.tenant_id)
+            const base = `${apiUrl}/integration`
+
+            // Fire-and-forget: no bloqueamos la navegación
+            Promise.allSettled([
+                fetch(`${base}/pull-enviados?period=${period}&import_all=true&facturador_tenant_id=${ftid}`, {
+                    headers: { Authorization: `Bearer ${token}` }
+                }),
+                fetch(`${base}/pull-recibidos?period=${period}&import_all=true&facturador_tenant_id=${ftid}`, {
+                    headers: { Authorization: `Bearer ${token}` }
+                })
+            ]).then(results => {
+                // Solo loggeamos en consola — no afecta la UX
+                results.forEach((r, i) => {
+                    if (r.status === 'rejected') {
+                        console.warn(`[auto-pull] error en ${i === 0 ? 'enviados' : 'recibidos'}:`, r.reason)
+                    }
+                })
+            })
+        }
+
         navigate('/')
     }
 
