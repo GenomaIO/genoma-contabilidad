@@ -347,16 +347,20 @@ def map_document_lines_to_entry(db: Session, doc: dict, tenant_id: str) -> dict:
 
     # Verificar confianza mínima para marcar needs_review
     lines_data = _build_entry_lines_from_doc(doc, tenant_id, entry_id, db)
-    needs_review = any(l.get("needs_review") or l.get("confidence_score", 1.0) < 0.7
-                       for l in lines_data)
-    min_confidence = min((l.get("confidence_score") or 1.0 for l in lines_data), default=1.0)
+    needs_review = any(
+        l.get("needs_review") or (l.get("confidence_score") or 1.0) < 0.7
+        for l in lines_data
+    )
+    min_confidence = min(
+        ((l.get("confidence_score") or 1.0) for l in lines_data), default=1.0
+    )
 
     entry = JournalEntry(
         id           = entry_id,
         tenant_id    = tenant_id,
         period       = period,
         date         = doc.get("fecha", ""),
-        description  = f"[{tipo}] {emisor} · {num_doc} · ₡{float(total):,.2f}",
+        description  = f"[{tipo}] {emisor} · {num_doc} · ₡{float(total or 0):,.2f}",
         status       = EntryStatus.DRAFT,
         source       = source,
         source_ref   = doc.get("clave", ""),
