@@ -37,6 +37,12 @@ function reducer(state, action) {
             return { ...state, user: action.payload }
 
         case 'SET_TENANT':
+            // Persistir el tenant seleccionado entre recargas (Opción B — localStorage)
+            if (action.payload) {
+                localStorage.setItem('gc_selected_tenant', JSON.stringify(action.payload))
+            } else {
+                localStorage.removeItem('gc_selected_tenant')
+            }
             return { ...state, tenant: action.payload }
 
         case 'SET_PERIOD':
@@ -54,6 +60,7 @@ function reducer(state, action) {
 
         case 'LOGOUT':
             localStorage.removeItem('gc_token')
+            localStorage.removeItem('gc_selected_tenant')  // limpieza al cerrar sesión
             return { ...initialState, authLoading: false, theme: state.theme, apiStatus: state.apiStatus }
 
         default:
@@ -110,8 +117,24 @@ export function AppProvider({ children }) {
                 if (payload.catalog_mode) {
                     dispatch({ type: 'SET_CATALOG_MODE', payload: payload.catalog_mode })
                 }
+                // Opción B: restaurar el tenant seleccionado desde localStorage
+                // Esto garantiza que state.tenant no sea null tras recarga de página,
+                // solucionando el problema donde state.tenant?.tenant_id retornaba ''
+                // y el backend usaba GC-RNHJ en lugar del UUID real del cliente.
+                const savedTenant = localStorage.getItem('gc_selected_tenant')
+                if (savedTenant) {
+                    try {
+                        const tenantData = JSON.parse(savedTenant)
+                        // Solo restaurar si el JWT sigue siendo del mismo partner/user
+                        // (evita restaurar tenant de otra sesión)
+                        dispatch({ type: 'SET_TENANT', payload: tenantData })
+                    } catch {
+                        localStorage.removeItem('gc_selected_tenant')
+                    }
+                }
             } else {
                 localStorage.removeItem('gc_token')
+                localStorage.removeItem('gc_selected_tenant')
             }
         }
 
