@@ -203,19 +203,29 @@ def get_ping_genoma(
 
 @router.get("/pull-enviados")
 def get_pull_enviados(
-    period:     str           = Query(..., description="Período YYYYMM"),
-    page:       int           = Query(1,   ge=1),
-    limit:      int           = Query(10,  ge=1, le=100),
-    import_all: bool          = Query(False),
-    db:         Session       = Depends(get_session),
-    current_user: dict        = Depends(get_current_user),
+    period:               str           = Query(..., description="Período YYYYMM"),
+    page:                 int           = Query(1,   ge=1),
+    limit:                int           = Query(10,  ge=1, le=100),
+    import_all:           bool          = Query(False),
+    facturador_tenant_id: Optional[str] = Query(None, description="tenant_id real del cliente en el Facturador"),
+    db:                   Session       = Depends(get_session),
+    current_user:         dict          = Depends(get_current_user),
 ):
     """
     Consulta FE/TE/ND/NC enviados ACEPTADOS por Hacienda del cliente seleccionado.
     Autenticación: X-Partner-Token del Facturador (en gc_token como facturador_token).
+
+    facturador_tenant_id: tenant_id REAL del cliente (Álvaro) en el Facturador.
+      - El gc_token tiene tenant_id=GC-RNHJ (código del partner), NO el de Álvaro.
+      - El frontend pasa el tenant_id correcto desde state.tenant.tenant_id.
+      - Si no se pasa, cae en tenant_id del JWT (solo válido para cuentas standalone).
     """
-    tenant_id        = current_user["tenant_id"]          # = tenant_id de Álvaro en el Facturador
+    jwt_tenant_id    = current_user["tenant_id"]
     facturador_token = current_user.get("facturador_token", "")
+
+    # El tenant_id real del cliente viene del frontend (state.tenant.tenant_id)
+    # El gc_token solo tiene el código del partner (GC-RNHJ)
+    cliente_tenant_id = facturador_tenant_id or jwt_tenant_id
 
     if not facturador_token:
         raise HTTPException(
@@ -228,7 +238,7 @@ def get_pull_enviados(
 
     result = pull_documentos_enviados(
         facturador_token=facturador_token,
-        cliente_tenant_id=tenant_id,
+        cliente_tenant_id=cliente_tenant_id,
         period=period,
         page=1 if import_all else page,
         limit=1000 if import_all else limit,
@@ -242,7 +252,7 @@ def get_pull_enviados(
     docs = result.get("items", [])
 
     for doc in docs:
-        doc["ya_importado"] = _is_already_imported(db, tenant_id, doc.get("clave", ""))
+        doc["ya_importado"] = _is_already_imported(db, jwt_tenant_id, doc.get("clave", ""))
 
     if import_all:
         return {"items": docs, "total": len(docs), "page": 1, "total_pages": 1}
@@ -252,19 +262,21 @@ def get_pull_enviados(
 
 @router.get("/pull-recibidos")
 def get_pull_recibidos(
-    period:     str           = Query(..., description="Período YYYYMM"),
-    page:       int           = Query(1,   ge=1),
-    limit:      int           = Query(10,  ge=1, le=100),
-    import_all: bool          = Query(False),
-    db:         Session       = Depends(get_session),
-    current_user: dict        = Depends(get_current_user),
+    period:               str           = Query(..., description="Período YYYYMM"),
+    page:                 int           = Query(1,   ge=1),
+    limit:                int           = Query(10,  ge=1, le=100),
+    import_all:           bool          = Query(False),
+    facturador_tenant_id: Optional[str] = Query(None, description="tenant_id real del cliente en el Facturador"),
+    db:                   Session       = Depends(get_session),
+    current_user:         dict          = Depends(get_current_user),
 ):
     """
     Consulta FEC recibidos ACEPTADOS por Hacienda del cliente seleccionado.
     Retorna condicion_impuesto + iva_acreditado + iva_gasto para el asiento.
     """
-    tenant_id        = current_user["tenant_id"]
+    jwt_tenant_id    = current_user["tenant_id"]
     facturador_token = current_user.get("facturador_token", "")
+    cliente_tenant_id = facturador_tenant_id or jwt_tenant_id
 
     if not facturador_token:
         raise HTTPException(
@@ -277,7 +289,7 @@ def get_pull_recibidos(
 
     result = pull_documentos_recibidos(
         facturador_token=facturador_token,
-        cliente_tenant_id=tenant_id,
+        cliente_tenant_id=cliente_tenant_id,
         period=period,
         page=1 if import_all else page,
         limit=1000 if import_all else limit,
@@ -291,7 +303,7 @@ def get_pull_recibidos(
     docs = result.get("items", [])
 
     for doc in docs:
-        doc["ya_importado"] = _is_already_imported(db, tenant_id, doc.get("clave", ""))
+        doc["ya_importado"] = _is_already_imported(db, jwt_tenant_id, doc.get("clave", ""))
 
     if import_all:
         return {"items": docs, "total": len(docs), "page": 1, "total_pages": 1}

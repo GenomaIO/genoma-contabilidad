@@ -86,13 +86,16 @@ export default function AsientosPendientes() {
         setImportLoading(true); setImportMsg(null)
         try {
             const p = getPeriodYYYYMM()
+            // tenant_id REAL del cliente (Álvaro) — el gc_token tiene GC-RNHJ (código partner),
+            // pero state.tenant.tenant_id tiene el tenant_id correcto del cliente seleccionado
+            const ftid = state.tenant?.tenant_id || ''
 
             // Pull enviados + recibidos en paralelo
             const [envRes, recRes] = await Promise.all([
-                fetch(`${apiUrl}/integration/pull-enviados?period=${p}&import_all=true`, {
+                fetch(`${apiUrl}/integration/pull-enviados?period=${p}&import_all=true&facturador_tenant_id=${encodeURIComponent(ftid)}`, {
                     headers: { Authorization: `Bearer ${token}` }
                 }),
-                fetch(`${apiUrl}/integration/pull-recibidos?period=${p}&import_all=true`, {
+                fetch(`${apiUrl}/integration/pull-recibidos?period=${p}&import_all=true&facturador_tenant_id=${encodeURIComponent(ftid)}`, {
                     headers: { Authorization: `Bearer ${token}` }
                 }),
             ])
