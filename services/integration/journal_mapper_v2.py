@@ -366,9 +366,6 @@ def map_document_lines_to_entry(db: Session, doc: dict, tenant_id: str) -> dict:
         source_ref   = doc.get("clave", ""),
         created_by   = "AUTO_IMPORT",
         created_at   = now,
-        needs_review       = needs_review,
-        confidence_score   = min_confidence,
-        source_doc_lines   = doc.get("lineas"),
     )
     db.add(entry)
 
