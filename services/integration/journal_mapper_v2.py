@@ -330,11 +330,13 @@ def map_document_lines_to_entry(db: Session, doc: dict, tenant_id: str) -> dict:
     from services.ledger.models import JournalEntry, JournalLine, EntryStatus, EntrySource
 
     entry_id = str(uuid.uuid4())
-    period   = doc.get("fecha", "")[:7]
+    fecha_raw = (doc.get("fecha") or "")[:25]  # raw del Facturador
+    period   = fecha_raw[:7]    # 'YYYY-MM'
+    date_str = fecha_raw[:10]   # 'YYYY-MM-DD' — columna VARCHAR(10)
     now      = datetime.now(timezone.utc)
     tipo     = doc.get("tipo_doc", doc.get("doc_type", "08"))
-    emisor   = doc.get("emisor_nombre", "")[:60]
-    num_doc  = doc.get("numero_doc", "")
+    emisor   = (doc.get("emisor_nombre") or "")[:60]
+    num_doc  = (doc.get("numero_doc") or "")[:50]
     total    = doc.get("total_doc", 0)
 
     source_map = {
@@ -359,7 +361,7 @@ def map_document_lines_to_entry(db: Session, doc: dict, tenant_id: str) -> dict:
         id           = entry_id,
         tenant_id    = tenant_id,
         period       = period,
-        date         = doc.get("fecha", ""),
+        date         = date_str,
         description  = f"[{tipo}] {emisor} · {num_doc} · ₡{float(total or 0):,.2f}",
         status       = EntryStatus.DRAFT,
         source       = source,
