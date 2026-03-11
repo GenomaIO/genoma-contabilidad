@@ -55,31 +55,45 @@ export default function ClientSelector() {
             }
         })
 
-        // Auto-pull: solo para clientes del Facturador (partner_linked)
-        // client.tenant_id viene FRESCO de la API — sin depender de state.tenant
-        // Corre en background: el contador navega de inmediato al Dashboard
+        // Auto-pull completo: pull → filter nuevos → import-batch (crea asientos borrador)
+        // client.tenant_id FRESCO de la API — sin depender de state.tenant
+        // Fire-and-forget en IIFE async: navigate('/') corre inmediatamente
         if (client.origen === 'facturador' && client.tenant_id) {
             const now = new Date()
             const period = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`
             const ftid = encodeURIComponent(client.tenant_id)
             const base = `${apiUrl}/integration`
+            const hdrs = { Authorization: `Bearer ${token}` }
 
-            // Fire-and-forget: no bloqueamos la navegación
-            Promise.allSettled([
-                fetch(`${base}/pull-enviados?period=${period}&import_all=true&facturador_tenant_id=${ftid}`, {
-                    headers: { Authorization: `Bearer ${token}` }
-                }),
-                fetch(`${base}/pull-recibidos?period=${period}&import_all=true&facturador_tenant_id=${ftid}`, {
-                    headers: { Authorization: `Bearer ${token}` }
-                })
-            ]).then(results => {
-                // Solo loggeamos en consola — no afecta la UX
-                results.forEach((r, i) => {
-                    if (r.status === 'rejected') {
-                        console.warn(`[auto-pull] error en ${i === 0 ? 'enviados' : 'recibidos'}:`, r.reason)
+                ; (async () => {
+                    try {
+                        // Paso 1: Pull enviados + recibidos en paralelo
+                        const [envRes, recRes] = await Promise.all([
+                            fetch(`${base}/pull-enviados?period=${period}&import_all=true&facturador_tenant_id=${ftid}`, { headers: hdrs }),
+                            fetch(`${base}/pull-recibidos?period=${period}&import_all=true&facturador_tenant_id=${ftid}`, { headers: hdrs }),
+                        ])
+                        if (!envRes.ok || !recRes.ok) return
+
+                        const [envData, recData] = await Promise.all([envRes.json(), recRes.json()])
+                        const allDocs = [...(envData.items || []), ...(recData.items || [])]
+                        const nuevos = allDocs.filter(d => !d.ya_importado)
+
+                        if (nuevos.length === 0) return
+
+                        // Paso 2: import-batch → crea asientos borrador en la DB
+                        await fetch(`${base}/import-batch`, {
+                            method: 'POST',
+                            headers: { ...hdrs, 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                doc_ids: nuevos.map(d => d.clave),
+                                period,
+                                docs_data: nuevos,
+                            }),
+                        })
+                    } catch {
+                        // Fail silently — no interrumpe la UX
                     }
-                })
-            })
+                })()
         }
 
         navigate('/')
