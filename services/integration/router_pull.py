@@ -382,3 +382,120 @@ def post_import_batch(
         ),
     }
 
+
+
+# ─────────────────────────────────────────────────────────────────
+# POST /integration/purge-bad-drafts
+# Borra DRAFTs de FE Recibidas importados con logica vieja (4xxx)
+# y libera sus source_ref para re-importacion correcta.
+# ─────────────────────────────────────────────────────────────────
+
+class PurgeBadDraftsRequest(BaseModel):
+    entry_ids: list[str] = []
+    confirm:   bool      = False
+
+
+@router.post("/purge-bad-drafts")
+def purge_bad_drafts(
+    payload:      PurgeBadDraftsRequest,
+    db:           Session = Depends(get_session),
+    current_user: dict    = Depends(get_current_user),
+):
+    """
+    Borra en batch DRAFTs de FE Recibidas importados con la logica vieja
+    (cuenta 4xxx = ingreso cuando deben ser egresos).
+
+    Paso 1: Detecta DRAFTs con linea 4xxx + source HACIENDA_PULL/AUTO.
+            O recibe entry_ids explicitos desde la UI.
+    Paso 2: Hard-delete de lineas + encabezados (solo DRAFT permitido).
+    Paso 3: Retorna source_refs liberados para que el usuario re-importe
+            desde pull-recibidos con la logica corregida (5xxx/CxP/IVA Credito).
+
+    confirm=True requerido para ejecutar.
+    """
+    if current_user["role"] not in ("admin", "contador"):
+        raise HTTPException(403, "Solo admin o contador puede ejecutar purge-bad-drafts")
+
+    tenant_id = current_user["tenant_id"]
+
+    if not payload.confirm:
+        raise HTTPException(
+            400,
+            "Agrega confirm=true en el payload para ejecutar el borrado real. "
+            "Esto borrara los DRAFTs malos y liberara sus source_ref para re-importar."
+        )
+
+    # 1. Identificar candidatos
+    if payload.entry_ids:
+        candidate_ids = payload.entry_ids
+    else:
+        rows = db.execute(text("""
+            SELECT DISTINCT je.id
+            FROM journal_entries je
+            JOIN journal_lines  jl ON jl.entry_id = je.id
+            WHERE je.tenant_id = :tid
+              AND je.status    = 'DRAFT'
+              AND je.source    IN ('HACIENDA_PULL', 'hacienda_pull', 'AUTO')
+              AND jl.account_code LIKE '4%'
+        """), {"tid": tenant_id}).fetchall()
+        candidate_ids = [r[0] for r in rows]
+
+    if not candidate_ids:
+        return {
+            "ok":       True,
+            "borrados": 0,
+            "liberados": [],
+            "mensaje":  "No se encontraron DRAFTs con cuentas 4xxx para borrar.",
+        }
+
+    # 2. Verificar estado DRAFT
+    placeholders = ",".join([f":id{i}" for i in range(len(candidate_ids))])
+    id_params    = {f"id{i}": v for i, v in enumerate(candidate_ids)}
+    entries_db   = db.execute(
+        text(f"SELECT id, status, source_ref, description "
+             f"FROM journal_entries "
+             f"WHERE tenant_id = :tid AND id IN ({placeholders})"),
+        {"tid": tenant_id, **id_params}
+    ).fetchall()
+
+    bad_status    = [e[0] for e in entries_db if e[1] not in ("DRAFT", "draft")]
+    draft_entries = [e for e in entries_db if e[1] in ("DRAFT", "draft")]
+
+    if bad_status:
+        raise HTTPException(
+            400,
+            f"Los asientos {bad_status} NO son DRAFT y no se pueden borrar aqui. "
+            f"Para POSTED usa PATCH /ledger/entries/{{id}}/void."
+        )
+
+    # 3. Hard-delete
+    source_refs_liberados = []
+    borrados = 0
+
+    for e in draft_entries:
+        entry_id   = e[0]
+        source_ref = e[2]
+        desc       = (e[3] or "")[:60]
+
+        db.execute(text("DELETE FROM journal_lines   WHERE entry_id  = :eid"), {"eid": entry_id})
+        db.execute(text("DELETE FROM journal_entries WHERE id = :eid AND tenant_id = :tid"),
+                   {"eid": entry_id, "tid": tenant_id})
+
+        if source_ref:
+            source_refs_liberados.append(source_ref)
+
+        logger.info(f"purge-bad-drafts: DRAFT {entry_id} borrado (ref={source_ref}, desc={desc})")
+        borrados += 1
+
+    db.commit()
+
+    return {
+        "ok":       True,
+        "borrados": borrados,
+        "liberados": source_refs_liberados,
+        "mensaje": (
+            f"{borrados} asiento(s) DRAFT eliminado(s). "
+            f"Podes re-importarlos desde 'FE Recibidas' con la logica corregida "
+            f"(Gasto + CxP + IVA Credito). El ICE Telecomunicaciones tambien estara disponible."
+        ),
+    }
