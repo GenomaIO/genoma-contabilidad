@@ -713,6 +713,42 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning(f"⚠️  Migración M_AUTOIMPOR omitida: {e}")
 
+        # ── Migración M_IVA_DIFERIDO: tabla iva_diferidos ─────────────
+        # Tracking de IVA diferido (condición de venta 11, Art.17 Ley IVA 9635).
+        # Cuando un doc tiene condicion=11, el IVA queda en cuenta 2108 (IVA Diferido)
+        # y se registra aquí con su fecha de vencimiento (fecha_doc + 90 días).
+        # El worker corre diariamente y genera DR 2108 → CR 2102 cuando vence.
+        # CREATE TABLE IF NOT EXISTS + índices = idempotente en cada arranque.
+        try:
+            with _engine.begin() as conn:
+                conn.execute(text("""
+                    CREATE TABLE IF NOT EXISTS iva_diferidos (
+                        id               VARCHAR(36) PRIMARY KEY,
+                        tenant_id        VARCHAR(36) NOT NULL,
+                        entry_id         VARCHAR(36) NOT NULL,
+                        source_ref       VARCHAR(100),
+                        fecha_doc        VARCHAR(10) NOT NULL,
+                        vencimiento      VARCHAR(10) NOT NULL,
+                        monto_iva        NUMERIC(18,5) NOT NULL,
+                        cuenta_origen    VARCHAR(20) NOT NULL DEFAULT '2108',
+                        cuenta_destino   VARCHAR(20) NOT NULL DEFAULT '2102',
+                        estado           VARCHAR(20) NOT NULL DEFAULT 'PENDIENTE',
+                        entry_id_cierre  VARCHAR(36),
+                        created_at       TIMESTAMPTZ DEFAULT NOW()
+                    )
+                """))
+                conn.execute(text(
+                    "CREATE INDEX IF NOT EXISTS idx_iva_dif_tenant "
+                    "ON iva_diferidos(tenant_id)"
+                ))
+                conn.execute(text(
+                    "CREATE INDEX IF NOT EXISTS idx_iva_dif_estado_venc "
+                    "ON iva_diferidos(estado, vencimiento)"
+                ))
+            logger.info("✅ Migración M_IVA_DIFERIDO: tabla iva_diferidos creada/verificada")
+        except Exception as e:
+            logger.warning(f"⚠️  Migración M_IVA_DIFERIDO omitida: {e}")
+
 
     # ── Auto-reseed: al arrancar, aplica cuentas nuevas del seed a TODOS
     # los tenants con cuentas existentes. Usa seed_standard_catalog()
@@ -1014,6 +1050,39 @@ def trigger_monthly_depreciation(secret: str, period: str = None):
         from sqlalchemy.orm import Session as _DS
         with _DS(_engine) as _s:
             result = auto_depreciate_period(_s, period)
+        return result
+    except Exception as exc:
+        from fastapi import HTTPException as _HE
+        raise _HE(500, str(exc))
+
+
+# ── Job manual: IVA Diferido check (Render Cron / emergencia) ────────
+# POST /jobs/run-iva-diferido-check?secret=...&auto_post=false
+@app.post("/jobs/run-iva-diferido-check")
+def trigger_iva_diferido_check(secret: str, auto_post: bool = False):
+    """
+    Ejecuta el worker de IVA Diferido para todos los tenants.
+    Detecta registros iva_diferidos con vencimiento <= hoy y genera
+    asientos DRAFT DR 2108 → CR 2102. Idempotente.
+
+    auto_post=False (default): entry DRAFT (contador aprueba).
+    auto_post=True: entry POSTED automático (solo modo cierre masivo).
+    """
+    if secret != os.getenv("IVA_JOB_SECRET", "genoma-iva-secret-2026"):
+        from fastapi import HTTPException as _HE
+        raise _HE(403, "Clave secreta inválida")
+    if not _engine:
+        from fastapi import HTTPException as _HE
+        raise _HE(503, "Base de datos no disponible")
+    try:
+        from services.integration.iva_diferido_worker import run_iva_diferido_check as _iva_check
+        from sqlalchemy.orm import Session as _IVAS
+        with _IVAS(_engine) as _s:
+            result = _iva_check(_s, auto_post=auto_post)
+        logger.info(
+            f"✅ IVA Diferido job: {result['generados']} asiento(s) generado(s), "
+            f"{result['errores']} error(es)"
+        )
         return result
     except Exception as exc:
         from fastapi import HTTPException as _HE

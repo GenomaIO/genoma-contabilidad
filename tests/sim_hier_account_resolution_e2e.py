@@ -27,18 +27,21 @@ def check(label, cond):
 
 # ── Mock de DB para SIM ──────────────────────────────────────────────
 class MockDB:
-    """Simula un catálogo de cuentas del tenant en memoria."""
+    """
+    Simula un catálogo de cuentas del tenant en memoria.
+    Detecta el tipo de query por los parámetros pasados en lugar del
+    string SQL (que puede variar según el estado de SQLAlchemy).
+    """
     def __init__(self, cuentas: list[str]):
         self.cuentas = set(cuentas)
 
     def execute(self, stmt, params):
-        stmt_str = str(stmt)
-        # Detectar el tipo de query
-        if "AND code = :code" in stmt_str:
+        # Detectamos por las KEYS del params dict — 100% robusto al estado de SQLAlchemy
+        if "code" in params and "prefix" not in params:
             # Exact match
             code = params.get("code", "")
             return MockResult([code] if code in self.cuentas else [])
-        elif "LIKE :prefix" in stmt_str:
+        elif "prefix" in params:
             # Prefix match normalizado
             prefix = params.get("prefix", "")
             matches = sorted(
