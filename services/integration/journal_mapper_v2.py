@@ -174,16 +174,29 @@ def _build_entry_lines_from_doc(doc: dict, tenant_id: str, entry_id: str, cabys_
                 ))
                 total_iva_acumulado += monto_iva
 
-        # CR CxP por la suma real de lo procesado (garantiza balance)
-        cx_p_monto = round(total_neto_acumulado + total_iva_acumulado, 5)
+        # ── CR según condicion_venta del documento ───────────────────
+        # '01' contado → Banco (pagado al momento de la compra)
+        # '02'/default → CxP proveedor (queda pendiente de pago)
+        condicion      = doc.get("condicion_venta", doc.get("condicion", "02"))
+        cx_p_monto     = round(total_neto_acumulado + total_iva_acumulado, 5)
+        emisor         = doc.get("emisor_nombre", "Proveedor")[:60]
+
+        if condicion == "01":   # contado — pagado de inmediato
+            cuenta_balance = DEFAULT_ACCOUNTS["BANCO"]
+            desc_balance   = f"Pago contado · {emisor}"
+            role_balance   = "BANCO"
+        else:                   # crédito — queda en CxP
+            cuenta_balance = DEFAULT_ACCOUNTS["CXP"]
+            desc_balance   = f"CxP · {emisor}"
+            role_balance   = "CXP"
+
         lines.append(_build_line(
             entry_id, tenant_id,
-            DEFAULT_ACCOUNTS["CXP"],
-            f"CxP · {doc.get('emisor_nombre', 'Proveedor')[:60]}",
+            cuenta_balance, desc_balance,
             debit=0, credit=cx_p_monto,
             deductible="EXEMPT",
             legal_basis="Art. 8 Ley Renta 7092",
-            account_role="CXP",
+            account_role=role_balance,
         ))
 
         # Ajuste de redondeo si DR ≠ CR (< ₡1)
@@ -191,16 +204,28 @@ def _build_entry_lines_from_doc(doc: dict, tenant_id: str, entry_id: str, cabys_
 
     # ── FE / TE / ND / NC → Documentos de venta ─────────────────────
     elif doc_type in ("01", "04", "02", "03"):
-        total_doc = float(doc.get("total_doc", 0))
+        total_doc  = float(doc.get("total_doc", 0))
+        condicion  = doc.get("condicion_venta", doc.get("condicion", "02"))
+        receptor   = doc.get("receptor_nombre", "Cliente")[:60]
 
-        # DR CxC por total del documento
+        # ── DR según condicion_venta del documento ───────────────────
+        # '01' contado → Banco (cobrado al momento de la venta)
+        # '02'/default → CxC cliente (queda pendiente de cobro)
+        if condicion == "01":   # contado — cobrado de inmediato
+            cuenta_dr  = DEFAULT_ACCOUNTS["BANCO"]
+            desc_dr    = f"Cobro contado · {receptor}"
+            role_dr    = "BANCO"
+        else:                   # crédito — queda en CxC
+            cuenta_dr  = DEFAULT_ACCOUNTS["CXC"]
+            desc_dr    = f"CxC · {receptor}"
+            role_dr    = "CXC"
+
         lines.append(_build_line(
-            entry_id, tenant_id, DEFAULT_ACCOUNTS["CXC"],
-            f"CxC · {doc.get('receptor_nombre', 'Cliente')[:60]}",
+            entry_id, tenant_id, cuenta_dr, desc_dr,
             debit=total_doc, credit=0,
             deductible="EXEMPT",
             legal_basis="Art. 22 Ley IVA 9635",
-            account_role="CXC",
+            account_role=role_dr,
         ))
 
         # Por cada línea → CR Ingreso + CR IVA por Pagar
@@ -265,11 +290,13 @@ def _fallback_v1_lines(doc: dict, tenant_id: str, entry_id: str, doc_type: str) 
     """
     Fallback al mapeo v1 por totales cuando no hay lineas[].
     Compatible con payloads del webhook_receiver original.
+    Respeta condicion_venta: '01' contado → Banco; '02'/default → CxC/CxP.
     """
     total_venta  = float(doc.get("total_venta", 0))
     total_iva    = float(doc.get("total_iva",   0))
     total_doc    = float(doc.get("total_doc",   0))
     emisor       = doc.get("emisor_nombre", "Proveedor")[:60]
+    condicion    = doc.get("condicion_venta", doc.get("condicion", "02"))
 
     lines = []
     if doc_type in ("08", "09", "RECIBIDO"):
@@ -290,17 +317,30 @@ def _fallback_v1_lines(doc: dict, tenant_id: str, entry_id: str, doc_type: str) 
                 deductible="DEDUCTIBLE",
                 clasificacion_fuente="V1_FALLBACK"
             ))
+        # CR según condición: contado → Banco, crédito → CxP
+        if condicion == "01":
+            cuenta_balance = DEFAULT_ACCOUNTS["BANCO"]
+            desc_balance   = f"Pago contado (v1-fallback) · {emisor}"
+        else:
+            cuenta_balance = DEFAULT_ACCOUNTS["CXP"]
+            desc_balance   = f"CxP proveedor (v1-fallback) · {emisor}"
         lines.append(_build_line(entry_id, tenant_id,
-            DEFAULT_ACCOUNTS["CXP"],
-            f"CxP proveedor (v1-fallback) · {emisor}",
+            cuenta_balance, desc_balance,
             debit=0, credit=total_doc,
             deductible="EXEMPT",
             clasificacion_fuente="V1_FALLBACK"
         ))
     elif doc_type in ("01", "04"):
+        # DR según condición: contado → Banco, crédito → CxC
+        receptor = doc.get("receptor_nombre", "Cliente")[:60]
+        if condicion == "01":
+            cuenta_dr = DEFAULT_ACCOUNTS["BANCO"]
+            desc_dr   = f"Cobro contado (v1-fallback) · {receptor}"
+        else:
+            cuenta_dr = DEFAULT_ACCOUNTS["CXC"]
+            desc_dr   = f"CxC cliente (v1-fallback) · {receptor}"
         lines.append(_build_line(entry_id, tenant_id,
-            DEFAULT_ACCOUNTS["CXC"],
-            "CxC cliente (v1-fallback)",
+            cuenta_dr, desc_dr,
             debit=total_doc, credit=0, deductible="EXEMPT",
             clasificacion_fuente="V1_FALLBACK"
         ))
@@ -311,6 +351,7 @@ def _fallback_v1_lines(doc: dict, tenant_id: str, entry_id: str, doc_type: str) 
                 debit=0, credit=total_venta, deductible="DEDUCTIBLE",
                 clasificacion_fuente="V1_FALLBACK"
             ))
+
         if total_iva > 0:
             lines.append(_build_line(entry_id, tenant_id,
                 DEFAULT_ACCOUNTS["IVA_DEBITO"],
