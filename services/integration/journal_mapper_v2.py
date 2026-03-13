@@ -36,6 +36,7 @@ DEFAULT_ACCOUNTS = {
     "BANCO":          "1101",
     "IVA_CREDITO":    "1104",
     "IVA_DEBITO":     "2102",
+    "IVA_DIFERIDO":   "2108",   # IVA diferido cond. venta 11 (Art.17 Ley IVA 9635)
     "INGRESO_VENTAS": "4101",
     "INGRESO_SERV":   "4102",
     "INGRESO_EXENTO": "4103",
@@ -43,21 +44,61 @@ DEFAULT_ACCOUNTS = {
 }
 
 
-def _resolve_account(db, tenant_id: str, key: str) -> str:
-    """Resuelve código de cuenta del catálogo del tenant, con fallback al default."""
-    code = DEFAULT_ACCOUNTS.get(key, key)
+def _normalizar_codigo(code: str) -> str:
+    """Quita puntos, guiones y espacios para comparar prefijos normalizados."""
+    return code.replace(".", "").replace("-", "").replace(" ", "")
+
+
+def _resolver_cuenta_jerarquica(db, tenant_id: str, code_base: str) -> str:
+    """
+    Resuelve la cuenta más específica del catálogo del tenant.
+
+    Estrategia (exact → prefix → fallback):
+      1. Exact match: busca code_base tal cual.
+      2. Prefix match: busca el código menos profundo que EMPIECE con code_base
+         (normalizado, sin puntos ni guiones). Ej: '1102' matchea '110201'.
+      3. Fallback: retorna code_base con warning (el contador revisará).
+
+    Soporta catálogos de 4, 6, 8 dígitos y formatos con puntos/guiones.
+    """
     try:
+        # 1. Exact match
         row = db.execute(text("""
             SELECT code FROM accounts
             WHERE tenant_id = :tid AND code = :code AND is_active = TRUE
             LIMIT 1
-        """), {"tid": tenant_id, "code": code}).fetchone()
+        """), {"tid": tenant_id, "code": code_base}).fetchone()
         if row:
-            return code
-    except Exception:
-        pass
-    logger.warning(f"⚠️ mapper_v2: cuenta {code} no en catálogo de {tenant_id[:8]}, usando default")
-    return code
+            return code_base
+
+        # 2. Prefix match — catálogos extendidos (4d, 6d, 8d, dotados, con guión)
+        # Normalizamos quitando puntos y guiones antes de comparar prefijos
+        norm_base = _normalizar_codigo(code_base)
+        rows = db.execute(text("""
+            SELECT code FROM accounts
+            WHERE tenant_id = :tid AND is_active = TRUE
+              AND REPLACE(REPLACE(REPLACE(code, '.', ''), '-', ''), ' ', '') LIKE :prefix || '%'
+            ORDER BY LENGTH(code) ASC
+            LIMIT 1
+        """), {"tid": tenant_id, "prefix": norm_base}).fetchone()
+        if rows:
+            logger.info(
+                f"📐 cuenta {code_base} → '{rows[0]}' (prefix-match catálogo {tenant_id[:8]})"
+            )
+            return rows[0]
+
+    except Exception as ex:
+        logger.warning(f"⚠️ resolver_cuenta_jerarquica error: {ex} — usando fallback {code_base}")
+
+    # 3. Fallback — log warning, el contador verá el entry en needs_review
+    logger.warning(
+        f"⚠️ mapper_v2: sin match para '{code_base}' en catálogo de {tenant_id[:8]}, usando fallback"
+    )
+    return code_base
+
+
+# Alias corto para compatibilidad interna
+_resolve_account = _resolver_cuenta_jerarquica
 
 
 def _build_line(entry_id, tenant_id, code, desc, debit, credit,
@@ -253,17 +294,28 @@ def _build_entry_lines_from_doc(doc: dict, tenant_id: str, entry_id: str, cabys_
                 account_role="INGRESO",
             ))
 
-            # CR IVA por Pagar
+            # CR IVA por Pagar (o IVA Diferido si condicion=11)
             if monto_iva > 0:
+                if condicion == "11":
+                    # Venta a plazo: IVA diferido hasta vencimiento (Art.17 Ley IVA 9635)
+                    cuenta_iva = DEFAULT_ACCOUNTS["IVA_DIFERIDO"]
+                    desc_iva   = f"IVA Diferido cond.11 · {desc_item}"
+                    role_iva   = "IVA_DIFERIDO"
+                    basis_iva  = "Art. 17 Ley IVA 9635 — venta a plazo"
+                else:
+                    cuenta_iva = DEFAULT_ACCOUNTS["IVA_DEBITO"]
+                    desc_iva   = f"IVA {iva_info['tarifa']}% · {desc_item}"
+                    role_iva   = "IVA_DEBITO"
+                    basis_iva  = "Art. 15 Ley IVA 9635"
                 lines.append(_build_line(
-                    entry_id, tenant_id, DEFAULT_ACCOUNTS["IVA_DEBITO"],
-                    f"IVA {iva_info['tarifa']}% · {desc_item}",
+                    entry_id, tenant_id, cuenta_iva,
+                    desc_iva,
                     debit=0, credit=monto_iva,
                     deductible="EXEMPT",
-                    legal_basis="Art. 15 Ley IVA 9635",
+                    legal_basis=basis_iva,
                     iva_tipo=iva_info["tipo"],
                     iva_tarifa=iva_info["tarifa"],
-                    account_role="IVA_DEBITO",
+                    account_role=role_iva,
                 ))
 
         lines = _ajuste_redondeo(lines, entry_id, tenant_id)
