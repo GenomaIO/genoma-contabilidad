@@ -99,6 +99,13 @@ def _build_entry_lines_from_doc(doc: dict, tenant_id: str, entry_id: str, cabys_
     doc_type  = doc.get("tipo_doc", doc.get("doc_type", "08"))
     lineas    = doc.get("lineas", [])
 
+    # ── Guard: normalizar tipo si el doc fue importado como recibido ─
+    # El Facturador retorna el tipo_doc ORIGINAL de Hacienda (ej: "01")
+    # aunque sea una FE que un proveedor emitió a la empresa.
+    # router_pull.py marca estos docs con _es_recibido=True al importar.
+    if doc.get("_es_recibido"):
+        doc_type = "RECIBIDO"
+
     # ── Fallback v1 si el doc no tiene líneas ───────────────────────
     if not lineas:
         return _fallback_v1_lines(doc, tenant_id, entry_id, doc_type)

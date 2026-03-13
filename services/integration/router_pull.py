@@ -312,9 +312,10 @@ def get_pull_recibidos(
 
 
 class ImportBatchRequest(BaseModel):
-    doc_ids:   list[str]   # lista de claves Hacienda a importar
-    period:    str         # YYYYMM
-    docs_data: list[dict]  # datos completos de los docs (el frontend ya los tiene)
+    doc_ids:    list[str]   # lista de claves Hacienda a importar
+    period:     str         # YYYYMM
+    docs_data:  list[dict]  # datos completos de los docs (el frontend ya los tiene)
+    tipo_batch: str = "enviados"  # 'enviados' | 'recibidos' — define técnica contable
 
 
 @router.post("/import-batch")
@@ -327,16 +328,28 @@ def post_import_batch(
     Importa un lote de documentos al Libro Diario como DRAFT.
     Idempotente: skippea los ya importados.
     Transacción completa: rollback si falla cualquier doc.
+
+    tipo_batch:
+      'enviados'  → FE/TE emitidas por la empresa (INGRESO: CxC / 4xxx / IVA Débito)
+      'recibidos' → Compras/FEC recibidas de proveedores (EGRESO: 5xxx / IVA Crédito / CxP)
     """
     from services.integration.journal_mapper_v2 import map_document_lines_to_entry
 
-    tenant_id = current_user["tenant_id"]
+    tenant_id  = current_user["tenant_id"]
+    es_recibido = payload.tipo_batch == "recibidos"
 
     # Guard cross-tenant
     docs_filtrados = [
         d for d in payload.docs_data
         if d.get("clave") in payload.doc_ids
     ]
+
+    # ── Normalizar tipo para recibidos ─────────────────────────────
+    # El Facturador retorna el tipo_doc ORIGINAL de Hacienda (ej: "01").
+    # Para recibidos forzamos _es_recibido=True → el mapper usará lógica EGRESO.
+    if es_recibido:
+        for doc in docs_filtrados:
+            doc["_es_recibido"] = True
 
     def mapper(db, doc, tid):
         map_document_lines_to_entry(db, doc, tid)
@@ -347,11 +360,13 @@ def post_import_batch(
     try:
         db.execute(text("""
             INSERT INTO import_batch (tenant_id, period, tipo, total_docs, importados, skipped, estado)
-            VALUES (:tid, :period, 'MIXTO', :total, :imp, :skipped, 'COMPLETO')
+            VALUES (:tid, :period, :tipo, :total, :imp, :skipped, 'COMPLETO')
         """), {
-            "tid": tenant_id, "period": payload.period,
-            "total": len(docs_filtrados),
-            "imp": result.get("importados", 0),
+            "tid":     tenant_id,
+            "period":  payload.period,
+            "tipo":    "RECIBIDOS" if es_recibido else "ENVIADOS",
+            "total":   len(docs_filtrados),
+            "imp":     result.get("importados", 0),
             "skipped": result.get("skipped", 0),
         })
         db.commit()
@@ -366,3 +381,4 @@ def post_import_batch(
             f"{result.get('skipped',0)} ya existían"
         ),
     }
+
