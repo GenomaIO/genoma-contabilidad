@@ -412,7 +412,22 @@ def purge_bad_drafts(
             desde pull-recibidos con la logica corregida (5xxx/CxP/IVA Credito).
 
     confirm=True requerido para ejecutar.
+
+    SEGURIDAD: Este endpoint solo funciona si la variable de entorno
+    ENABLE_PURGE_UTILITY=1 esta seteada en el servidor. En produccion
+    NO debe estar activa de forma permanente — solo habilitarla al momento
+    de la migracion puntual y luego retirarla del entorno.
     """
+    import os as _os
+    if _os.getenv("ENABLE_PURGE_UTILITY", "") != "1":
+        raise HTTPException(
+            503,
+            "Utilidad de purge deshabilitada. "
+            "Esta herramienta es de uso excepcional. "
+            "El administrador del sistema debe habilitar ENABLE_PURGE_UTILITY=1 "
+            "en el entorno del servidor para ejecutarla."
+        )
+
     if current_user["role"] not in ("admin", "contador"):
         raise HTTPException(403, "Solo admin o contador puede ejecutar purge-bad-drafts")
 
