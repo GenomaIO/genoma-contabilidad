@@ -151,6 +151,44 @@ print("\nSIM-XML-08: fetch_and_parse_cabys con clave vacía")
 lines_vacia = fetch_and_parse_cabys("")
 check("Clave vacía → [] sin crash",           lines_vacia == [])
 
+# ─── XML real de ICE (usa CodigoCABYS con mayúscula A) ───────────
+XML_ICE = """<?xml version="1.0" encoding="utf-8" ?>
+<FacturaElectronica xmlns="https://cdn.comprobanteselectronicos.go.cr/xml-schemas/v4.4/facturaElectronica">
+  <DetalleServicio>
+    <LineaDetalle>
+      <NumeroLinea>1</NumeroLinea>
+      <CodigoCABYS>8413100000000</CodigoCABYS>
+      <Detalle>COSTO POR DISPONIBILIDAD DE LA RED</Detalle>
+      <SubTotal>1280.00000</SubTotal>
+      <Impuesto>
+        <CodigoTarifaIVA>08</CodigoTarifaIVA>
+        <Tarifa>13.0</Tarifa>
+        <Monto>166.40000</Monto>
+      </Impuesto>
+    </LineaDetalle>
+    <LineaDetalle>
+      <NumeroLinea>2</NumeroLinea>
+      <CodigoCABYS>8413300000000</CodigoCABYS>
+      <Detalle>INTERNET MOVIL</Detalle>
+      <SubTotal>5464.88175</SubTotal>
+      <Impuesto>
+        <CodigoTarifaIVA>08</CodigoTarifaIVA>
+        <Tarifa>13.0</Tarifa>
+        <Monto>710.43462</Monto>
+      </Impuesto>
+    </LineaDetalle>
+  </DetalleServicio>
+</FacturaElectronica>"""
+
+print("\nSIM-XML-09: ICE usa CodigoCABYS (mayúscula A)")
+lines_ice = parse_cabys_lines(XML_ICE)
+check("Retorna 2 líneas",                      len(lines_ice) == 2)
+check("L1 CodigoCABYS = 8413100000000",        lines_ice[0]["cabys_code"] == "8413100000000")
+check("L1 descripcion = DISPONIBILIDAD RED",   "DISPONIBILIDAD" in lines_ice[0]["descripcion"])
+check("L1 monto_iva = 166.4",                  lines_ice[0]["monto_iva"] == 166.4)
+check("L2 CodigoCABYS = 8413300000000",        lines_ice[1]["cabys_code"] == "8413300000000")
+check("L2 descripcion = INTERNET MOVIL",       "INTERNET" in lines_ice[1]["descripcion"])
+
 print("\n" + "=" * 65)
 if FAIL == 0:
     print(f"ALL {PASS} SIM-XML TESTS PASSED ✅")

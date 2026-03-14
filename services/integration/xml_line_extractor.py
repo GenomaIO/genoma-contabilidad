@@ -157,9 +157,9 @@ def parse_cabys_lines(xml_str: str) -> list:
     }
 
     for ld in lineas_elem:
-        # CABYS — CodigoProducto o Codigo
+        # CABYS — CodigoProducto (v4.3), CodigoCABYS (ICE/v4.4), Codigo
         cabys = ""
-        for tag in ("CodigoProducto", "Codigo", "CodigoCabys"):
+        for tag in ("CodigoProducto", "CodigoCABYS", "Codigo", "CodigoCabys"):
             cabys = _text(ld, tag, ns)
             if cabys:
                 break
