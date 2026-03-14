@@ -184,6 +184,40 @@ check("FER-05: USA CxC (1102)",          uses_cxc(lines_fer05))
 check("FER-05: USA IVA Débito (2102)",   uses_iva_debito(lines_fer05))
 check("FER-05: NO usa CxP (2101)",       not uses_cxp(lines_fer05))
 
+# ─── FER-06: BUG ROOT CAUSE — sin _es_recibido ni tipo 08 → incorrecto ─────
+# Documenta el bug que se produjo en producción: el frontend mezclaba enviados
+# y recibidos en un solo import-batch SIN tipo_batch. El backend usaba default
+# 'enviados' y NUNCA seteaba _es_recibido=True. Un doc recibido tipo_doc='01'
+# (FE del proveedor) se contabilizaba como INGRESO en lugar de EGRESO.
+# FIX: el frontend ahora hace dos calls separadas con tipo_batch correcto.
+print("\nFER-06: BUG ROOT CAUSE — tipo_doc='01' SIN _es_recibido → contabiliza INCORRECTO como ingreso")
+doc_bug_root = {
+    "clave":         "X" * 50,
+    "tipo_doc":      "01",     # <-- tipo original Hacienda, sin flag de recibido
+    # _es_recibido NO seteado → simula el bug del frontend (batch mezclado)
+    "numero_doc":    "00100010010000000633",
+    "fecha":         "2026-03-01",
+    "emisor_nombre": "CINTHIA CASTRO RODRIGUEZ",
+    "receptor_nombre": "Mi Empresa S.A.",
+    "total_venta":   16800.0,
+    "total_iva":     1932.74,
+    "total_doc":     18732.74,
+    "moneda":        "CRC",
+}
+lines_fer06 = _build_entry_lines_from_doc(doc_bug_root, "tenant1", "entry-fer06", {})
+# Sin el flag → INCORRECTO: usa ingreso (este test documenta el bug, no lo corrige)
+check("FER-06: Genera líneas (bug activo sin flag)",     len(lines_fer06) >= 2)
+check("FER-06: Balanceado (aunque incorrecto)",          balanced(lines_fer06))
+check("FER-06: CONFIRMA BUG: usa 4xxx (ingreso)",        uses_ingreso(lines_fer06))
+check("FER-06: CONFIRMA BUG: usa CxC (1102)",            uses_cxc(lines_fer06))
+# FIX → el frontend debe pasar _es_recibido=True (via tipo_batch='recibidos')
+doc_bug_fixed = {**doc_bug_root, "_es_recibido": True}
+lines_fer06_fix = _build_entry_lines_from_doc(doc_bug_fixed, "tenant1", "entry-fer06b", {})
+check("FER-06-FIX: Con _es_recibido=True → NO usa 4xxx", not uses_ingreso(lines_fer06_fix))
+check("FER-06-FIX: Con _es_recibido=True → USA CxP",     uses_cxp(lines_fer06_fix))
+check("FER-06-FIX: Con _es_recibido=True → USA Gasto",   uses_gasto(lines_fer06_fix))
+check("FER-06-FIX: Balanceado",                          balanced(lines_fer06_fix))
+
 print("\n" + "=" * 65)
 if FAIL == 0:
     print(f"ALL {PASS} SIM-FER TESTS PASSED ✅")

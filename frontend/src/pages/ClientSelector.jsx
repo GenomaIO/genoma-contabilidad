@@ -75,21 +75,40 @@ export default function ClientSelector() {
                         if (!envRes.ok || !recRes.ok) return
 
                         const [envData, recData] = await Promise.all([envRes.json(), recRes.json()])
-                        const allDocs = [...(envData.items || []), ...(recData.items || [])]
-                        const nuevos = allDocs.filter(d => !d.ya_importado)
+                        const docsEnviados  = (envData.items  || []).filter(d => !d.ya_importado)
+                        const docsRecibidos = (recData.items  || []).filter(d => !d.ya_importado)
 
-                        if (nuevos.length === 0) return
+                        if (docsEnviados.length === 0 && docsRecibidos.length === 0) return
 
-                        // Paso 2: import-batch → crea asientos borrador en la DB
-                        await fetch(`${base}/import-batch`, {
-                            method: 'POST',
-                            headers: { ...hdrs, 'Content-Type': 'application/json' },
-                            body: JSON.stringify({
-                                doc_ids: nuevos.map(d => d.clave),
-                                period,
-                                docs_data: nuevos,
-                            }),
-                        })
+                        // Paso 2: import-batch SEPARADO por tipo — técnica contable correcta
+                        // tipo_batch='enviados'  → INGRESO: CxC / 4xxx / IVA Débito
+                        // tipo_batch='recibidos' → EGRESO:  5xxx / IVA Crédito / CxP
+                        const calls = []
+                        if (docsEnviados.length > 0) {
+                            calls.push(fetch(`${base}/import-batch`, {
+                                method: 'POST',
+                                headers: { ...hdrs, 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                    doc_ids:    docsEnviados.map(d => d.clave),
+                                    period,
+                                    docs_data:  docsEnviados,
+                                    tipo_batch: 'enviados',
+                                }),
+                            }))
+                        }
+                        if (docsRecibidos.length > 0) {
+                            calls.push(fetch(`${base}/import-batch`, {
+                                method: 'POST',
+                                headers: { ...hdrs, 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                    doc_ids:    docsRecibidos.map(d => d.clave),
+                                    period,
+                                    docs_data:  docsRecibidos,
+                                    tipo_batch: 'recibidos',
+                                }),
+                            }))
+                        }
+                        await Promise.all(calls)
                     } catch {
                         // Fail silently — no interrumpe la UX
                     }

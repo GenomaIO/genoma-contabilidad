@@ -101,8 +101,6 @@ export default function AsientosPendientes() {
             ])
 
             // ── 🔴 FIX: verificar HTTP status ANTES de procesar JSON ────────
-            // Si Genoma Contable no está disponible, un 503 se leía antes como
-            // lista vacía y el sistema mostraba "No hay documentos nuevos" en silencio.
             if (!envRes.ok || !recRes.ok) {
                 const errEnv = !envRes.ok ? await envRes.json().catch(() => ({})) : {}
                 const errRec = !recRes.ok ? await recRes.json().catch(() => ({})) : {}
@@ -115,7 +113,9 @@ export default function AsientosPendientes() {
             }
 
             const [envData, recData] = await Promise.all([envRes.json(), recRes.json()])
-            const allDocs = [...(envData.items || []), ...(recData.items || [])]
+            const docsEnviados  = (envData.items || [])
+            const docsRecibidos = (recData.items || [])
+            const allDocs = [...docsEnviados, ...docsRecibidos]
 
             // ── Diagnóstico: si la API respondió OK pero devolvió 0 docs ────
             if (allDocs.length === 0) {
@@ -127,10 +127,11 @@ export default function AsientosPendientes() {
                 return
             }
 
-            const nuevos = allDocs.filter(d => !d.ya_importado)
-            const yaImportados = allDocs.length - nuevos.length
+            const nuevosEnv = docsEnviados.filter(d => !d.ya_importado)
+            const nuevosRec = docsRecibidos.filter(d => !d.ya_importado)
+            const yaImportados = allDocs.length - nuevosEnv.length - nuevosRec.length
 
-            if (nuevos.length === 0) {
+            if (nuevosEnv.length === 0 && nuevosRec.length === 0) {
                 setImportMsg({
                     ok: true,
                     text: `✅ Los ${yaImportados} documento${yaImportados !== 1 ? 's' : ''} del período ya estaban importados — sin duplicados.`
@@ -138,31 +139,62 @@ export default function AsientosPendientes() {
                 return
             }
 
-            // Importar los que son nuevos
-            const batchRes = await fetch(`${apiUrl}/integration/import-batch`, {
-                method: 'POST',
-                headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    doc_ids: nuevos.map(d => d.clave),
-                    period: p,
-                    docs_data: nuevos,
-                }),
-            })
+            // ── 🔴 FIX TÉCNICA CONTABLE ───────────────────────────────────
+            // Enviados y recibidos se importan en calls SEPARADAS con tipo_batch
+            // correcto para que el backend aplique la lógica contable adecuada:
+            //   tipo_batch='enviados'  → INGRESO: CxC / 4xxx / IVA Débito
+            //   tipo_batch='recibidos' → EGRESO:  5xxx / IVA Crédito / CxP
+            const batchCalls = []
+            if (nuevosEnv.length > 0) {
+                batchCalls.push(
+                    fetch(`${apiUrl}/integration/import-batch`, {
+                        method: 'POST',
+                        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            doc_ids:    nuevosEnv.map(d => d.clave),
+                            period:     p,
+                            docs_data:  nuevosEnv,
+                            tipo_batch: 'enviados',
+                        }),
+                    })
+                )
+            }
+            if (nuevosRec.length > 0) {
+                batchCalls.push(
+                    fetch(`${apiUrl}/integration/import-batch`, {
+                        method: 'POST',
+                        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            doc_ids:    nuevosRec.map(d => d.clave),
+                            period:     p,
+                            docs_data:  nuevosRec,
+                            tipo_batch: 'recibidos',
+                        }),
+                    })
+                )
+            }
 
-            if (!batchRes.ok) {
-                const errB = await batchRes.json().catch(() => ({}))
-                setImportMsg({ ok: false, text: `⚠️ Error al importar: ${errB.detail || errB.error || batchRes.status}` })
+            const batchResponses = await Promise.all(batchCalls)
+
+            // Verificar si alguno falló
+            const failedRes = batchResponses.find(r => !r.ok)
+            if (failedRes) {
+                const errB = await failedRes.json().catch(() => ({}))
+                setImportMsg({ ok: false, text: `⚠️ Error al importar: ${errB.detail || errB.error || failedRes.status}` })
                 return
             }
 
-            const batchData = await batchRes.json()
+            // Sumar importados de ambos batches (enviados + recibidos)
+            const batchDatas  = await Promise.all(batchResponses.map(r => r.json().catch(() => ({ok:false, importados:0}))))
+            const totalImportados = batchDatas.reduce((s, d) => s + (d.importados || 0), 0)
+            const totalOk = batchDatas.every(d => d.ok)
             setImportMsg({
-                ok: batchData.ok,
-                text: batchData.ok
-                    ? `✅ ${batchData.message}${yaImportados > 0 ? ` · ${yaImportados} ya existían (sin duplicados)` : ''}`
-                    : `⚠️ Error al importar: ${batchData.error}`,
+                ok: totalOk,
+                text: totalOk
+                    ? `✅ ${totalImportados} importado${totalImportados !== 1 ? 's' : ''}${yaImportados > 0 ? ` · ${yaImportados} ya existían (sin duplicados)` : ''} · ${nuevosEnv.length} enviados + ${nuevosRec.length} recibidos`
+                    : `⚠️ Error al importar: ${batchDatas.find(d => !d.ok)?.error || 'Error desconocido'}`,
             })
-            if (batchData.ok) { fetchEntries(); setActiveTab('DRAFT') }
+            if (totalOk) { fetchEntries(); setActiveTab('DRAFT') }
         } catch (e) {
             setImportMsg({ ok: false, text: `⚠️ Error de red: ${e.message}` })
         } finally {
