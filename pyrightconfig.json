@@ -1,0 +1,22 @@
+{
+  "pythonVersion": "3.14",
+  "pythonPlatform": "Darwin",
+  "pythonPath": "/opt/homebrew/opt/python@3.14/bin/python3.14",
+  "venvPath": ".",
+  "extraPaths": [
+    "/opt/homebrew/lib/python3.14/site-packages",
+    "/opt/homebrew/opt/python@3.14/Frameworks/Python.framework/Versions/3.14/lib/python3.14/site-packages"
+  ],
+  "typeCheckingMode": "off",
+  "reportMissingModuleSource": "none",
+  "reportMissingImports": "none",
+  "reportMissingModuleAttribute": "none",
+  "reportAttributeAccessIssue": "none",
+  "reportUnknownMemberType": "none",
+  "reportUnknownVariableType": "none",
+  "reportUnknownArgumentType": "none",
+  "reportOperatorIssue": "none",
+  "exclude": [
+    "frontend/**"
+  ]
+}

@@ -51,7 +51,10 @@ doc_fec = {
     "numero_doc":   "00100020010000000001",
     "fecha":        "2026-02-14",
     "emisor_nombre": "TI Soluciones S.A.",
-    "total_doc":    912000,
+    # total_doc = suma real de las líneas: 663716.81+86283.19+10619.47+1380.53+50000
+    "total_doc":    812000,
+    # total_comprobante = fuente de verdad (Regla #2) — igual que total_doc aquí
+    "total_comprobante": 812000,
     "moneda":       "CRC",
     "tipo_cambio":  1.0,
     "lineas": [

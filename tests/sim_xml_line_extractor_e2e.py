@@ -7,7 +7,10 @@ Cubre: namespace v4.4, namespace v4.3, sin namespace, XML malformado, XML vacío
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from services.integration.xml_line_extractor import parse_cabys_lines, fetch_and_parse_cabys
+from services.integration.xml_line_extractor import (
+    parse_cabys_lines, fetch_and_parse_cabys,
+    parse_otros_cargos, parse_doc_metadata, fetch_and_enrich,
+)
 
 PASS = 0; FAIL = 0
 
@@ -188,6 +191,99 @@ check("L1 descripcion = DISPONIBILIDAD RED",   "DISPONIBILIDAD" in lines_ice[0][
 check("L1 monto_iva = 166.4",                  lines_ice[0]["monto_iva"] == 166.4)
 check("L2 CodigoCABYS = 8413300000000",        lines_ice[1]["cabys_code"] == "8413300000000")
 check("L2 descripcion = INTERNET MOVIL",       "INTERNET" in lines_ice[1]["descripcion"])
+
+# ─── XML ICE con OtrosCargos (Cruz Roja + 911) ───────────────────
+XML_ICE_CON_OTROS = """<?xml version="1.0" encoding="UTF-8"?>
+<FacturaElectronica xmlns="https://cdn.comprobanteselectronicos.go.cr/xml-schemas/v4.4/facturaElectronica">
+  <CondicionVenta>02</CondicionVenta>
+  <DetalleServicio>
+    <LineaDetalle>
+      <CodigoCABYS>8413100000000</CodigoCABYS>
+      <Detalle>DISPONIBILIDAD RED</Detalle>
+      <SubTotal>22179.65</SubTotal>
+      <Impuesto>
+        <Tarifa>13</Tarifa>
+        <Monto>2883.35</Monto>
+      </Impuesto>
+    </LineaDetalle>
+  </DetalleServicio>
+  <OtrosCargos>
+    <TipoDocumentoOC>02</TipoDocumentoOC>
+    <Detalle>IMPUESTO CRUZ ROJA</Detalle>
+    <MontoCargo>127.98</MontoCargo>
+  </OtrosCargos>
+  <OtrosCargos>
+    <TipoDocumentoOC>99</TipoDocumentoOC>
+    <Detalle>IMPUESTO 911</Detalle>
+    <MontoCargo>99.55</MontoCargo>
+  </OtrosCargos>
+  <ResumenFactura>
+    <TotalComprobante>25290.53</TotalComprobante>
+  </ResumenFactura>
+</FacturaElectronica>"""
+
+print("\nSIM-XML-10: OtrosCargos → parse_otros_cargos (Regla #1 y #2)")
+otros = parse_otros_cargos(XML_ICE_CON_OTROS)
+check("Retorna 2 OtrosCargos",                 len(otros) == 2)
+check("OC-1 tipo=02 (Cruz Roja)",              otros[0]["tipo_doc_oc"] == "02")
+check("OC-1 cuenta=5990",                      otros[0]["cuenta"] == "5990")
+check("OC-1 monto_cargo_crc=127.98",           abs(otros[0]["monto_cargo_crc"] - 127.98) < 0.01)
+check("OC-1 descripcion contiene CRUZ",        "CRUZ" in otros[0]["descripcion"])
+check("OC-2 tipo=99 (otro)",                   otros[1]["tipo_doc_oc"] == "99")
+check("OC-2 cuenta=5990",                      otros[1]["cuenta"] == "5990")
+check("OC-2 monto_cargo_crc=99.55",            abs(otros[1]["monto_cargo_crc"] - 99.55) < 0.01)
+
+print("\nSIM-XML-11: parse_doc_metadata → TotalComprobante + CondicionVenta (Regla #2 y #3)")
+meta = parse_doc_metadata(XML_ICE_CON_OTROS)
+check("TotalComprobante extraído",             abs(meta["total_comprobante"] - 25290.53) < 0.01)
+check("total_comprobante_crc = total (CRC)",   abs(meta["total_comprobante_crc"] - 25290.53) < 0.01)
+check("CondicionVenta = '02'",                 meta["condicion_venta"] == "02")
+check("moneda = 'CRC' (default)",              meta["moneda"] == "CRC")
+check("tipo_cambio = 1.0 (default)",           meta["tipo_cambio"] == 1.0)
+
+# ─── XML en USD con TipoCambio ────────────────────────────────────
+XML_USD = """<?xml version="1.0" encoding="UTF-8"?>
+<FacturaElectronica xmlns="https://cdn.comprobanteselectronicos.go.cr/xml-schemas/v4.4/facturaElectronica">
+  <CondicionVenta>01</CondicionVenta>
+  <DetalleServicio>
+    <LineaDetalle>
+      <CodigoProducto>4151903010</CodigoProducto>
+      <Detalle>Software License USD</Detalle>
+      <SubTotal>100.00</SubTotal>
+      <Impuesto>
+        <Tarifa>13</Tarifa>
+        <Monto>13.00</Monto>
+      </Impuesto>
+    </LineaDetalle>
+  </DetalleServicio>
+  <ResumenFactura>
+    <CodigoTipoMoneda>
+      <CodigoMoneda>USD</CodigoMoneda>
+      <TipoCambio>512.34</TipoCambio>
+    </CodigoTipoMoneda>
+    <TotalComprobante>113.00</TotalComprobante>
+  </ResumenFactura>
+</FacturaElectronica>"""
+
+print("\nSIM-XML-12: Factura USD → colonización con TipoCambio (Regla #1)")
+meta_usd = parse_doc_metadata(XML_USD)
+check("moneda = 'USD'",                        meta_usd["moneda"] == "USD")
+check("tipo_cambio = 512.34",                  abs(meta_usd["tipo_cambio"] - 512.34) < 0.01)
+check("total_comprobante = 113.00 USD",        abs(meta_usd["total_comprobante"] - 113.00) < 0.01)
+check("total_comprobante_crc colonizado",      abs(meta_usd["total_comprobante_crc"] - 57894.42) < 1.0)
+check("CondicionVenta = '01' (contado)",       meta_usd["condicion_venta"] == "01")
+
+from services.integration.xml_line_extractor import parse_cabys_lines_colonized
+lines_usd = parse_cabys_lines_colonized(XML_USD, tipo_cambio=512.34)
+check("Línea USD colonizada a CRC",            len(lines_usd) == 1)
+check("monto_total en CRC ≈ 51234",           abs(lines_usd[0]["monto_total"] - 51234.0) < 1.0)
+check("monto_iva en CRC ≈ 6660",              abs(lines_usd[0]["monto_iva"] - 6660.42) < 1.0)
+
+print("\nSIM-XML-13: fetch_and_enrich con clave vacía → dict vacío sin crash (graceful)")
+enriched_empty = fetch_and_enrich("")
+check("Clave vacía → lineas=[]",               enriched_empty["lineas"] == [])
+check("Clave vacía → otros_cargos=[]",         enriched_empty["otros_cargos"] == [])
+check("Clave vacía → total_comprobante_crc=0", enriched_empty["total_comprobante_crc"] == 0.0)
 
 print("\n" + "=" * 65)
 if FAIL == 0:

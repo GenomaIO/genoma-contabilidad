@@ -199,12 +199,213 @@ def parse_cabys_lines(xml_str: str) -> list:
 
 
 
-def fetch_and_parse_cabys(clave: str) -> list:
+# ── Mapeo OtrosCargos tipo_doc_oc → cuenta contable ───────────────────────
+_OTROS_CARGOS_CUENTAS = {
+    "01": "5710",  # Intereses moratorios — Gastos Financieros
+    "02": "5990",  # Impuesto Cruz Roja  — Contribuciones Obligatorias
+    "03": "5480",  # Envío / Flete       — Fletes y Acarreos
+    "04": "5420",  # Seguro transporte   — Seguros
+    "05": "5710",  # Cargo financiero    — Gastos Financieros
+    "99": "5990",  # Otro especificado   — Contribuciones Obligatorias
+}
+
+
+def parse_doc_metadata(xml_str: str) -> dict:
     """
-    Helper combinado: fetch + parse en una sola llamada.
-    Retorna [] si cualquier paso falla.
+    Extrae metadatos del documento del XML de Hacienda v4.4.
+
+    Regla de Oro #1 — Colonización: total_comprobante_crc ya en CRC.
+    Regla de Oro #2 — CR fuente de verdad: total_comprobante_crc.
+    Regla de Oro #3 — CondicionVenta determina CxP vs Banco.
+
+    Retorna:
+      {
+        "moneda":               "CRC",     # CodigoMoneda
+        "tipo_cambio":          1.0,       # TipoCambio (1.0 si CRC)
+        "total_comprobante":    25290.53,  # en la moneda original del XML
+        "total_comprobante_crc": 25290.53, # colonizado a CRC
+        "condicion_venta":      "02",      # CondicionVenta
+        "medio_pago":           "05",      # TipoMedioPago (referencia)
+      }
     """
+    result = {
+        "moneda": "CRC",
+        "tipo_cambio": 1.0,
+        "total_comprobante": 0.0,
+        "total_comprobante_crc": 0.0,
+        "condicion_venta": "02",
+        "medio_pago": "01",
+    }
+    if not xml_str or not xml_str.strip():
+        return result
+    try:
+        root = ET.fromstring(xml_str.strip().lstrip("\ufeff"))
+    except ET.ParseError:
+        return result
+
+    ns = _extract_ns(root)
+
+    # CondicionVenta
+    condicion = _text(root, "CondicionVenta", ns)
+    if condicion:
+        result["condicion_venta"] = condicion
+
+    # MedioPago
+    medio_elem = _find_child(root, "MedioPago", ns)
+    if medio_elem is not None:
+        medio = _text(medio_elem, "TipoMedioPago", ns)
+        if medio:
+            result["medio_pago"] = medio
+
+    # Moneda y TipoCambio — dentro de ResumenFactura > CodigoTipoMoneda
+    resumen = _find_child(root, "ResumenFactura", ns)
+    if resumen is not None:
+        cod_mon = _find_child(resumen, "CodigoTipoMoneda", ns)
+        if cod_mon is not None:
+            moneda = _text(cod_mon, "CodigoMoneda", ns)
+            tc_str = _text(cod_mon, "TipoCambio", ns)
+            if moneda:
+                result["moneda"] = moneda
+            if tc_str:
+                try:
+                    result["tipo_cambio"] = float(tc_str)
+                except ValueError:
+                    pass
+
+        # TotalComprobante
+        tc_total = _text(resumen, "TotalComprobante", ns)
+        if tc_total:
+            try:
+                total = float(tc_total)
+                result["total_comprobante"] = total
+                # Regla #1: colonizar a CRC
+                result["total_comprobante_crc"] = round(
+                    total * result["tipo_cambio"], 5
+                )
+            except ValueError:
+                pass
+
+    return result
+
+
+def parse_otros_cargos(xml_str: str, tipo_cambio: float = 1.0) -> list:
+    """
+    Extrae <OtrosCargos> del XML de Hacienda v4.4.
+
+    Regla de Oro #1 — Colonización: montos ya multiplicados por tipo_cambio.
+
+    Retorna lista de dicts:
+      [{
+        "descripcion":    "IMPUESTO CRUZ ROJA",
+        "monto_cargo_crc": 127.98,   # en CRC (colonizado)
+        "tipo_doc_oc":    "02",
+        "cuenta":         "5990",    # cuenta contable pre-asignada
+      }]
+    Retorna [] si no hay OtrosCargos o falla.
+    """
+    if not xml_str or not xml_str.strip():
+        return []
+    try:
+        root = ET.fromstring(xml_str.strip().lstrip("\ufeff"))
+    except ET.ParseError:
+        return []
+
+    ns = _extract_ns(root)
+    cargos_elem = _iter_local(root, "OtrosCargos")
+    result = []
+
+    for cargo in cargos_elem:
+        tipo = _text(cargo, "TipoDocumentoOC", ns) or "99"
+        desc = (
+            _text(cargo, "Detalle", ns)
+            or _text(cargo, "TipoDocumentoOTROS", ns)
+            or f"OtroCargo tipo {tipo}"
+        )
+        monto_str = _text(cargo, "MontoCargo", ns) or "0"
+        try:
+            monto = float(monto_str)
+        except ValueError:
+            monto = 0.0
+
+        if monto <= 0:
+            continue
+
+        # Regla #1: colonizar
+        monto_crc = round(monto * tipo_cambio, 5)
+        cuenta = _OTROS_CARGOS_CUENTAS.get(tipo, "5990")
+
+        result.append({
+            "descripcion":    desc[:80],
+            "monto_cargo_crc": monto_crc,
+            "tipo_doc_oc":    tipo,
+            "cuenta":         cuenta,
+        })
+
+    if result:
+        logger.info(f"✅ xml_extractor: {len(result)} OtrosCargos extraídos")
+    return result
+
+
+def fetch_and_enrich(clave: str) -> dict:
+    """
+    Helper central: fetch XML + parse CABYS lines + parse OtrosCargos + metadata.
+    Regla de Oro #1: todo en CRC (colonizado).
+
+    Retorna dict compatible con genoma_client.py:
+      {
+        "lineas":              [...],     # líneas CABYS en CRC
+        "otros_cargos":        [...],     # OtrosCargos en CRC
+        "total_comprobante_crc": 25290.53, # CR fuente de verdad (Regla #2)
+        "condicion_venta":     "02",      # Banco o CxP (Regla #3)
+        "tipo_cambio":         1.0,
+        "moneda":              "CRC",
+      }
+    Si falla → retorna dict vacío (graceful degradation, mapper usa fallback v1).
+    """
+    _empty = {
+        "lineas": [], "otros_cargos": [], "total_comprobante_crc": 0.0,
+        "condicion_venta": "02", "tipo_cambio": 1.0, "moneda": "CRC",
+    }
     xml = fetch_hacienda_xml(clave)
     if not xml:
-        return []
-    return parse_cabys_lines(xml)
+        return _empty
+
+    # 1 — Metadata (tipo_cambio, moneda, total, condicion)
+    meta = parse_doc_metadata(xml)
+    tc   = meta["tipo_cambio"]
+
+    # 2 — Líneas CABYS (ya colonizadas internamente)
+    lineas = parse_cabys_lines_colonized(xml, tc)
+
+    # 3 — OtrosCargos (colonizados)
+    otros = parse_otros_cargos(xml, tc)
+
+    return {
+        "lineas":               lineas,
+        "otros_cargos":         otros,
+        "total_comprobante_crc": meta["total_comprobante_crc"],
+        "condicion_venta":      meta["condicion_venta"],
+        "tipo_cambio":          tc,
+        "moneda":               meta["moneda"],
+    }
+
+
+def parse_cabys_lines_colonized(xml_str: str, tipo_cambio: float = 1.0) -> list:
+    """
+    Igual que parse_cabys_lines() pero aplica colonización a los montos.
+    Regla de Oro #1: si tipo_cambio != 1.0, multiplica monto_total y monto_iva.
+    """
+    lineas = parse_cabys_lines(xml_str)
+    if tipo_cambio == 1.0:
+        return lineas
+    # Colonizar
+    for l in lineas:
+        l["monto_total"] = round(l["monto_total"] * tipo_cambio, 5)
+        l["monto_iva"]   = round(l["monto_iva"]   * tipo_cambio, 5)
+    return lineas
+
+
+# ── Alias de compatibilidad (no rompe imports existentes) ───────────────────
+def fetch_and_parse_cabys(clave: str) -> list:
+    """Alias legacy — usa fetch_and_enrich internamente."""
+    return fetch_and_enrich(clave).get("lineas", [])

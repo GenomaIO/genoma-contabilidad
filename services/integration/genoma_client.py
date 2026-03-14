@@ -36,7 +36,7 @@ from typing import Optional
 
 import requests
 
-from services.integration.xml_line_extractor import fetch_and_parse_cabys
+from services.integration.xml_line_extractor import fetch_and_enrich
 
 logger = logging.getLogger(__name__)
 
@@ -226,34 +226,44 @@ def pull_documentos_recibidos(
     page_items  = items[page_start: page_start + limit]
     total_pages = max(1, (total + limit - 1) // limit)
 
-    # ── Enriquecer con líneas CABYS desde XML de Hacienda ──────────────────
+    # ── Enriquecer con líneas CABYS + OtrosCargos + metadata del XML ─────────
+    # Regla #1: Colonización total (tipo_cambio → CRC)
+    # Regla #2: total_comprobante_crc como fuente de verdad del CR
+    # Regla #3: condicion_venta del XML (cross-check con el del Facturador)
     # Los docs recibidos llegan con lineas:[] vacío del Facturador.
-    # Consultamos la API pública de Hacienda para obtener el XML con
-    # <LineaDetalle> y extraemos CABYS, montos e IVA por línea.
-    # Paralelo con ThreadPoolExecutor para no bloquear en N docs.
-    # Si falla un doc → lineas=[] → mapper usa 5999 (graceful degradation).
+    # Si falla un doc → enriquecimiento vacío → mapper usa fallback v1 / 5999.
     docs_sin_lineas = [d for d in page_items if not d.get("lineas")]
     if docs_sin_lineas:
         try:
             with ThreadPoolExecutor(max_workers=5) as executor:
                 fut_map = {
-                    executor.submit(fetch_and_parse_cabys, d.get("clave", "")): d
+                    executor.submit(fetch_and_enrich, d.get("clave", "")): d
                     for d in docs_sin_lineas
                 }
                 for fut in as_completed(fut_map, timeout=12):
                     doc = fut_map[fut]
                     try:
-                        lineas = fut.result()
+                        enriched = fut.result()
+                        lineas = enriched.get("lineas", [])
                         if lineas:
                             doc["lineas"] = lineas
-                            logger.info(
-                                f"✅ CABYS enriched: {doc.get('emisor_nombre','?')[:25]} "
-                                f"→ {len(lineas)} líneas"
-                            )
+                        # Siempre pasar metadata (OtrosCargos, total, condición)
+                        doc["otros_cargos"]       = enriched.get("otros_cargos", [])
+                        doc["total_comprobante"]  = enriched.get("total_comprobante_crc", 0)
+                        # condicion_venta del XML tiene precedencia si difiere
+                        if enriched.get("condicion_venta"):
+                            doc.setdefault("condicion_venta", enriched["condicion_venta"])
+                        logger.info(
+                            f"✅ XML enriched: {doc.get('emisor_nombre','?')[:25]} "
+                            f"→ {len(lineas)} líneas, "
+                            f"{len(enriched.get('otros_cargos', []))} OtrosCargos, "
+                            f"total_crc=¢{enriched.get('total_comprobante_crc', 0):,.2f}"
+                        )
                     except Exception as ex:
-                        logger.warning(f"⚠️ CABYS enrich error para {doc.get('clave','?')[:20]}: {ex}")
+                        logger.warning(f"⚠️ enrich error {doc.get('clave','?')[:20]}: {ex}")
         except Exception as ex:
-            logger.warning(f"⚠️ CABYS ThreadPool error: {ex} — importando sin enriquecimiento")
+            logger.warning(f"⚠️ enrich ThreadPool error: {ex} — importando sin enriquecimiento")
+
 
     return {
         "ok":          True,

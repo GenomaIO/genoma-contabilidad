@@ -1,0 +1,16 @@
+{
+  "site_package_search_strategy": "all",
+  "source_directories": [
+    {
+      "import_root": ".",
+      "source": "."
+    }
+  ],
+  "search_path": [
+    "/opt/homebrew/lib/python3.14/site-packages",
+    "/opt/homebrew/opt/python@3.14/Frameworks/Python.framework/Versions/3.14/lib/python3.14/site-packages"
+  ],
+  "python_version": "3.14",
+  "strict": false,
+  "ignore_all_errors": true
+}

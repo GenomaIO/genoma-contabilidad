@@ -215,11 +215,44 @@ def _build_entry_lines_from_doc(doc: dict, tenant_id: str, entry_id: str, cabys_
                 ))
                 total_iva_acumulado += monto_iva
 
-        # ── CR según condicion_venta del documento ───────────────────
-        # '01' contado → Banco (pagado al momento de la compra)
-        # '02'/default → CxP proveedor (queda pendiente de pago)
+        # ── DR por OtrosCargos (Cruz Roja, 911, flete, etc.) ─────────────────
+        # Regla de Oro: OtrosCargos son parte del TotalComprobante pero NO
+        # están en DetalleServicio — deben registrarse como DR separados.
+        _OC_CUENTAS = {
+            "01": "5710", "02": "5990", "03": "5480",
+            "04": "5420", "05": "5710", "99": "5990",
+        }
+        for otro in doc.get("otros_cargos", []):
+            monto_oc = float(otro.get("monto_cargo_crc", 0))
+            if monto_oc <= 0:
+                continue
+            tipo_oc  = otro.get("tipo_doc_oc", "99")
+            cuenta_oc = otro.get("cuenta") or _OC_CUENTAS.get(tipo_oc, "5990")
+            desc_oc   = otro.get("descripcion", f"OtroCargo tipo {tipo_oc}")[:80]
+            lines.append(_build_line(
+                entry_id, tenant_id, cuenta_oc,
+                f"{desc_oc} · OtroCargo",
+                debit=monto_oc, credit=0,
+                deductible="DEDUCTIBLE",
+                legal_basis="OtrosCargos — FE v4.4 Art.12",
+                account_role="OTRO_CARGO",
+            ))
+
+        # ── CR según condicion_venta del documento ────────────────────────────
+        # Regla de Oro #2: usar TotalComprobante del XML como fuente de verdad.
+        # Regla de Oro #3: CondicionVenta determina la cuenta (Banco vs CxP).
+        # total_comprobante viene de parse_doc_metadata (XML) → ya en CRC.
+        # Fallback explícito (is not None) para no perder 0 legítimo vs missing.
+        _tc = doc.get("total_comprobante")
+        _td = doc.get("total_doc")
+        if _tc is not None and _tc > 0:
+            total_cr = float(_tc)
+        elif _td is not None and _td > 0:
+            total_cr = float(_td)
+        else:
+            total_cr = round(total_neto_acumulado + total_iva_acumulado, 5)
+
         condicion      = doc.get("condicion_venta", doc.get("condicion", "02"))
-        cx_p_monto     = round(total_neto_acumulado + total_iva_acumulado, 5)
         emisor         = doc.get("emisor_nombre", "Proveedor")[:60]
 
         if condicion == "01":   # contado — pagado de inmediato
@@ -234,7 +267,7 @@ def _build_entry_lines_from_doc(doc: dict, tenant_id: str, entry_id: str, cabys_
         lines.append(_build_line(
             entry_id, tenant_id,
             cuenta_balance, desc_balance,
-            debit=0, credit=cx_p_monto,
+            debit=0, credit=total_cr,
             deductible="EXEMPT",
             legal_basis="Art. 8 Ley Renta 7092",
             account_role=role_balance,
