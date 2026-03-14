@@ -31,9 +31,12 @@ import logging
 import os
 import time
 from calendar import monthrange
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Optional
 
 import requests
+
+from services.integration.xml_line_extractor import fetch_and_parse_cabys
 
 logger = logging.getLogger(__name__)
 
@@ -223,6 +226,35 @@ def pull_documentos_recibidos(
     page_items  = items[page_start: page_start + limit]
     total_pages = max(1, (total + limit - 1) // limit)
 
+    # ── Enriquecer con líneas CABYS desde XML de Hacienda ──────────────────
+    # Los docs recibidos llegan con lineas:[] vacío del Facturador.
+    # Consultamos la API pública de Hacienda para obtener el XML con
+    # <LineaDetalle> y extraemos CABYS, montos e IVA por línea.
+    # Paralelo con ThreadPoolExecutor para no bloquear en N docs.
+    # Si falla un doc → lineas=[] → mapper usa 5999 (graceful degradation).
+    docs_sin_lineas = [d for d in page_items if not d.get("lineas")]
+    if docs_sin_lineas:
+        try:
+            with ThreadPoolExecutor(max_workers=5) as executor:
+                fut_map = {
+                    executor.submit(fetch_and_parse_cabys, d.get("clave", "")): d
+                    for d in docs_sin_lineas
+                }
+                for fut in as_completed(fut_map, timeout=12):
+                    doc = fut_map[fut]
+                    try:
+                        lineas = fut.result()
+                        if lineas:
+                            doc["lineas"] = lineas
+                            logger.info(
+                                f"✅ CABYS enriched: {doc.get('emisor_nombre','?')[:25]} "
+                                f"→ {len(lineas)} líneas"
+                            )
+                    except Exception as ex:
+                        logger.warning(f"⚠️ CABYS enrich error para {doc.get('clave','?')[:20]}: {ex}")
+        except Exception as ex:
+            logger.warning(f"⚠️ CABYS ThreadPool error: {ex} — importando sin enriquecimiento")
+
     return {
         "ok":          True,
         "items":       page_items,
@@ -230,3 +262,4 @@ def pull_documentos_recibidos(
         "page":        page,
         "total_pages": total_pages,
     }
+
