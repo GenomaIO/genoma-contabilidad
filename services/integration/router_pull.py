@@ -302,8 +302,24 @@ def get_pull_recibidos(
 
     docs = result.get("items", [])
 
+    # ── Diagnóstico: log de todos los docs que retorna el Facturador ───────────
+    logger.info(
+        f"📥 pull-recibidos [{period}] tenant={cliente_tenant_id[:8]}... "
+        f"→ {len(docs)} docs del Facturador"
+    )
+    for d in docs:
+        logger.info(
+            f"   doc: tipo={d.get('tipo_doc','?')} "
+            f"emisor={str(d.get('emisor_nombre','?'))[:30]} "
+            f"total={d.get('total_doc','?')} "
+            f"clave={str(d.get('clave',''))[:20]}..."
+        )
+
     for doc in docs:
         doc["ya_importado"] = _is_already_imported(db, jwt_tenant_id, doc.get("clave", ""))
+
+    ya = sum(1 for d in docs if d.get("ya_importado"))
+    logger.info(f"   → {ya} ya importados, {len(docs)-ya} nuevos disponibles")
 
     if import_all:
         return {"items": docs, "total": len(docs), "page": 1, "total_pages": 1}
@@ -356,7 +372,7 @@ def post_import_batch(
 
     result = _process_import_batch(db, docs_filtrados, tenant_id, mapper)
 
-    # Registrar en import_batch
+    # Registrar en import_batchya 
     try:
         db.execute(text("""
             INSERT INTO import_batch (tenant_id, period, tipo, total_docs, importados, skipped, estado)
