@@ -764,6 +764,41 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning(f"⚠️  Migración M_IVA_DIFERIDO omitida: {e}")
 
+        # ── Migración M_CABYS_SEED: UNIQUE constraint para cabys_prefix ────
+        # cabys_account_rules fue creada con UNIQUE(tenant_id, cabys_code)
+        # pero las reglas por prefijo usan cabys_prefix (cabys_code=NULL).
+        # Sin constraint en el prefijo, ON CONFLICT DO NOTHING no puede
+        # detectar duplicados → se insertarían filas repetidas en cada arranque.
+        # Esta migración agrega el constraint de forma idempotente.
+        try:
+            with _engine.begin() as conn:
+                # Primero eliminamos filas duplicadas de prefijo si las hubiera
+                conn.execute(text("""
+                    DELETE FROM cabys_account_rules a
+                    USING cabys_account_rules b
+                    WHERE a.id > b.id
+                      AND a.tenant_id     = b.tenant_id
+                      AND a.cabys_prefix  = b.cabys_prefix
+                      AND a.cabys_prefix IS NOT NULL
+                      AND a.cabys_code   IS NULL
+                """))
+                # Agregar UNIQUE constraint idempotente
+                conn.execute(text("""
+                    DO $$ BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1 FROM pg_constraint
+                            WHERE conname = 'uq_cabys_rules_prefix'
+                        ) THEN
+                            ALTER TABLE cabys_account_rules
+                            ADD CONSTRAINT uq_cabys_rules_prefix
+                            UNIQUE (tenant_id, cabys_prefix);
+                        END IF;
+                    END $$;
+                """))
+            logger.info("✅ Migración M_CABYS_SEED: UNIQUE constraint uq_cabys_rules_prefix listo")
+        except Exception as e:
+            logger.warning(f"⚠️  Migración M_CABYS_SEED (constraint) omitida: {e}")
+
 
     # ── Auto-reseed: al arrancar, aplica cuentas nuevas del seed a TODOS
     # los tenants con cuentas existentes. Usa seed_standard_catalog()
@@ -791,6 +826,28 @@ async def lifespan(app: FastAPI):
                 logger.info("✅ Auto-reseed: catalogo al dia en todos los tenants")
         except Exception as _e:
             logger.warning(f"⚠️  Auto-reseed omitido: {_e}")
+
+    # ── Auto-seed CABYS: siembra reglas prefijo CABYS → cuenta NIIF ──
+    # Corre después del auto-reseed de cuentas para garantizar que las
+    # cuentas destino ya existan antes de insertar las reglas.
+    # Idempotente: ON CONFLICT (tenant_id, cabys_prefix) DO NOTHING.
+    # prioridad=5: el contador puede sobrescribir con regla manual (p=10).
+    if _engine:
+        try:
+            from services.catalog.seed_cabys_rules import seed_cabys_rules_all_tenants as _seed_cabys
+            from sqlalchemy.orm import Session as _CabysSession
+            with _CabysSession(_engine) as _cabys_sess:
+                _cabys_result = _seed_cabys(_cabys_sess)
+            _nr = _cabys_result.get("reglas", 0)
+            _nt = _cabys_result.get("tenants", 0)
+            if _nr:
+                logger.info(
+                    f"✅ Auto-seed CABYS: {_nr} reglas CABYS sembradas en {_nt} tenant(s)"
+                )
+            else:
+                logger.info("✅ Auto-seed CABYS: reglas ya al día en todos los tenants")
+        except Exception as _cabys_err:
+            logger.warning(f"⚠️  Auto-seed CABYS omitido: {_cabys_err}")
 
     # ── Auto-Fix: Corrección de cuentas incorrectas en activos ──────
     # Corre ANTES del recovery de depreciación para que los DRAFTs
