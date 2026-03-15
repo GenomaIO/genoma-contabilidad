@@ -164,7 +164,12 @@ export default function PerfilFiscal() {
     const token = state.token || localStorage.getItem('gc_token')
 
     // Perfil fiscal
-    const [profile, setProfile] = useState({ taxpayer_type: 'PJ', is_large_taxpayer: false, fiscal_year_end_month: 9 })
+    const [profile, setProfile] = useState({
+        taxpayer_type: 'PJ',
+        is_large_taxpayer: false,
+        fiscal_year_end_month: 9,
+        prorrata_iva: 1.0,
+    })
     // Iniciar en true: muestra el form de inmediato con defaults mientras la API responde
     const [profileLoaded, setProfileLoaded] = useState(true)
     const [savingProfile, setSavingProfile] = useState(false)
@@ -188,6 +193,7 @@ export default function PerfilFiscal() {
                         taxpayer_type: d.taxpayer_type || 'PJ',
                         is_large_taxpayer: d.is_large_taxpayer || false,
                         fiscal_year_end_month: d.fiscal_year_end_month || 9,
+                        prorrata_iva: d.prorrata_iva ?? 1.0,
                     })
                 }
                 setProfileLoaded(true)
@@ -325,6 +331,60 @@ export default function PerfilFiscal() {
                                 >
                                     {MESES.map(m => <option key={m.v} value={m.v}>{m.l}</option>)}
                                 </select>
+                            </div>
+
+                            {/* ── Prorrata IVA (Art. 31 Ley 9635) ── */}
+                            <div style={{ gridColumn: '1 / -1' }}>
+                                <label style={labelStyle}>
+                                    Prorrata IVA — Art. 31 Ley 9635
+                                    <span style={{ marginLeft: 8, fontWeight: 400, textTransform: 'none', letterSpacing: 0, color: 'var(--text-muted)' }}>
+                                        (solo empresas con actividad mixta gravada + exenta)
+                                    </span>
+                                </label>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginTop: 6, flexWrap: 'wrap' }}>
+                                    <input
+                                        id="prorrata-slider"
+                                        type="range" min="0" max="100" step="0.01"
+                                        value={(profile.prorrata_iva * 100).toFixed(2)}
+                                        onChange={e => setProfile(p => ({ ...p, prorrata_iva: Number(e.target.value) / 100 }))}
+                                        style={{ flex: 1, minWidth: 160, accentColor: 'var(--accent)' }}
+                                    />
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                        <input
+                                            type="number" min="0" max="100" step="0.01"
+                                            value={(profile.prorrata_iva * 100).toFixed(2)}
+                                            onChange={e => {
+                                                const v = Math.max(0, Math.min(100, Number(e.target.value)))
+                                                setProfile(p => ({ ...p, prorrata_iva: v / 100 }))
+                                            }}
+                                            style={{ ...inputStyle, width: 80, textAlign: 'right' }}
+                                        />
+                                        <span style={{ color: 'var(--text-muted)', fontSize: '0.9rem', fontWeight: 700 }}>%</span>
+                                    </div>
+                                </div>
+                                {/* Desglose visual del split */}
+                                <div style={{
+                                    marginTop: 10, padding: '10px 14px',
+                                    background: 'var(--bg-3)', borderRadius: 8,
+                                    fontSize: '0.82rem', color: 'var(--text-secondary)',
+                                    display: 'flex', gap: 24, flexWrap: 'wrap',
+                                }}>
+                                    <span>
+                                        <span style={{ color: 'var(--success)', fontWeight: 700 }}>
+                                            DR 1104
+                                        </span>{' '}IVA Acreditable → {(profile.prorrata_iva * 100).toFixed(2)}% del IVA
+                                    </span>
+                                    <span>
+                                        <span style={{ color: 'var(--warning, #f59e0b)', fontWeight: 700 }}>
+                                            DR 5xxx
+                                        </span>{' '}IVA no acreditable → {((1 - profile.prorrata_iva) * 100).toFixed(2)}% del IVA (al gasto)
+                                    </span>
+                                    {profile.prorrata_iva === 1.0 && (
+                                        <span style={{ color: 'var(--text-muted)' }}>
+                                            ⚡ Default: 100% acreditable — sin prorrata
+                                        </span>
+                                    )}
+                                </div>
                             </div>
                         </div>
                     )}
