@@ -43,8 +43,29 @@ def seed_standard_catalog(tenant_id: str, db: Session) -> int:
     Carga el catálogo estándar NIIF CR para un tenant.
     Retorna el número de cuentas insertadas.
 
-    Idempotente: si las cuentas ya existen (ON CONFLICT) las omite.
+    REGLA DE ORO: Solo siembra si el tenant NO tiene ninguna cuenta.
+    Si el tenant ya tiene su propio catálogo (personalizado o estándar),
+    esta función retorna 0 sin tocar nada.
     """
+    # ── Guard: Respetar catálogo existente ──────────────────────────────
+    # Un tenant tiene UN SOLO catálogo, definido en configuración inicial.
+    # NO se agrega nada si ya existen cuentas — ni siquiera con ON CONFLICT.
+    try:
+        existing = db.execute(
+            text("SELECT COUNT(*) FROM accounts WHERE tenant_id = :t"),
+            {"t": tenant_id}
+        ).scalar()
+        if existing and existing > 0:
+            logger.debug(
+                f"seed_standard_catalog: tenant {tenant_id[:8]} ya tiene "
+                f"{existing} cuentas — catálogo respetado, seed omitido."
+            )
+            return 0
+    except Exception as _e:
+        logger.warning(f"⚠️  seed_standard_catalog: no pudo verificar cuentas: {_e}")
+        return 0
+    # ────────────────────────────────────────────────────────────────────
+
     try:
         accounts = json.loads(SEED_FILE.read_text(encoding="utf-8"))
     except FileNotFoundError:
@@ -56,7 +77,7 @@ def seed_standard_catalog(tenant_id: str, db: Session) -> int:
 
     for acc in accounts:
         try:
-            db.execute(
+            result = db.execute(
                 text("""
                     INSERT INTO accounts
                         (id, tenant_id, code, name, account_type, account_sub_type,
@@ -78,12 +99,12 @@ def seed_standard_catalog(tenant_id: str, db: Session) -> int:
                     "created_at":      now,
                 }
             )
-            inserted += 1
+            inserted += (result.rowcount or 0)  # rowcount=0 si ON CONFLICT se activó
         except Exception as e:
             logger.warning(f"⚠️  Seeder: error en cuenta {acc['code']}: {e}")
 
     db.commit()
-    logger.info(f"✅ Seeder: {inserted} cuentas STANDARD cargadas para tenant {tenant_id}")
+    logger.info(f"✅ Seeder: {inserted} cuentas STANDARD nuevas para tenant {tenant_id[:8]}")
     return inserted
 
 

@@ -50,17 +50,36 @@ def _normalizar_codigo(code: str) -> str:
     return code.replace(".", "").replace("-", "").replace(" ", "")
 
 
+# Mapa semántico: standard_code → (account_type_in_db, keywords para ILIKE)
+# Usado como fallback cuando exact+prefix match fallan (catálogos punteados).
+# Garantiza que "1104" encuentre "1.1.4.01 IVA Acreditable" aunque los prefijos
+# normalizados no coincidan por diferencia de esquema numérico.
+_SEMANTIC_MAP: dict = {
+    "1104": ("ACTIVO",  ["iva", "acreditable", "crédito fiscal", "credito fiscal"]),
+    "2101": ("PASIVO",  ["proveedor", "cuentas por pagar", "acreedores comerciales"]),
+    "2102": ("PASIVO",  ["iva", "débito", "iva debito", "ventas"]),
+    "1102": ("ACTIVO",  ["cliente", "cuentas por cobrar", "deudores comerciales"]),
+    "1101": ("ACTIVO",  ["caja", "banco", "efectivo", "disponible"]),
+    "4101": ("INGRESO", ["ventas", "ingresos por ventas", "venta de bienes"]),
+    "4102": ("INGRESO", ["servicios", "ingresos por servicios"]),
+    "5299": ("GASTO",   ["otros gastos", "gastos varios", "gastos operativos"]),
+    "5101": ("GASTO",   ["costo", "mercancía", "inventario", "costo de venta"]),
+}
+
+
 def _resolver_cuenta_jerarquica(db, tenant_id: str, code_base: str) -> str:
     """
     Resuelve la cuenta más específica del catálogo del tenant.
 
-    Estrategia (exact → prefix → fallback):
+    Estrategia (exact → prefix → semántico → fallback):
       1. Exact match: busca code_base tal cual.
-      2. Prefix match: busca el código menos profundo que EMPIECE con code_base
-         (normalizado, sin puntos ni guiones). Ej: '1102' matchea '110201'.
-      3. Fallback: retorna code_base con warning (el contador revisará).
-
-    Soporta catálogos de 4, 6, 8 dígitos y formatos con puntos/guiones.
+      2. Prefix match: busca código que EMPIECE con code_base normalizado.
+         Ej: '1102' matchea '110201'. Falla para catálogos punteados
+         donde '1104' normaliza a '1104' pero '1.1.4.01' normaliza a '11401'.
+      3. Semántico: si el código está en _SEMANTIC_MAP, busca por tipo de
+         cuenta + keyword en el nombre (ILIKE). Diseñado para catálogos
+         con esquema numérico diferente (ej. 1.1.4.xx vs 1104).
+      4. Fallback: retorna code_base con warning (el contador revisará).
     """
     try:
         # 1. Exact match
@@ -73,7 +92,6 @@ def _resolver_cuenta_jerarquica(db, tenant_id: str, code_base: str) -> str:
             return code_base
 
         # 2. Prefix match — catálogos extendidos (4d, 6d, 8d, dotados, con guión)
-        # Normalizamos quitando puntos y guiones antes de comparar prefijos
         norm_base = _normalizar_codigo(code_base)
         rows = db.execute(text("""
             SELECT code FROM accounts
@@ -88,10 +106,37 @@ def _resolver_cuenta_jerarquica(db, tenant_id: str, code_base: str) -> str:
             )
             return rows[0]
 
+        # 3. Semántico — para catálogos punteados con esquema distinto
+        # (ej. tenant usa 1.1.4.01 pero buscamos 1104)
+        semantic = _SEMANTIC_MAP.get(code_base)
+        if semantic:
+            acc_type, keywords = semantic
+            for kw in keywords:
+                sem_row = db.execute(text("""
+                    SELECT code FROM accounts
+                    WHERE tenant_id    = :tid
+                      AND account_type = :atype
+                      AND is_active    = TRUE
+                      AND allow_entries = TRUE
+                      AND LOWER(name)  LIKE :kw
+                    ORDER BY LENGTH(code) ASC
+                    LIMIT 1
+                """), {
+                    "tid":   tenant_id,
+                    "atype": acc_type,
+                    "kw":    f"%{kw}%",
+                }).fetchone()
+                if sem_row:
+                    logger.info(
+                        f"🔍 cuenta {code_base} → '{sem_row[0]}' "
+                        f"(semántico '{kw}' catálogo {tenant_id[:8]})"
+                    )
+                    return sem_row[0]
+
     except Exception as ex:
         logger.warning(f"⚠️ resolver_cuenta_jerarquica error: {ex} — usando fallback {code_base}")
 
-    # 3. Fallback — log warning, el contador verá el entry en needs_review
+    # 4. Fallback — log warning, el contador verá el entry en needs_review
     logger.warning(
         f"⚠️ mapper_v2: sin match para '{code_base}' en catálogo de {tenant_id[:8]}, usando fallback"
     )
@@ -100,6 +145,7 @@ def _resolver_cuenta_jerarquica(db, tenant_id: str, code_base: str) -> str:
 
 # Alias corto para compatibilidad interna
 _resolve_account = _resolver_cuenta_jerarquica
+
 
 
 def _build_line(entry_id, tenant_id, code, desc, debit, credit,

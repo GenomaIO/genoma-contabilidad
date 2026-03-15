@@ -800,38 +800,85 @@ async def lifespan(app: FastAPI):
             logger.warning(f"⚠️  Migración M_CABYS_SEED (constraint) omitida: {e}")
 
 
-    # ── Auto-reseed: al arrancar, aplica cuentas nuevas del seed a TODOS
-    # los tenants con cuentas existentes. Usa seed_standard_catalog()
-    # con raw SQL / ON CONFLICT DO NOTHING — igual que el boton Sembrar.
+        # ── Migración M_CLEAN_SEEDED_ACCOUNTS: limpia cuentas estándar ───────
+        # Elimina códigos 4-dígitos estándar (ej. 1104, 2101, 5299) que fueron
+        # sembrados erróneamente en tenants con catálogo personalizado punteado
+        # (ej. 1.1.4.01, 5901.01). Sólo elimina si la cuenta NO tiene
+        # journal_lines asociadas (no destruye datos historicos).
+        try:
+            with _engine.begin() as conn:
+                result = conn.execute(text("""
+                    DELETE FROM accounts
+                    WHERE tenant_id IN (
+                        SELECT DISTINCT tenant_id FROM accounts
+                        WHERE code LIKE '%%.%%'
+                    )
+                    AND code ~ '^[0-9]{4}$'
+                    AND is_generic = FALSE
+                    AND NOT EXISTS (
+                        SELECT 1 FROM journal_lines jl
+                        WHERE jl.account_code = accounts.code
+                          AND jl.tenant_id    = accounts.tenant_id
+                    )
+                """))
+                deleted = result.rowcount or 0
+            if deleted:
+                logger.info(
+                    f"✅ Migración M_CLEAN_SEEDED_ACCOUNTS: {deleted} cuentas "
+                    f"estándar removidas de tenants con catálogo personalizado"
+                )
+            else:
+                logger.info("✅ Migración M_CLEAN_SEEDED_ACCOUNTS: nada que limpiar")
+        except Exception as e:
+            logger.warning(f"⚠️  M_CLEAN_SEEDED_ACCOUNTS omitida: {e}")
+
+
+    # ── Auto-reseed: siembra catálogo estándar SOLO a tenants sin cuentas ──
+    # REGLA DE ORO: NO se toca ningún tenant que ya tenga su propio catálogo.
+    # Solo aplica a tenants recién registrados (0 cuentas) para darles
+    # el catálogo estándar inicial automáticamente.
     if _engine:
         try:
             from services.catalog.seeder import seed_standard_catalog as _seed_fn
             from sqlalchemy.orm import Session as _Session
 
+            # Solo tenants con 0 cuentas (nunca configurados = necesitan seed)
             with _Session(_engine) as _sess:
-                _rows = _sess.execute(
-                    text("SELECT DISTINCT tenant_id FROM accounts")
+                _all_tenants = _sess.execute(
+                    text("SELECT DISTINCT tenant_id FROM journal_entries")
                 ).fetchall()
-                _tenant_ids = [r[0] for r in _rows]
+                _tenants_with_accounts = set(
+                    r[0] for r in _sess.execute(
+                        text("SELECT DISTINCT tenant_id FROM accounts")
+                    ).fetchall()
+                )
+                # Tenants que tienen actividad contable pero aún no tienen cuentas
+                _tenants_sin_catalogo = [
+                    r[0] for r in _all_tenants
+                    if r[0] not in _tenants_with_accounts
+                ]
 
             total_inserted = 0
-            for _tid in _tenant_ids:
+            for _tid in _tenants_sin_catalogo:
                 with _Session(_engine) as _s2:
                     _n = _seed_fn(_tid, _s2)
                     total_inserted += _n
 
             if total_inserted:
-                logger.info(f"✅ Auto-reseed: {total_inserted} cuentas nuevas en {len(_tenant_ids)} tenants")
+                logger.info(
+                    f"✅ Auto-reseed: {total_inserted} cuentas sembradas en "
+                    f"{len(_tenants_sin_catalogo)} tenant(s) sin catálogo"
+                )
             else:
-                logger.info("✅ Auto-reseed: catalogo al dia en todos los tenants")
+                logger.info("✅ Auto-reseed: todos los tenants ya tienen catálogo")
         except Exception as _e:
             logger.warning(f"⚠️  Auto-reseed omitido: {_e}")
 
     # ── Auto-seed CABYS: siembra reglas prefijo CABYS → cuenta NIIF ──
-    # Corre después del auto-reseed de cuentas para garantizar que las
-    # cuentas destino ya existan antes de insertar las reglas.
-    # Idempotente: ON CONFLICT (tenant_id, cabys_prefix) DO NOTHING.
-    # prioridad=5: el contador puede sobrescribir con regla manual (p=10).
+    # REGLA DE ORO: Solo para tenants con catálogo estándar (códigos 4-dígitos).
+    # Tenants con catálogo personalizado punteado usan sus propias cuentas;
+    # las reglas cabys_account_rules sólo aplican si el tenant tiene cuentas
+    # en formato estándar que existen en el catálogo sembrado.
     if _engine:
         try:
             from services.catalog.seed_cabys_rules import seed_cabys_rules_all_tenants as _seed_cabys
