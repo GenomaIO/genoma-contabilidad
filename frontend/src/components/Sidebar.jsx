@@ -106,6 +106,22 @@ function initCollapsed() {
     return init
 }
 
+// Inicializar estado de ítems con children (Configuración, etc.)
+function initExpandedItems() {
+    try {
+        const saved = localStorage.getItem('gc_sidebar_items_expanded')
+        if (saved) return JSON.parse(saved)
+    } catch { /* descartar */ }
+    // Por defecto: ítems con children empiezan expandidos
+    const init = {}
+    NAV_ITEMS.forEach(s => {
+        s.items?.forEach(item => {
+            if (item.children?.length) init[item.path] = true
+        })
+    })
+    return init
+}
+
 export default function Sidebar() {
     const { state, dispatch } = useApp()
     const navigate = useNavigate()
@@ -113,11 +129,20 @@ export default function Sidebar() {
 
     // collapsed[sectionName] = true → seccion colapsada
     const [collapsed, setCollapsed] = useState(initCollapsed)
+    const [expandedItems, setExpandedItems] = useState(initExpandedItems)
 
     function toggleSection(sectionName) {
         setCollapsed(prev => {
             const next = { ...prev, [sectionName]: !prev[sectionName] }
             try { localStorage.setItem('gc_sidebar_collapsed', JSON.stringify(next)) } catch { /* noop */ }
+            return next
+        })
+    }
+
+    function toggleItem(path) {
+        setExpandedItems(prev => {
+            const next = { ...prev, [path]: !prev[path] }
+            try { localStorage.setItem('gc_sidebar_items_expanded', JSON.stringify(next)) } catch { /* noop */ }
             return next
         })
     }
@@ -255,6 +280,27 @@ export default function Sidebar() {
                                                         borderRadius: 4, letterSpacing: '0.04em',
                                                     }}>PRONTO</span>
                                                 </div>
+                                            ) : item.children?.length ? (
+                                                // Ítem con sub-items → toggle colapsable (igual que sección)
+                                                <div
+                                                    className={`nav-item${parentActive(item) ? ' active' : ''}`}
+                                                    onClick={() => toggleItem(item.path)}
+                                                    role="button"
+                                                    tabIndex={0}
+                                                    onKeyDown={e => e.key === 'Enter' && toggleItem(item.path)}
+                                                    style={{ cursor: 'pointer' }}
+                                                >
+                                                    <span className="nav-icon">{item.icon}</span>
+                                                    <span style={{ flex: 1 }}>{item.label}</span>
+                                                    <span style={{
+                                                        fontSize: '0.65rem',
+                                                        opacity: 0.6,
+                                                        transition: 'transform 0.22s ease',
+                                                        transform: expandedItems[item.path] ? 'rotate(0deg)' : 'rotate(-90deg)',
+                                                        display: 'inline-block',
+                                                        lineHeight: 1,
+                                                    }}>▾</span>
+                                                </div>
                                             ) : (
                                                 <div
                                                     className={`nav-item${parentActive(item) ? ' active' : ''}`}
@@ -268,43 +314,55 @@ export default function Sidebar() {
                                                 </div>
                                             )}
 
-                                            {/* Sub-ítems (children) */}
-                                            {item.children?.map(child => (
-                                                child.coming ? (
-                                                    <div
-                                                        key={child.path}
-                                                        className="nav-item"
-                                                        style={{
-                                                            paddingLeft: 36, fontSize: '0.82rem',
-                                                            opacity: 0.4, cursor: 'default',
-                                                            pointerEvents: 'none',
-                                                            display: 'flex', alignItems: 'center', gap: 4,
-                                                        }}
-                                                    >
-                                                        <span className="nav-icon" style={{ fontSize: '0.85rem' }}>{child.icon}</span>
-                                                        <span style={{ flex: 1 }}>{child.label}</span>
-                                                        <span style={{
-                                                            fontSize: '0.6rem', fontWeight: 700,
-                                                            background: 'rgba(251,191,36,0.25)',
-                                                            color: '#fbbf24', padding: '1px 5px',
-                                                            borderRadius: 4,
-                                                        }}>PRONTO</span>
-                                                    </div>
-                                                ) : (
-                                                    <div
-                                                        key={child.path}
-                                                        className={`nav-item${isActive(child.path) ? ' active' : ''}`}
-                                                        onClick={() => handleNav(child.path)}
-                                                        role="button"
-                                                        tabIndex={0}
-                                                        onKeyDown={e => e.key === 'Enter' && handleNav(child.path)}
-                                                        style={{ paddingLeft: 36, fontSize: '0.82rem', opacity: 0.85 }}
-                                                    >
-                                                        <span className="nav-icon" style={{ fontSize: '0.85rem' }}>{child.icon}</span>
-                                                        <span>{child.label}</span>
-                                                    </div>
-                                                )
-                                            ))}
+                                            {/* Sub-ítems (children) — colapsables */}
+                                            {item.children?.length > 0 && (
+                                                <div style={{
+                                                    overflow: 'hidden',
+                                                    maxHeight: expandedItems[item.path] ? '400px' : '0px',
+                                                    transition: expandedItems[item.path]
+                                                        ? 'max-height 0.32s ease-out'
+                                                        : 'max-height 0.22s ease-in',
+                                                    opacity: expandedItems[item.path] ? 1 : 0,
+                                                    transitionProperty: 'max-height, opacity',
+                                                }}>
+                                                    {item.children.map(child =>
+                                                        child.coming ? (
+                                                            <div
+                                                                key={child.path}
+                                                                className="nav-item"
+                                                                style={{
+                                                                    paddingLeft: 36, fontSize: '0.82rem',
+                                                                    opacity: 0.4, cursor: 'default',
+                                                                    pointerEvents: 'none',
+                                                                    display: 'flex', alignItems: 'center', gap: 4,
+                                                                }}
+                                                            >
+                                                                <span className="nav-icon" style={{ fontSize: '0.85rem' }}>{child.icon}</span>
+                                                                <span style={{ flex: 1 }}>{child.label}</span>
+                                                                <span style={{
+                                                                    fontSize: '0.6rem', fontWeight: 700,
+                                                                    background: 'rgba(251,191,36,0.25)',
+                                                                    color: '#fbbf24', padding: '1px 5px',
+                                                                    borderRadius: 4,
+                                                                }}>PRONTO</span>
+                                                            </div>
+                                                        ) : (
+                                                            <div
+                                                                key={child.path}
+                                                                className={`nav-item${isActive(child.path) ? ' active' : ''}`}
+                                                                onClick={() => handleNav(child.path)}
+                                                                role="button"
+                                                                tabIndex={0}
+                                                                onKeyDown={e => e.key === 'Enter' && handleNav(child.path)}
+                                                                style={{ paddingLeft: 36, fontSize: '0.82rem', opacity: 0.85 }}
+                                                            >
+                                                                <span className="nav-icon" style={{ fontSize: '0.85rem' }}>{child.icon}</span>
+                                                                <span>{child.label}</span>
+                                                            </div>
+                                                        )
+                                                    )}
+                                                </div>
+                                            )}
                                         </div>
                                     ))}
                                 </div>
