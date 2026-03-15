@@ -510,6 +510,11 @@ def map_document_lines_to_entry(db: Session, doc: dict, tenant_id: str) -> dict:
     }
     source = source_map.get(tipo, EntrySource.MANUAL)
 
+    # Inyectar el db en el doc para que _build_entry_lines_from_doc
+    # pueda llamar get_prorrata(tenant_id, db) y leer fiscal_profiles.
+    # Se usa una copia para no mutar el dict original del llamador.
+    doc = {**doc, "_db": db}
+
     # Verificar confianza mínima para marcar needs_review
     lines_data = _build_entry_lines_from_doc(doc, tenant_id, entry_id, db)
     needs_review = any(
