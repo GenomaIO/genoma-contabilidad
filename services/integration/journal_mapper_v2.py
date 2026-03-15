@@ -405,13 +405,28 @@ def _fallback_v1_lines(doc: dict, tenant_id: str, entry_id: str, doc_type: str) 
     """
     Fallback al mapeo v1 por totales cuando no hay lineas[].
     Compatible con payloads del webhook_receiver original.
-    Respeta condicion_venta: '01' contado → Banco; '02'/default → CxC/CxP.
+
+    Correcciones:
+    - CR usa total_comprobante (o total_venta + total_iva) para garantizar balance DR=CR.
+    - Aplica prorrata IVA (Art. 31 Ley 9635) en path RECIBIDO:
+        DR 1104  = total_iva * prorrata       (acreditable)
+        DR 5xxx  = total_iva * (1-prorrata)   (no acreditable → mayor costo)
     """
-    total_venta  = float(doc.get("total_venta", 0))
-    total_iva    = float(doc.get("total_iva",   0))
-    total_doc    = float(doc.get("total_doc",   0))
-    emisor       = doc.get("emisor_nombre", "Proveedor")[:60]
-    condicion    = doc.get("condicion_venta", doc.get("condicion", "02"))
+    total_venta = float(doc.get("total_venta", 0))
+    total_iva   = float(doc.get("total_iva",   0))
+    emisor      = doc.get("emisor_nombre", "Proveedor")[:60]
+    condicion   = doc.get("condicion_venta", doc.get("condicion", "02"))
+
+    # CR correcto: total_comprobante > total_doc (neto) → evita desbalance
+    _tc = doc.get("total_comprobante") or doc.get("total_comprobante_crc")
+    total_cr = float(_tc) if _tc and float(_tc) > 0 else round(total_venta + total_iva, 5)
+
+    # Prorrata IVA (Art. 31 Ley 9635) — misma lógica que v2
+    try:
+        prorrata = get_prorrata(tenant_id, doc["_db"]) if doc.get("_db") else doc.get("prorrata_iva", 1.0)
+    except Exception:
+        prorrata = doc.get("prorrata_iva", 1.0)
+    prorrata = max(0.0, min(1.0, float(prorrata)))
 
     lines = []
     if doc_type in ("08", "09", "RECIBIDO"):
@@ -425,13 +440,27 @@ def _fallback_v1_lines(doc: dict, tenant_id: str, entry_id: str, doc_type: str) 
                 clasificacion_fuente="V1_FALLBACK"
             ))
         if total_iva > 0:
-            lines.append(_build_line(entry_id, tenant_id,
-                DEFAULT_ACCOUNTS["IVA_CREDITO"],
-                "IVA Acreditable (v1-fallback)",
-                debit=total_iva, credit=0,
-                deductible="DEDUCTIBLE",
-                clasificacion_fuente="V1_FALLBACK"
-            ))
+            iva_acreditable    = round(total_iva * prorrata, 5)
+            iva_no_acreditable = round(total_iva - iva_acreditable, 5)
+
+            if iva_acreditable > 0:
+                lines.append(_build_line(entry_id, tenant_id,
+                    DEFAULT_ACCOUNTS["IVA_CREDITO"],
+                    f"IVA Acreditable {round(prorrata*100,0):.0f}% (v1-fallback) · {emisor}",
+                    debit=iva_acreditable, credit=0,
+                    deductible="DEDUCTIBLE",
+                    legal_basis="Art. 29 Ley IVA 9635",
+                    clasificacion_fuente="V1_FALLBACK"
+                ))
+            if iva_no_acreditable > 0:
+                lines.append(_build_line(entry_id, tenant_id,
+                    DEFAULT_ACCOUNTS["OTROS_GASTOS"],
+                    f"IVA no acreditable {round((1-prorrata)*100,0):.0f}% (v1-fallback) · {emisor}",
+                    debit=iva_no_acreditable, credit=0,
+                    deductible="PARTIAL",
+                    legal_basis="Art. 31 Ley IVA 9635 — prorrata",
+                    clasificacion_fuente="V1_FALLBACK"
+                ))
         # CR según condición: contado → Banco, crédito → CxP
         if condicion == "01":
             cuenta_balance = DEFAULT_ACCOUNTS["BANCO"]
@@ -441,7 +470,7 @@ def _fallback_v1_lines(doc: dict, tenant_id: str, entry_id: str, doc_type: str) 
             desc_balance   = f"CxP proveedor (v1-fallback) · {emisor}"
         lines.append(_build_line(entry_id, tenant_id,
             cuenta_balance, desc_balance,
-            debit=0, credit=total_doc,
+            debit=0, credit=total_cr,
             deductible="EXEMPT",
             clasificacion_fuente="V1_FALLBACK"
         ))
@@ -456,7 +485,7 @@ def _fallback_v1_lines(doc: dict, tenant_id: str, entry_id: str, doc_type: str) 
             desc_dr   = f"CxC cliente (v1-fallback) · {receptor}"
         lines.append(_build_line(entry_id, tenant_id,
             cuenta_dr, desc_dr,
-            debit=total_doc, credit=0, deductible="EXEMPT",
+            debit=total_cr, credit=0, deductible="EXEMPT",
             clasificacion_fuente="V1_FALLBACK"
         ))
         if total_venta > 0:
