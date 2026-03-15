@@ -306,6 +306,21 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning(f"⚠️  Migración M_FISCAL_PROFILE omitida: {e}")
 
+        # ── Migración M_PRORRATA: prorrata IVA por tenant (Art. 31 Ley 9635) ─
+        # prorrata_iva: factor 0.0-1.0 que determina qué fracción del IVA pagado
+        # en compras es acreditable. Default 1.0 = 100% acreditable (sin cambio).
+        # Solo afecta a empresas con actividad mixta (gravada + exenta).
+        # ALTER ... ADD COLUMN IF NOT EXISTS es idempotente — seguro en cada arranque.
+        try:
+            with _engine.begin() as conn:
+                conn.execute(text(
+                    "ALTER TABLE fiscal_profiles "
+                    "ADD COLUMN IF NOT EXISTS prorrata_iva NUMERIC(5,4) DEFAULT 1.0"
+                ))
+            logger.info("✅ Migración M_PRORRATA: prorrata_iva agregada a fiscal_profiles")
+        except Exception as e:
+            logger.warning(f"⚠️  Migración M_PRORRATA omitida: {e}")
+
         # ── Migración M_TAX_BRACKETS: tramos de renta por año/tipo ────────
         # El usuario gestiona estos datos desde la UI. Sin hardcode.
         # Los tramos 2026 se insertan bajo demanda via POST /tax/tax-brackets/prefill-2026.

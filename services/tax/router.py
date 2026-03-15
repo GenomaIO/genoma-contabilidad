@@ -29,6 +29,7 @@ class FiscalProfileIn(BaseModel):
     taxpayer_type: str          # 'PJ' | 'PF'
     is_large_taxpayer: bool = False
     fiscal_year_end_month: int = 9   # 9 = Septiembre (estándar CR)
+    prorrata_iva: float = 1.0        # 0.0-1.0: % de IVA acreditable (Art. 31 Ley 9635)
 
 
 class TaxBracket(BaseModel):
@@ -75,6 +76,24 @@ def _get_profile(tenant_id: str, db: Session) -> dict | None:
         {"tid": tenant_id},
     ).mappings().first()
     return dict(row) if row else None
+
+
+def get_prorrata(tenant_id: str, db: Session) -> float:
+    """
+    Retorna el factor de prorrata IVA del tenant (Art. 31 Ley 9635).
+    - 1.0 = 100% acreditable (default, empresas con actividad 100% gravada)
+    - 0.7 = 70% acreditable (empresa con 70% ventas gravadas / 30% exentas)
+    - 0.0 = 0% acreditable (empresa 100% exenta)
+    Importado por journal_mapper_v2 para aplicar la regla línea a línea.
+    """
+    row = db.execute(
+        text("SELECT prorrata_iva FROM fiscal_profiles WHERE tenant_id = :tid"),
+        {"tid": tenant_id},
+    ).fetchone()
+    if row and row[0] is not None:
+        val = float(row[0])
+        return max(0.0, min(1.0, val))   # clamp 0.0-1.0 por seguridad
+    return 1.0   # default: 100% acreditable
 
 
 def _get_brackets(tenant_id: str, fiscal_year: int, taxpayer_type: str, db: Session) -> list[dict]:
@@ -157,28 +176,32 @@ def save_fiscal_profile(
         raise HTTPException(400, "taxpayer_type debe ser 'PJ' o 'PF'")
     if not 1 <= body.fiscal_year_end_month <= 12:
         raise HTTPException(400, "fiscal_year_end_month debe estar entre 1 y 12")
+    if not 0.0 <= body.prorrata_iva <= 1.0:
+        raise HTTPException(400, "prorrata_iva debe estar entre 0.0 y 1.0")
 
     db.execute(
         text("""
             INSERT INTO fiscal_profiles
-                (tenant_id, taxpayer_type, is_large_taxpayer, fiscal_year_end_month)
+                (tenant_id, taxpayer_type, is_large_taxpayer, fiscal_year_end_month, prorrata_iva)
             VALUES
-                (:tid, :tp, :large, :month)
+                (:tid, :tp, :large, :month, :prorrata)
             ON CONFLICT (tenant_id) DO UPDATE SET
                 taxpayer_type         = EXCLUDED.taxpayer_type,
                 is_large_taxpayer     = EXCLUDED.is_large_taxpayer,
                 fiscal_year_end_month = EXCLUDED.fiscal_year_end_month,
+                prorrata_iva          = EXCLUDED.prorrata_iva,
                 updated_at            = NOW()
         """),
         {
-            "tid":   tenant_id,
-            "tp":    body.taxpayer_type,
-            "large": body.is_large_taxpayer,
-            "month": body.fiscal_year_end_month,
+            "tid":      tenant_id,
+            "tp":       body.taxpayer_type,
+            "large":    body.is_large_taxpayer,
+            "month":    body.fiscal_year_end_month,
+            "prorrata": body.prorrata_iva,
         },
     )
     db.commit()
-    logger.info(f"✅ Perfil fiscal guardado para tenant {tenant_id}")
+    logger.info(f"✅ Perfil fiscal guardado para tenant {tenant_id} (prorrata={body.prorrata_iva})")
     return {"ok": True, "message": "Perfil fiscal guardado"}
 
 

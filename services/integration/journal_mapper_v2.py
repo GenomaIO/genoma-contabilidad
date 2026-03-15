@@ -26,6 +26,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from services.integration.cabys_engine import resolver_cabys, iva_tipo_desde_tarifa
+from services.tax.router import get_prorrata
 
 logger = logging.getLogger(__name__)
 
@@ -157,6 +158,14 @@ def _build_entry_lines_from_doc(doc: dict, tenant_id: str, entry_id: str, cabys_
 
     # ── FEC / Compra recibida (08, RECIBIDO) ────────────────────────
     if doc_type in ("08", "09", "RECIBIDO"):
+        # Leer prorrata del tenant una sola vez (Art. 31 Ley IVA 9635)
+        # Si la db es None (SIM sin DB), usar prorrata del doc o default 1.0
+        try:
+            prorrata = get_prorrata(tenant_id, doc["_db"]) if doc.get("_db") else doc.get("prorrata_iva", 1.0)
+        except Exception:
+            prorrata = doc.get("prorrata_iva", 1.0)
+        prorrata = max(0.0, min(1.0, float(prorrata)))   # clamp 0.0-1.0
+
         for linea in lineas:
             cabys     = linea.get("cabys_code", "")
             desc_item = linea.get("descripcion", "Compra")
@@ -182,10 +191,10 @@ def _build_entry_lines_from_doc(doc: dict, tenant_id: str, entry_id: str, cabys_
 
             deductible = "DEDUCTIBLE" if iva_info["acreditable"] else "EXEMPT"
 
-            # DR Cuenta de gasto/activo
+            # DR Cuenta de gasto/activo (neto sin IVA)
             lines.append(_build_line(
                 entry_id, tenant_id, cuenta_gasto,
-                f"{desc_item} · CABYS {cabys}",
+                f"{desc_item} \u00b7 CABYS {cabys}",
                 debit=monto_n, credit=0,
                 deductible=deductible,
                 legal_basis="Art. 8 Ley Renta 7092",
@@ -199,21 +208,42 @@ def _build_entry_lines_from_doc(doc: dict, tenant_id: str, entry_id: str, cabys_
             ))
             total_neto_acumulado += monto_n
 
-            # DR IVA Acreditable (solo si grabado)
+            # ── DR IVA Acreditable y no acreditable (Prorrata Art. 31 Ley 9635) ──
             if monto_iva > 0 and iva_info["acreditable"]:
-                lines.append(_build_line(
-                    entry_id, tenant_id,
-                    DEFAULT_ACCOUNTS["IVA_CREDITO"],
-                    f"IVA {iva_info['tarifa']}% · {desc_item}",
-                    debit=monto_iva, credit=0,
-                    deductible="DEDUCTIBLE",
-                    legal_basis="Art. 29 Ley IVA 9635",
-                    cabys_code=cabys,
-                    iva_tipo=iva_info["tipo"],
-                    iva_tarifa=iva_info["tarifa"],
-                    account_role="IVA_CREDITO",
-                ))
-                total_iva_acumulado += monto_iva
+                iva_acreditable    = round(monto_iva * prorrata, 5)
+                iva_no_acreditable = round(monto_iva - iva_acreditable, 5)
+
+                # DR 1104 IVA Crédito Fiscal (parte acreditable)
+                if iva_acreditable > 0:
+                    lines.append(_build_line(
+                        entry_id, tenant_id,
+                        DEFAULT_ACCOUNTS["IVA_CREDITO"],
+                        f"IVA Acreditable {prorrata*100:.0f}% \u00b7 {desc_item}",
+                        debit=iva_acreditable, credit=0,
+                        deductible="DEDUCTIBLE",
+                        legal_basis="Art. 29 Ley IVA 9635",
+                        cabys_code=cabys,
+                        iva_tipo=iva_info["tipo"],
+                        iva_tarifa=iva_info["tarifa"],
+                        account_role="IVA_CREDITO",
+                    ))
+                    total_iva_acumulado += iva_acreditable
+
+                # DR misma cuenta gasto (IVA no acreditable = costo adicional)
+                if iva_no_acreditable > 0:
+                    lines.append(_build_line(
+                        entry_id, tenant_id,
+                        cuenta_gasto,   # ← misma cuenta 5xxx del gasto
+                        f"IVA no acreditable {(1-prorrata)*100:.0f}% \u00b7 {desc_item}",
+                        debit=iva_no_acreditable, credit=0,
+                        deductible="PARTIAL",
+                        legal_basis="Art. 31 Ley IVA 9635 \u2014 prorrata",
+                        cabys_code=cabys,
+                        iva_tipo=iva_info["tipo"],
+                        iva_tarifa=iva_info["tarifa"],
+                        account_role="IVA_NO_ACREDITABLE",
+                    ))
+                    total_iva_acumulado += iva_no_acreditable
 
         # ── DR por OtrosCargos (Cruz Roja, 911, flete, etc.) ─────────────────
         # Regla de Oro: OtrosCargos son parte del TotalComprobante pero NO

@@ -84,7 +84,7 @@ function AppLayout() {
                     <Route path="/asientos" element={<AsientosPendientes />} />
                     <Route path="/catalogo" element={<Catalogo />} />
                     <Route path="/declaraciones" element={<ComingSoon name="Declaraciones Tribu-CR" />} />
-                    <Route path="/prorrata" element={<ComingSoon name="Prorrata IVA" />} />
+                    <Route path="/prorrata" element={<Navigate to="/config/perfil-fiscal" replace />} />
                     <Route path="/reportes" element={<EstadosFinancieros />} />
                     <Route path="/cierre" element={<CierrePeriodo />} />
                     <Route path="/cierre-anual" element={<CierreAnual />} />
