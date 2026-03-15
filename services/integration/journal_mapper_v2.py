@@ -41,7 +41,7 @@ DEFAULT_ACCOUNTS = {
     "INGRESO_VENTAS": "4101",
     "INGRESO_SERV":   "4102",
     "INGRESO_EXENTO": "4103",
-    "OTROS_GASTOS":   "5999",
+    "OTROS_GASTOS":   "5299",  # Otros Gastos Operativos — cuenta real del catálogo (5999 no existe)
 }
 
 

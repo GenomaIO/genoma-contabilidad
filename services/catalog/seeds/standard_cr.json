@@ -760,6 +760,15 @@
     "allow_entries": false
   },
   {
+    "code": "5299",
+    "name": "Otros Gastos Operativos",
+    "type": "GASTO",
+    "sub_type": null,
+    "parent_code": "5200",
+    "allow_entries": true,
+    "_nota": "Cuenta genérica fallback para gastos sin clasificación CABYS (v1-fallback). Art. 8 Ley Renta 7092."
+  },
+  {
     "code": "5300",
     "name": "Gastos Financieros",
     "type": "GASTO",

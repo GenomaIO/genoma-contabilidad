@@ -26,8 +26,10 @@ from sqlalchemy import text
 
 logger = logging.getLogger(__name__)
 
-# Cuenta de fallback cuando no hay regla ni match semántico
-CUENTA_OTROS_GASTOS = "5999"
+# Cuenta de fallback cuando no hay regla ni match semántico.
+# 5299 = "Otros Gastos Operativos" — existe en catálogo estándar CR con allow_entries=true.
+# NO usar 5999 (no existe en catálogo NIIF → causa errores en reportes y asiento inválido).
+CUENTA_OTROS_GASTOS = "5299"
 
 # Mapa de tarifa_codigo → tipo y porcentaje IVA (Hacienda v4.4)
 TARIFA_MAP = {

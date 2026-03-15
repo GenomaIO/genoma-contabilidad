@@ -70,11 +70,11 @@ check("confidence = 1.0", res["confidence"] == 1.0)
 check("fuente = EXACTA", res["fuente"] == "EXACTA")
 check("asset_flag True + monto > min_amount → needs_review", res["asset_flag"] == True)
 
-# ─── SIM-F2-02: Sin regla → fallback a 5999 ───────────────────────
-print("\nSIM-F2-02: Sin regla conocida → fallback 5999")
+# ─── SIM-F2-02: Sin regla → fallback a 5299 (Otros Gastos Operativos) ───────────
+print("\nSIM-F2-02: Sin regla conocida → fallback 5299 (cuenta real del catálogo)")
 db_empty = MockDB(rules=[])
 res2 = resolver_cabys(db_empty, "t1", "9999999999", "Artículo raro", 1000, "t1_token")
-check("account_code = 5999", res2["account_code"] == "5999")
+check("account_code = 5299", res2["account_code"] == "5299")
 check("confidence = 0.3", res2["confidence"] == 0.3)
 check("fuente = FALLBACK", res2["fuente"] == "FALLBACK")
 check("asset_flag False en fallback", res2["asset_flag"] == False)
