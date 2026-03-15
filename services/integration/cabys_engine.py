@@ -145,7 +145,7 @@ def resolver_cabys(
                 "account_code": sem["account_code"],
                 "confidence":   0.6,
                 "fuente":       "SEMANTICA",
-                "asset_flag":   False,
+                "asset_flag":   sem.get("asset_flag", False),   # ← propaga desde semántica
                 "cabys_code":   cabys_code,
             }
 
@@ -160,20 +160,77 @@ def resolver_cabys(
     }
 
 
+
+# Keywords que sugieren que el ítem es un activo fijo (Propiedad, Planta y Equipo)
+# Basado en clasificación NIIF Sección 17 y catálogos CABYS CR comunes
+_ASSET_KEYWORDS = frozenset([
+    "equipo", "computador", "computadora", "laptop", "servidor", "impresora",
+    "vehiculo", "vehículo", "camion", "camión", "moto", "automovil", "automóvil",
+    "maquinaria", "maquina", "máquina", "tractor", "montacargas", "grua", "grúa",
+    "mobiliario", "mueble", "escritorio", "silla", "archivero", "archivador",
+    "edificio", "terreno", "local", "inmueble", "instalacion", "instalación",
+    "herramienta", "instrumento", "medicion", "medición", "laboratorio",
+    "telefono", "teléfono", "celular", "tablet", "ipad", "monitor", "pantalla",
+    "aire acondicionado", "planta electrica", "generador", "ascensor", "elevador",
+    "camara", "cámara", "seguridad", "alarma", "ups", "router", "switch", "server",
+    "mueble", "estante", "estanteria", "estantería", "mesa", "sillon", "sillón",
+    "fotocopiadora", "scanner", "escaner", "proyector", "tv", "television",
+    "bodega", "galera", "nave", "estructura", "planta",
+])
+
+
+def _es_keyword_activo(descripcion: str) -> bool:
+    """Retorna True si la descripción contiene al menos un keyword de activo fijo."""
+    desc_lower = descripcion.lower()
+    return any(kw in desc_lower for kw in _ASSET_KEYWORDS)
+
+
 def _buscar_semantico(db, tenant_id: str, descripcion: str) -> dict | None:
     """
-    Búsqueda por palabras clave de la descripción del ítem en
-    el catálogo CABYS → cuenta del tenant.
+    Búsqueda semántica por palabras clave de la descripción del ítem.
 
-    Intenta encontrar una cuenta del catálogo del tenant cuyo nombre
-    contenga palabras significativas de la descripción.
-    Retorna None si no hay match suficiente.
+    Estrategia:
+    1. Si la descripción tiene keywords de activo fijo → buscar primero en
+       account_type IN ('ACTIVO', 'PROPIEDAD_PLANTA_EQUIPO', 'ASSET').
+       Devuelve asset_flag=True para que el mapper la marque needs_review=True.
+    2. Si no hay match en activos (o no es keyword de activo) →
+       buscar en account_type = 'GASTO' como antes.
+
+    Retorna None si no hay ningún match.
     """
     keywords = [w.lower() for w in descripcion.split() if len(w) >= 4]
     if not keywords:
         return None
 
-    for kw in keywords[:3]:  # max 3 keywords para no sobrecargar
+    # ── Paso 1: ¿parece activo? intenta resolver en cuentas de activo ──
+    if _es_keyword_activo(descripcion):
+        for kw in keywords[:4]:
+            try:
+                row = db.execute(text("""
+                    SELECT code AS account_code
+                    FROM accounts
+                    WHERE tenant_id = :tid
+                      AND is_active = TRUE
+                      AND LOWER(name) LIKE :kw
+                      AND account_type IN (
+                          'ACTIVO', 'ASSET',
+                          'PROPIEDAD_PLANTA_EQUIPO', 'PROPERTY_PLANT_EQUIPMENT',
+                          'ACTIVO_NO_CORRIENTE'
+                      )
+                    ORDER BY code
+                    LIMIT 1
+                """), {"tid": tenant_id, "kw": f"%{kw}%"}).fetchone()
+
+                if row:
+                    logger.info(
+                        f"cabys_engine: SEMANTICA-ACTIVO '{kw}' → {row.account_code}"
+                    )
+                    return {"account_code": row.account_code, "asset_flag": True}
+            except Exception:
+                pass
+
+    # ── Paso 2: buscar en cuentas de gasto (comportamiento previo) ──
+    for kw in keywords[:3]:
         try:
             row = db.execute(text("""
                 SELECT code AS account_code
@@ -187,7 +244,7 @@ def _buscar_semantico(db, tenant_id: str, descripcion: str) -> dict | None:
             """), {"tid": tenant_id, "kw": f"%{kw}%"}).fetchone()
 
             if row:
-                return {"account_code": row.account_code}
+                return {"account_code": row.account_code, "asset_flag": False}
         except Exception:
             pass
 
