@@ -140,9 +140,105 @@ def _apply_brackets(utilidad: float, brackets: list[dict]) -> dict:
     return {"total": round(renta_total, 2), "desglose": desglose}
 
 
+
 # ─────────────────────────────────────────────
 # Endpoints
 # ─────────────────────────────────────────────
+
+@router.get("/prorrata-calc")
+def calcular_prorrata_automatica(
+    fiscal_year: int = None,
+    db: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Calcula automáticamente el factor de prorrata IVA (Art. 31 Ley 9635)
+    a partir del Libro Diario del tenant.
+
+    Fórmula: prorrata = CR_gravadas / (CR_gravadas + CR_exentas)
+    - Cuentas gravadas:  4101 (ventas bienes), 4102 (ventas servicios)
+    - Cuentas exentas:   4103 (ventas exentas / no sujetas)
+
+    Si no hay datos suficientes, retorna 1.0 (100% acreditable) como default
+    seguro junto con un mensaje de advertencia.
+    """
+    tenant_id = current_user.get("tenant_id")
+    if not tenant_id:
+        raise HTTPException(400, "tenant_id no encontrado en token")
+
+    # Año fiscal: default al año en curso
+    year = fiscal_year or date.today().year
+
+    try:
+        # Sumar CRs por prefijo de cuenta en el período fiscal
+        row = db.execute(text("""
+            SELECT
+                COALESCE(SUM(CASE
+                    WHEN REPLACE(REPLACE(jl.account_code, '.', ''), '-', '') LIKE '4101%'
+                      OR REPLACE(REPLACE(jl.account_code, '.', ''), '-', '') LIKE '4102%'
+                    THEN jl.credit ELSE 0 END), 0) AS ventas_gravadas,
+                COALESCE(SUM(CASE
+                    WHEN REPLACE(REPLACE(jl.account_code, '.', ''), '-', '') LIKE '4103%'
+                    THEN jl.credit ELSE 0 END), 0) AS ventas_exentas
+            FROM journal_lines jl
+            JOIN journal_entries je ON je.id = jl.entry_id
+            WHERE jl.tenant_id   = :tid
+              AND je.period      LIKE :yr
+              AND je.status      != 'DELETED'
+        """), {"tid": tenant_id, "yr": f"{year}-%"}).fetchone()
+
+        gravadas = float(row[0]) if row else 0.0
+        exentas  = float(row[1]) if row else 0.0
+        total    = gravadas + exentas
+
+        if total < 1.0:
+            # Sin datos suficientes — no podemos calcular
+            return {
+                "ok": True,
+                "prorrata": 1.0,
+                "porcentaje": 100.0,
+                "ventas_gravadas": 0.0,
+                "ventas_exentas": 0.0,
+                "total_ventas": 0.0,
+                "fiscal_year": year,
+                "origen": "SIN_DATOS",
+                "advertencia": (
+                    f"No hay ventas registradas para el año {year}. "
+                    "Se usa 100% como estimado seguro (Art. 35.2 Ley 9635)."
+                ),
+            }
+
+        prorrata   = round(gravadas / total, 4)
+        porcentaje = round(prorrata * 100, 2)
+
+        logger.info(
+            f"📊 prorrata-calc tenant={tenant_id[:8]} year={year} "
+            f"gravadas={gravadas:,.0f} exentas={exentas:,.0f} → {porcentaje}%"
+        )
+
+        return {
+            "ok": True,
+            "prorrata": prorrata,
+            "porcentaje": porcentaje,
+            "ventas_gravadas": round(gravadas, 2),
+            "ventas_exentas": round(exentas, 2),
+            "total_ventas": round(total, 2),
+            "fiscal_year": year,
+            "origen": "LIBRO_DIARIO",
+            "advertencia": None,
+        }
+
+    except Exception as ex:
+        logger.error(f"❌ prorrata-calc error: {ex}")
+        return {
+            "ok": False,
+            "prorrata": 1.0,
+            "porcentaje": 100.0,
+            "fiscal_year": year,
+            "origen": "ERROR",
+            "advertencia": str(ex),
+        }
+
 
 @router.get("/fiscal-profile")
 def get_fiscal_profile(

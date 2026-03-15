@@ -174,6 +174,8 @@ export default function PerfilFiscal() {
     const [profileLoaded, setProfileLoaded] = useState(true)
     const [savingProfile, setSavingProfile] = useState(false)
     const [profileMsg, setProfileMsg] = useState(null)
+    const [calcProrrata, setCalcProrrata] = useState(null)   // resultado del auto-cálculo
+    const [calculando, setCalculando]   = useState(false)
 
     // Tramos
     const [years, setYears] = useState([])
@@ -227,6 +229,20 @@ export default function PerfilFiscal() {
             setProfileMsg({ ok: r.ok, text: d.message || (r.ok ? 'Perfil guardado ✓' : 'Error') })
         } catch (e) { setProfileMsg({ ok: false, text: String(e) }) }
         setSavingProfile(false)
+    }
+
+    async function autoCalcProrrata() {
+        setCalculando(true); setCalcProrrata(null)
+        try {
+            const r = await fetch(`${API_BASE}/tax/prorrata-calc?fiscal_year=${new Date().getFullYear()}`,
+                { headers: authHeaders(token) })
+            const d = await r.json()
+            setCalcProrrata(d)
+            if (d.ok && d.origen !== 'ERROR') {
+                setProfile(p => ({ ...p, prorrata_iva: d.prorrata }))
+            }
+        } catch (e) { setCalcProrrata({ ok: false, advertencia: String(e), origen: 'ERROR' }) }
+        setCalculando(false)
     }
 
     async function prefill2026() {
@@ -341,6 +357,46 @@ export default function PerfilFiscal() {
                                         (solo empresas con actividad mixta gravada + exenta)
                                     </span>
                                 </label>
+
+                                {/* Botón Auto-calcular */}
+                                <button
+                                    onClick={autoCalcProrrata}
+                                    disabled={calculando}
+                                    style={{ ...btnAccent, marginBottom: 12, fontSize: '0.8rem', padding: '6px 14px' }}
+                                >
+                                    {calculando ? '⏳ Calculando...' : '⚡ Auto-calcular desde contabilidad'}
+                                </button>
+
+                                {/* Resultado del cálculo automático */}
+                                {calcProrrata && (
+                                    <div style={{
+                                        marginBottom: 10, padding: '10px 14px',
+                                        background: calcProrrata.origen === 'LIBRO_DIARIO'
+                                            ? 'rgba(34,197,94,0.08)' : 'rgba(245,158,11,0.08)',
+                                        border: `1px solid ${calcProrrata.origen === 'LIBRO_DIARIO' ? 'rgba(34,197,94,0.3)' : 'rgba(245,158,11,0.3)'}`,
+                                        borderRadius: 8, fontSize: '0.82rem',
+                                    }}>
+                                        {calcProrrata.origen === 'LIBRO_DIARIO' ? (
+                                            <>
+                                                <div style={{ fontWeight: 700, color: 'var(--success)', marginBottom: 4 }}>
+                                                    ✅ Calculado desde el Libro Diario {calcProrrata.fiscal_year}
+                                                </div>
+                                                <div style={{ color: 'var(--text-secondary)', display: 'flex', gap: 20, flexWrap: 'wrap' }}>
+                                                    <span>Ventas gravadas: <strong>&#8353;{calcProrrata.ventas_gravadas?.toLocaleString('es-CR')}</strong></span>
+                                                    <span>Ventas exentas: <strong>&#8353;{calcProrrata.ventas_exentas?.toLocaleString('es-CR')}</strong></span>
+                                                    <span style={{ color: 'var(--accent)', fontWeight: 700 }}>
+                                                        Prorrata: {calcProrrata.porcentaje}%
+                                                    </span>
+                                                </div>
+                                            </>
+                                        ) : (
+                                            <div style={{ color: 'var(--warning, #f59e0b)' }}>
+                                                ⚠️ {calcProrrata.advertencia}
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+
                                 <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginTop: 6, flexWrap: 'wrap' }}>
                                     <input
                                         id="prorrata-slider"
