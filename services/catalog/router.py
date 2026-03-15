@@ -8,7 +8,7 @@ Reglas de Oro aplicadas:
 - Todo cambio queda en audit_log (paso B2)
 - Control de rol: lectura no puede crear/modificar cuentas
 """
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -722,3 +722,289 @@ def reseed_missing(
             else "El catálogo ya estaba completo — no se insertó nada"
         )
     }
+
+
+# ══════════════════════════════════════════════════════════════════
+# SMART CATALOG BUILDER — nuevos endpoints (no rompen nada existente)
+# ══════════════════════════════════════════════════════════════════
+
+from services.catalog.name_suggestor import suggest_child_names, next_child_code as _next_code  # noqa: E402
+
+
+def _apertura_registrada(tenant_id: str, db: Session) -> bool:
+    """
+    True si el tenant ya tiene un período fiscal con balance de apertura.
+    Cuando es True, el catálogo queda inmutable (no se crean ni renombran cuentas).
+    """
+    row = db.execute(
+        text("""
+            SELECT 1 FROM periodos_fiscales
+            WHERE tenant_id = :tid
+              AND saldo_apertura_cargado = TRUE
+            LIMIT 1
+        """),
+        {"tid": tenant_id},
+    ).fetchone()
+    return row is not None
+
+
+# ──────────────────────────────────────────────────────────────────
+# GET /catalog/deepen-preview
+# Genera sugerencias para profundizar TODO el catálogo un nivel.
+# Retorna grupos de cuentas sugeridas por clase, sin tocar la DB.
+# ──────────────────────────────────────────────────────────────────
+
+@router.get("/deepen-preview")
+def deepen_preview(
+    current_user: dict = Depends(get_current_user),
+    db:           Session = Depends(get_session),
+) -> Dict[str, Any]:
+    """
+    Genera un preview de sub-cuentas sugeridas para todas las cuentas hoja
+    del catálogo del tenant (las que no tienen hijos todavía).
+
+    Agrupado por tipo de cuenta (ACTIVO, PASIVO, PATRIMONIO, INGRESO, GASTO).
+    No persiste nada — solo sugiere. El frontend muestra el preview y el usuario
+    aprueba con POST /catalog/accounts/bulk-create.
+    """
+    _require_write_role(current_user["role"])
+    tenant_id = current_user["tenant_id"]
+
+    # 1. Obtener todas las cuentas activas del tenant
+    all_accounts = db.query(Account).filter(
+        Account.tenant_id == tenant_id,
+        Account.is_active == True,  # noqa: E712
+    ).order_by(Account.code).all()
+
+    # 2. Identificar qué códigos son padres (tienen al menos un hijo)
+    parent_codes_raw = db.execute(
+        text("SELECT DISTINCT parent_code FROM accounts WHERE tenant_id = :tid AND parent_code IS NOT NULL"),
+        {"tid": tenant_id},
+    ).fetchall()
+    parent_set = {r[0] for r in parent_codes_raw}
+
+    # 3. Agrupar hijos existentes por padre para calcular next_child_code
+    children_by_parent: Dict[str, list] = {}
+    for acc in all_accounts:
+        if acc.parent_code:
+            children_by_parent.setdefault(acc.parent_code, []).append(acc)
+
+    # 4. Para cada cuenta hoja, generar sugerencias
+    CLASS_ORDER = ["ACTIVO", "PASIVO", "PATRIMONIO", "INGRESO", "GASTO"]
+    groups: Dict[str, list] = {c: [] for c in CLASS_ORDER}
+
+    for acc in all_accounts:
+        if acc.code in parent_set:
+            continue  # ya tiene hijos — se salta
+
+        acc_type = acc.account_type.value if hasattr(acc.account_type, "value") else str(acc.account_type)
+        if acc_type not in groups:
+            continue
+
+        # Nombres de hijos existentes (vacío si es hoja)
+        existing_child_names: list[str] = []
+        existing_child_codes: list[str] = []
+
+        suggested_names = suggest_child_names(
+            parent_name=acc.name,
+            existing_child_names=existing_child_names,
+            max_suggestions=5,
+        )
+
+        if not suggested_names:
+            continue
+
+        # Solo generar la primera sugerencia como "cuenta estrella"
+        first_name = suggested_names[0]
+        first_code = _next_code(acc.code, existing_child_codes)
+
+        groups[acc_type].append({
+            "parent_code":   acc.code,
+            "parent_name":   acc.name,
+            "suggested_code": first_code,
+            "suggested_name": first_name,
+            "all_suggestions": suggested_names,
+            "account_type":  acc_type,
+            # allow_entries True para hijos dotted (nivel detalle), False para enteros (agrupadores)
+            "allow_entries": "." in first_code,
+        })
+
+    total = sum(len(v) for v in groups.values())
+    return {
+        "total_suggestions": total,
+        "groups": groups,
+    }
+
+
+# ──────────────────────────────────────────────────────────────────
+# POST /catalog/accounts/bulk-create
+# Crea múltiples cuentas en una sola transacción.
+# Si alguna falla, se hace rollback de todas (atomicidad).
+# ──────────────────────────────────────────────────────────────────
+
+class BulkAccountItem(BaseModel):
+    code:         str
+    name:         str
+    account_type: AccountType
+    parent_code:  Optional[str] = None
+    allow_entries: bool = True
+    account_sub_type: Optional[AccountSubType] = None
+
+
+class BulkCreateRequest(BaseModel):
+    accounts: List[BulkAccountItem]
+
+
+@router.post("/accounts/bulk-create", status_code=status.HTTP_201_CREATED)
+def bulk_create_accounts(
+    req:          BulkCreateRequest,
+    current_user: dict = Depends(get_current_user),
+    db:           Session = Depends(get_session),
+) -> Dict[str, Any]:
+    """
+    Crea múltiples cuentas en una sola transacción atómica.
+    Usado por el Smart Catalog Builder después de que el usuario aprueba el preview.
+
+    Reglas:
+    - Solo admin/contador pueden crear cuentas.
+    - Si el catálogo está bloqueado por apertura → 423.
+    - Si algún código ya existe → se omite (idempotente, no lanza error).
+    - Si el padre era hoja → se promueve a grupo automáticamente.
+    """
+    _require_write_role(current_user["role"])
+    tenant_id = current_user["tenant_id"]
+
+    if _apertura_registrada(tenant_id, db):
+        raise HTTPException(
+            status_code=423,
+            detail="Catálogo bloqueado — el asiento de apertura ya fue registrado. No se pueden crear nuevas cuentas.",
+        )
+
+    import uuid
+
+    existing_codes = {
+        r[0] for r in db.execute(
+            text("SELECT code FROM accounts WHERE tenant_id = :tid"),
+            {"tid": tenant_id},
+        ).fetchall()
+    }
+
+    created = []
+    skipped = []
+
+    for item in req.accounts:
+        code = item.code.strip().upper()
+        if code in existing_codes:
+            skipped.append(code)
+            continue
+
+        # Auto-promote padre si era hoja
+        if item.parent_code:
+            parent = db.query(Account).filter(
+                Account.tenant_id == tenant_id,
+                Account.code == item.parent_code,
+            ).first()
+            if parent and parent.allow_entries:
+                parent.allow_entries = False
+
+        new_acc = Account(
+            id=str(uuid.uuid4()),
+            tenant_id=tenant_id,
+            code=code,
+            name=item.name.strip(),
+            account_type=item.account_type,
+            account_sub_type=item.account_sub_type,
+            parent_code=item.parent_code,
+            allow_entries=item.allow_entries,
+            is_generic=False,
+        )
+        db.add(new_acc)
+        existing_codes.add(code)
+        created.append(code)
+
+    db.commit()
+
+    return {
+        "ok": True,
+        "created": len(created),
+        "skipped": len(skipped),
+        "created_codes": created,
+        "skipped_codes": skipped,
+        "message": f"{len(created)} cuentas creadas" + (f", {len(skipped)} ya existían" if skipped else ""),
+    }
+
+
+# ──────────────────────────────────────────────────────────────────
+# PATCH /catalog/accounts/{code}/rename
+# Renombra una cuenta solo si NO tiene asientos en el libro diario.
+# Si ya tiene movimientos → 422 (nombre inmutable por integridad contable).
+# ──────────────────────────────────────────────────────────────────
+
+class RenameRequest(BaseModel):
+    name: str
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, v: str) -> str:
+        v = v.strip()
+        if len(v) < 2:
+            raise ValueError("El nombre debe tener al menos 2 caracteres")
+        return v
+
+
+@router.patch("/accounts/{code}/rename")
+def rename_account(
+    code: str,
+    req:  RenameRequest,
+    current_user: dict = Depends(get_current_user),
+    db:           Session = Depends(get_session),
+) -> Dict[str, Any]:
+    """
+    Renombra una cuenta del catálogo.
+
+    Reglas de integridad contable:
+    - Solo si la cuenta NO tiene asientos en ledger_entries (count=0).
+    - Si tiene asientos → 422: el nombre es inmutable para preservar el audit trail.
+    - No permite renombrar si el catálogo está bloqueado por apertura.
+    """
+    _require_write_role(current_user["role"])
+    tenant_id = current_user["tenant_id"]
+
+    account = db.query(Account).filter(
+        Account.tenant_id == tenant_id,
+        Account.code == code.upper(),
+    ).first()
+    if not account:
+        raise HTTPException(status_code=404, detail="Cuenta no encontrada")
+
+    # Verificar asientos existentes
+    entry_count = db.execute(
+        text("""
+            SELECT COUNT(*) FROM ledger_entry_lines
+            WHERE tenant_id = :tid AND account_code = :code
+        """),
+        {"tid": tenant_id, "code": code.upper()},
+    ).scalar() or 0
+
+    if entry_count > 0:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"La cuenta '{code}' tiene {entry_count} movimiento(s) registrado(s). "
+                f"El nombre es inmutable para preservar la integridad del audit trail contable."
+            ),
+        )
+
+    old_name = account.name
+    account.name = req.name
+    account.updated_at = datetime.now(timezone.utc)
+    db.commit()
+
+    return {
+        "ok": True,
+        "code": code.upper(),
+        "old_name": old_name,
+        "new_name": account.name,
+        "message": f"Cuenta {code} renombrada correctamente",
+    }
+

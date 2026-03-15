@@ -63,6 +63,16 @@ export default function Catalogo() {
     const [catalogHealth, setCatalogHealth] = useState(null)  // health check del catálogo
     const [healthDismissed, setHealthDismissed] = useState(false)
 
+    // ── Smart Catalog Builder ──────────────────────────────────────────────────
+    const [deepenPreview, setDeepenPreview] = useState(null)   // {total_suggestions, groups}
+    const [deepenLoading, setDeepenLoading] = useState(false)
+    const [deepenItems, setDeepenItems] = useState([])         // [{...item, editedCode, editedName, selected}]
+    const [deepenSaving, setDeepenSaving] = useState(false)
+    // Rename inline: {code: str, value: str, saving: bool} | null
+    const [renaming, setRenaming] = useState(null)
+    // Lock: si el catálogo tiene apertura registrada
+    const [catalogLocked, setCatalogLocked] = useState(false)
+
     const apiUrl = import.meta.env.VITE_API_URL || ''
     const token = localStorage.getItem('gc_token')
     const role = state.user?.role
@@ -101,6 +111,14 @@ export default function Catalogo() {
             .then(d => { if (d) setCatalogHealth(d) })
             .catch(() => { })
     }, [accounts])  // re-chequear cada vez que cambia el catálogo
+
+    // Verificar si el catálogo está bloqueado por apertura
+    useEffect(() => {
+        if (!token || !canWrite) return
+        fetch(`${apiUrl}/catalog/deepen-preview`, { headers: { Authorization: `Bearer ${token}` } })
+            .then(r => { if (r.status === 423) setCatalogLocked(true) })
+            .catch(() => {})
+    }, [])
 
     async function fetchAccounts() {
         setLoading(true)
@@ -206,6 +224,82 @@ export default function Catalogo() {
         } finally {
             setSeeding(false)
         }
+    }
+
+    // ─── Smart Catalog Builder ─────────────────────────────────────────────────
+
+    async function handleDeepenPreview() {
+        setDeepenLoading(true)
+        try {
+            const res = await fetch(`${apiUrl}/catalog/deepen-preview`, {
+                headers: { Authorization: `Bearer ${token}` }
+            })
+            if (res.status === 423) { setCatalogLocked(true); return }
+            if (!res.ok) throw new Error('Error al obtener preview')
+            const data = await res.json()
+            setDeepenPreview(data)
+            // Preparar items editables
+            const items = []
+            Object.values(data.groups).forEach(group =>
+                group.forEach(item => items.push({
+                    ...item,
+                    editedCode: item.suggested_code,
+                    editedName: item.suggested_name,
+                    selected: true,
+                }))
+            )
+            setDeepenItems(items)
+        } catch (e) {
+            alert(e.message)
+        } finally {
+            setDeepenLoading(false)
+        }
+    }
+
+    async function handleDeepenConfirm() {
+        const toCreate = deepenItems.filter(i => i.selected)
+        if (!toCreate.length) return
+        setDeepenSaving(true)
+        try {
+            const res = await fetch(`${apiUrl}/catalog/accounts/bulk-create`, {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    accounts: toCreate.map(i => ({
+                        code: i.editedCode,
+                        name: i.editedName,
+                        account_type: i.account_type,
+                        parent_code: i.parent_code,
+                        allow_entries: i.allow_entries,
+                    }))
+                })
+            })
+            const data = await res.json()
+            if (!res.ok) { alert(data.detail || 'Error al crear cuentas'); return }
+            setDeepenPreview(null)
+            setDeepenItems([])
+            await fetchAccounts()
+        } catch { alert('Error de red') }
+        finally { setDeepenSaving(false) }
+    }
+
+    async function handleRename(code) {
+        if (!renaming || renaming.code !== code) return
+        const name = renaming.value.trim()
+        if (name.length < 2) return
+        setRenaming(r => ({ ...r, saving: true }))
+        try {
+            const res = await fetch(`${apiUrl}/catalog/accounts/${code}/rename`, {
+                method: 'PATCH',
+                headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name })
+            })
+            const data = await res.json()
+            if (!res.ok) { alert(data.detail || 'No se pudo renombrar'); return }
+            setRenaming(null)
+            await fetchAccounts()
+        } catch { alert('Error de red') }
+        finally { setRenaming(r => r ? { ...r, saving: false } : null) }
     }
 
     // ─── Funciones form inline ⊕ ──────────────────────────────────────────────
@@ -330,6 +424,34 @@ export default function Catalogo() {
                     </p>
                 </div>
                 <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                    {/* Botón + Profundizar Catálogo */}
+                    {canWrite && !catalogLocked && accounts.length > 0 && (
+                        <button
+                            id="btn-profundizar-catalogo"
+                            onClick={deepenPreview ? () => setDeepenPreview(null) : handleDeepenPreview}
+                            disabled={deepenLoading}
+                            style={{
+                                padding: '7px 14px', fontSize: '0.82rem', fontWeight: 700,
+                                background: deepenPreview
+                                    ? 'rgba(255,255,255,0.07)'
+                                    : 'linear-gradient(135deg, #6366f1, #8b5cf6)',
+                                color: '#fff',
+                                border: deepenPreview ? '1px solid var(--border-color)' : 'none',
+                                borderRadius: 8, cursor: 'pointer',
+                                display: 'flex', alignItems: 'center', gap: 6,
+                            }}
+                        >
+                            {deepenLoading ? '⏳' : deepenPreview ? '✕ Cancelar' : '⊞ Profundizar Catálogo'}
+                        </button>
+                    )}
+                    {/* Badge bloqueado por apertura */}
+                    {catalogLocked && (
+                        <span style={{
+                            fontSize: '0.78rem', padding: '5px 12px',
+                            background: 'rgba(239,68,68,0.1)', color: '#ef4444',
+                            border: '1px solid rgba(239,68,68,0.3)', borderRadius: 8,
+                        }}>🔒 Catálogo cerrado — apertura registrada</span>
+                    )}
                     {/* Mostrar inactivas */}
                     <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.82rem', color: 'var(--text-secondary)', cursor: 'pointer' }}>
                         <input type="checkbox" checked={showInactive} onChange={e => setShowInactive(e.target.checked)} />
@@ -422,6 +544,122 @@ export default function Catalogo() {
                     <button onClick={() => setHealthDismissed(true)}
                         title="Ignorar advertencia"
                         style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', fontSize: '1.1rem', cursor: 'pointer', flexShrink: 0 }}>✕</button>
+                </div>
+            )}
+
+            {/* ── Panel: Deepen Preview ─────────────────────────────────────── */}
+            {deepenPreview && (
+                <div style={{
+                    border: '1px solid rgba(99,102,241,0.4)',
+                    borderRadius: 12, marginBottom: 20, overflow: 'hidden',
+                    background: 'rgba(99,102,241,0.04)',
+                }}>
+                    {/* Header del panel */}
+                    <div style={{
+                        padding: '14px 18px', background: 'rgba(99,102,241,0.1)',
+                        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    }}>
+                        <div>
+                            <span style={{ fontWeight: 700, color: '#818cf8', fontSize: '0.95rem' }}>
+                                ⊞ Smart Catalog Builder
+                            </span>
+                            <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginLeft: 10 }}>
+                                {deepenItems.filter(i => i.selected).length} de {deepenItems.length} cuentas seleccionadas
+                            </span>
+                        </div>
+                        <div style={{ display: 'flex', gap: 8 }}>
+                            <button
+                                onClick={() => setDeepenItems(items => items.map(i => ({ ...i, selected: !i.selected || true })))}
+                                style={{ padding: '4px 10px', fontSize: '0.75rem', background: 'transparent', border: '1px solid var(--border-color)', borderRadius: 6, color: 'var(--text-secondary)', cursor: 'pointer' }}
+                            >Seleccionar todo</button>
+                            <button
+                                id="btn-confirmar-profundizar"
+                                onClick={handleDeepenConfirm}
+                                disabled={deepenSaving || deepenItems.filter(i => i.selected).length === 0}
+                                style={{
+                                    padding: '5px 16px', fontSize: '0.82rem', fontWeight: 700,
+                                    background: 'linear-gradient(135deg, #6366f1, #8b5cf6)',
+                                    color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer',
+                                    opacity: deepenSaving ? 0.6 : 1,
+                                }}
+                            >
+                                {deepenSaving ? '⏳ Creando...' : `💾 Confirmar ${deepenItems.filter(i => i.selected).length} cuentas`}
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* Lista de sugerencias agrupadas por clase */}
+                    <div style={{ maxHeight: 380, overflowY: 'auto', padding: '6px 0' }}>
+                        {['ACTIVO','PASIVO','PATRIMONIO','INGRESO','GASTO'].map(classKey => {
+                            const classItems = deepenItems.filter(i => i.account_type === classKey)
+                            if (!classItems.length) return null
+                            const cfg = TYPE_CONFIG[classKey]
+                            return (
+                                <div key={classKey} style={{ borderBottom: '1px solid var(--border-color)' }}>
+                                    <div style={{
+                                        padding: '6px 18px', fontSize: '0.72rem', fontWeight: 700,
+                                        color: cfg.color, letterSpacing: '0.06em', background: cfg.color + '10',
+                                    }}>
+                                        {cfg.icon} {cfg.label}
+                                    </div>
+                                    {classItems.map((item, idx) => (
+                                        <div key={item.parent_code + idx} style={{
+                                            display: 'flex', alignItems: 'center', gap: 10,
+                                            padding: '7px 18px',
+                                            background: item.selected ? 'transparent' : 'rgba(0,0,0,0.15)',
+                                            opacity: item.selected ? 1 : 0.45,
+                                            transition: 'background 0.15s',
+                                        }}>
+                                            {/* Checkbox */}
+                                            <input
+                                                type="checkbox"
+                                                checked={item.selected}
+                                                onChange={() => setDeepenItems(items =>
+                                                    items.map((it, i2) =>
+                                                        i2 === deepenItems.indexOf(item)
+                                                            ? { ...it, selected: !it.selected } : it
+                                                    )
+                                                )}
+                                                style={{ accentColor: cfg.color, flexShrink: 0 }}
+                                            />
+                                            {/* Código auto */}
+                                            <span style={{
+                                                fontFamily: 'monospace', fontSize: '0.75rem',
+                                                color: cfg.color, fontWeight: 700, flexShrink: 0, minWidth: 110,
+                                            }}>
+                                                {getDisplayCode(item.editedCode)}
+                                            </span>
+                                            {/* Nombre editable */}
+                                            <input
+                                                value={item.editedName}
+                                                onChange={e => {
+                                                    const val = e.target.value
+                                                    setDeepenItems(items =>
+                                                        items.map((it, i2) =>
+                                                            i2 === deepenItems.indexOf(item)
+                                                                ? { ...it, editedName: val } : it
+                                                        )
+                                                    )
+                                                }}
+                                                disabled={!item.selected}
+                                                style={{
+                                                    flex: 1, padding: '4px 8px', fontSize: '0.82rem',
+                                                    border: '1px solid var(--border-color)',
+                                                    borderRadius: 6, background: 'var(--bg-card)',
+                                                    color: 'var(--text-primary)', minWidth: 0,
+                                                    opacity: item.selected ? 1 : 0.4,
+                                                }}
+                                            />
+                                            {/* Padre */}
+                                            <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', flexShrink: 0, maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                                ← {item.parent_name}
+                                            </span>
+                                        </div>
+                                    ))}
+                                </div>
+                            )
+                        })}
+                    </div>
                 </div>
             )}
 
@@ -527,16 +765,53 @@ export default function Catalogo() {
                                                 }}>
                                                     {getDisplayCode(acc.code)}
                                                 </span>
-                                                <span style={{
-                                                    fontSize: getLevel(acc.code) <= 1 ? '0.95rem'
-                                                        : getLevel(acc.code) === 2 ? '0.88rem'
-                                                            : getLevel(acc.code) === 3 ? '0.85rem' : '0.8rem',
-                                                    fontWeight: getLevel(acc.code) <= 2 ? 600 : 400,
-                                                    color: getLevel(acc.code) <= 2 ? 'var(--text-primary)' : 'var(--text-secondary)',
-                                                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                                                }}>
-                                                    {acc.name}
-                                                </span>
+                                                {/* Nombre — editable inline si 0 asientos y no renombrando otro */}
+                                                {renaming?.code === acc.code ? (
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flex: 1 }}>
+                                                        <input
+                                                            autoFocus
+                                                            value={renaming.value}
+                                                            onChange={e => setRenaming(r => ({ ...r, value: e.target.value }))}
+                                                            onKeyDown={e => {
+                                                                if (e.key === 'Enter') handleRename(acc.code)
+                                                                if (e.key === 'Escape') setRenaming(null)
+                                                            }}
+                                                            style={{
+                                                                flex: 1, padding: '3px 8px', fontSize: '0.82rem',
+                                                                border: `1px solid ${cfg.color}70`,
+                                                                borderRadius: 6, background: 'var(--bg-card)',
+                                                                color: 'var(--text-primary)',
+                                                            }}
+                                                        />
+                                                        <button onClick={() => handleRename(acc.code)}
+                                                            disabled={renaming.saving}
+                                                            style={{ padding: '3px 10px', fontSize: '0.75rem', background: cfg.color, color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer' }}>
+                                                            {renaming.saving ? '...' : '✓'}
+                                                        </button>
+                                                        <button onClick={() => setRenaming(null)}
+                                                            style={{ padding: '3px 8px', fontSize: '0.75rem', background: 'transparent', border: '1px solid var(--border-color)', borderRadius: 6, color: 'var(--text-muted)', cursor: 'pointer' }}>
+                                                            ✕
+                                                        </button>
+                                                    </div>
+                                                ) : (
+                                                    <span style={{
+                                                        fontSize: getLevel(acc.code) <= 1 ? '0.95rem'
+                                                            : getLevel(acc.code) === 2 ? '0.88rem'
+                                                                : getLevel(acc.code) === 3 ? '0.85rem' : '0.8rem',
+                                                        fontWeight: getLevel(acc.code) <= 2 ? 600 : 400,
+                                                        color: getLevel(acc.code) <= 2 ? 'var(--text-primary)' : 'var(--text-secondary)',
+                                                        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                                                        cursor: canWrite && !catalogLocked && hoveredRow === acc.code ? 'text' : 'default',
+                                                    }}
+                                                        onDoubleClick={() => {
+                                                            if (canWrite && !catalogLocked)
+                                                                setRenaming({ code: acc.code, value: acc.name, saving: false })
+                                                        }}
+                                                        title={canWrite && !catalogLocked ? 'Doble clic para renombrar (solo si no tiene asientos)' : undefined}
+                                                    >
+                                                        {acc.name}
+                                                    </span>
+                                                )}
                                                 {!acc.allow_entries && (
                                                     <span style={{ fontSize: '0.7rem', padding: '1px 7px', background: 'rgba(156,163,175,0.15)', borderRadius: 10, color: 'var(--text-muted)', flexShrink: 0 }}>grupo</span>
                                                 )}
