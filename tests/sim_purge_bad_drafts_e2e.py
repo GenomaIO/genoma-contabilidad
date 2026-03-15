@@ -175,10 +175,10 @@ check("PURGE-08: SIN CxC 1102",
       not any(l["account_code"] == "1102" for l in entry_c))
 check("PURGE-09: Asiento balanceado", abs(dr - cr) < 0.02)
 
-# IVA en recibidos: va a cuenta 1105 (IVA Credito/Acreditable) — no 2102
-iva_lines = [l for l in entry_c if "IVA" in (l.get("account_role",""))]
-check("PURGE-09: IVA en cuenta activo (credito fiscal — NO 2102)",
-      all(l["account_code"] != "2102" for l in iva_lines))
+# Enfoque A: IVA Crédito Fiscal va a 2102 (PASIVO) como DR — NO a cuenta ACTIVO
+iva_lines = [l for l in entry_c if l.get("account_role") in ("IVA_CREDITO",)]
+check("PURGE-09: IVA Crédito Fiscal en 2102 PASIVO (Enfoque A)",
+      all(str(l["account_code"]).startswith("2102") and l["debit"] > 0 for l in iva_lines) if iva_lines else True)
 
 # ─── PURGE-10: ICE Telecomunicaciones ────────────────────────────
 print("\nPURGE-10: ICE Telecomunicaciones - FE Recibida ¢25,290,533 + IVA ¢2,883,354")

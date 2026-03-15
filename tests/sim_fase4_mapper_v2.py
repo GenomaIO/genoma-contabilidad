@@ -148,7 +148,7 @@ check("Al menos 3 líneas (CxC, Ingreso, IVA)", len(lines_fe) >= 3)
 
 
 # ─── SIM-F4-07: Prorrata 70% → IVA partido en acreditable + no acreditable ──
-print("\nSIM-F4-07: Prorrata 70% → DR 1104 (70%) + DR 5xxx no acred. (30%)")
+print("\nSIM-F4-07: Prorrata 70% → DR 2102 PASIVO (70%) + DR 5xxx no acred. (30%) — Enfoque A")
 doc_prorrata_70 = {
     "clave":          "P" * 50,
     "tipo_doc":       "08",
@@ -183,7 +183,7 @@ iva_acred_monto   = round(iva_acred_lines[0]["debit"], 2) if iva_acred_lines els
 iva_no_acred_monto= round(iva_no_acred_lines[0]["debit"], 2) if iva_no_acred_lines else 0
 
 check("Asiento balanceado (DR=CR)",               abs(dr_p70 - cr_p70) < 0.02)
-check("Tiene línea IVA acreditable (1104)",       len(iva_acred_lines) == 1)
+check("Tiene línea IVA Crédito Fiscal 2102 (Enfoque A)", len(iva_acred_lines) == 1)
 check("Tiene línea IVA no acreditable (5xxx)",    len(iva_no_acred_lines) == 1)
 check("IVA acred ≈ 70% de 2883.35 = 2018.35",    abs(iva_acred_monto - 2018.35) < 0.02)
 check("IVA no acred ≈ 30% de 2883.35 = 865.00",  abs(iva_no_acred_monto - 865.00) < 0.02)
@@ -194,7 +194,7 @@ check("IVA no acred deductible_status = PARTIAL",
 check("CR = TotalComprobante 25063",               abs(cr_lines[0]["credit"] - 25063.00) < 0.02)
 
 # ─── SIM-F4-08: Prorrata 0% → empresa 100% exenta, todo el IVA al gasto ──
-print("\nSIM-F4-08: Prorrata 0% → empresa 100% exenta, IVA → gasto, DR 1104 = 0")
+print("\nSIM-F4-08: Prorrata 0% → empresa 100% exenta, IVA → gasto, DR 2102 = 0 — Enfoque A")
 doc_prorrata_00 = {
     "clave":           "E" * 50,
     "tipo_doc":        "08",
@@ -225,7 +225,7 @@ gasto_00       = [l for l in lines_p00 if l.get("account_role") == "GASTO"]
 cr_00          = [l for l in lines_p00 if l["credit"] > 0]
 
 check("Prorrata 0%: asiento balanceado",          abs(dr_p00 - cr_p00) < 0.02)
-check("Prorrata 0%: DR 1104 = 0 (nada acreditable)", len(iva_acred_00) == 0)
+check("Prorrata 0%: DR 2102 = 0 (nada acreditable)", len(iva_acred_00) == 0)
 check("Prorrata 0%: IVA no acred = 1300 → gasto",
       len(iva_no_ac_00) == 1 and abs(iva_no_ac_00[0]["debit"] - 1300.00) < 0.02)
 check("Prorrata 0%: IVA no acred a misma cuenta 5xxx",
@@ -263,7 +263,7 @@ iva_no_ac_100   = [l for l in lines_p100 if l.get("account_role") == "IVA_NO_ACR
 cr_100          = [l for l in lines_p100 if l["credit"] > 0]
 
 check("Prorrata 100%: asiento balanceado",         abs(dr_p100 - cr_p100) < 0.02)
-check("Prorrata 100%: DR 1104 = 13000 completo",   len(iva_acred_100) == 1 and abs(iva_acred_100[0]["debit"] - 13000.0) < 0.02)
+check("Prorrata 100%: DR 2102 = 13000 completo (Enfoque A)", len(iva_acred_100) == 1 and abs(iva_acred_100[0]["debit"] - 13000.0) < 0.02)
 check("Prorrata 100%: sin línea IVA no acreditable", len(iva_no_ac_100) == 0)
 check("Prorrata 100%: CR = 113000",                abs(cr_100[0]["credit"] - 113000.00) < 0.02)
 

@@ -1,22 +1,22 @@
 """
 SIM-FER — Documentos Recibidos: Técnica Contable Correcta (E2E)
 ═══════════════════════════════════════════════════════════════
-Verifica que un documento recibido (FEC/compra) siempre genera:
-  DR  5xxx  Gasto (o 5999 genérico si sin CABYS)
-  DR  1104  IVA Crédito (acreditable)
-  CR  2101  CxP Proveedor (total = gasto + IVA)
+Enfoque A (IVA cuenta única PASIVA — Ley IVA 9635 Art.22):
+  DR  5xxx  Gasto (base sin IVA)
+  DR  2102  IVA Crédito Fiscal / D-150 (PASIVO — reduce deuda con Hacienda)
+  CR  2101  CxP Proveedor (total comprobante = gasto + IVA)
 
 Y que NUNCA usa:
-  4xxx  Ingresos
-  1102  CxC
-  2102  IVA Débito
+  4xxx  Ingresos en un documento recibido
+  1102  CxC en un documento recibido
+  1104  IVA ACTIVO — eliminado bajo Enfoque A
 
 Casos probados:
   FER-01: Recibido con tipo_doc="RECIBIDO" y sin lineas[] → v1-fallback correcto
   FER-02: Recibido con tipo_doc="08" y sin lineas[]      → v1-fallback correcto
   FER-03: BUG HISTÓRICO: tipo_doc="01" + _es_recibido=True → debe ser egreso
-  FER-04: Recibido con tipo_doc="RECIBIDO" y CON lineas[] → v2 correcto (5xxx/IVA/CxP)
-  FER-05: Enviado tipo_doc="01" CON lineas[]             → sigue como ingreso (CxC/4xxx/2102)
+  FER-04: Recibido con tipo_doc="RECIBIDO" y CON lineas[] → v2 correcto (5xxx/2102/CxP)
+  FER-05: Enviado tipo_doc="01" CON lineas[]             → ingreso (CxC/4xxx/2102 CR)
   FER-06: Balance cuadrado en todos los casos
 """
 import sys, os, uuid
@@ -49,17 +49,17 @@ def uses_cxc(lines):
     """Retorna True si alguna línea usa 1102 CxC — MALO para recibidos."""
     return any(str(l["account_code"]) == "1102" for l in lines)
 
-def uses_iva_debito(lines):
-    """Retorna True si alguna línea usa 2102 IVA Débito — MALO para recibidos."""
-    return any(str(l["account_code"]) == "2102" for l in lines)
+def uses_iva_debito_como_dr(lines):
+    """Enfoque A: DR 2102 en compras — BUENO (reduce pasivo con Hacienda)."""
+    return any(str(l["account_code"]).startswith("2102") and l["debit"] > 0 for l in lines)
 
 def uses_cxp(lines):
     """Retorna True si alguna línea usa 2101 CxP — BUENO para recibidos."""
     return any(str(l["account_code"]) == "2101" for l in lines)
 
 def uses_iva_credito(lines):
-    """Retorna True si alguna línea usa 1104 IVA Crédito — BUENO para recibidos."""
-    return any(str(l["account_code"]) in ("1104", "1115") for l in lines)
+    """Enfoque A: IVA en compras = DR a 2102 (PASIVO). 1104 ya no se usa."""
+    return uses_iva_debito_como_dr(lines)
 
 def uses_gasto(lines):
     """Retorna True si alguna línea usa cuenta 5xxx — BUENO para recibidos."""
@@ -88,7 +88,7 @@ check("FER-01: Genera líneas",          len(lines_fer01) >= 2)
 check("FER-01: Balanceado",             balanced(lines_fer01))
 check("FER-01: NO usa cuenta 4xxx",     not uses_ingreso(lines_fer01))
 check("FER-01: NO usa CxC (1102)",      not uses_cxc(lines_fer01))
-check("FER-01: NO usa IVA Débito 2102", not uses_iva_debito(lines_fer01))
+check("FER-01: IVA es DR a 2102 PASIVO (Enfoque A)", uses_iva_debito_como_dr(lines_fer01))
 check("FER-01: USA CxP (2101)",         uses_cxp(lines_fer01))
 check("FER-01: USA Gasto (5xxx)",       uses_gasto(lines_fer01))
 
@@ -156,7 +156,7 @@ check("FER-04: Genera líneas",          len(lines_fer04) >= 2)
 check("FER-04: Balanceado",             balanced(lines_fer04))
 check("FER-04: NO usa cuenta 4xxx",     not uses_ingreso(lines_fer04))
 check("FER-04: NO usa CxC (1102)",      not uses_cxc(lines_fer04))
-check("FER-04: NO usa IVA Débito",      not uses_iva_debito(lines_fer04))
+check("FER-04: IVA es DR a 2102 PASIVO (Enfoque A)", uses_iva_debito_como_dr(lines_fer04))
 check("FER-04: USA CxP (2101)",         uses_cxp(lines_fer04))
 check("FER-04: USA IVA Crédito",        uses_iva_credito(lines_fer04))
 
@@ -181,7 +181,7 @@ check("FER-05: Genera líneas",           len(lines_fer05) >= 3)
 check("FER-05: Balanceado",              balanced(lines_fer05))
 check("FER-05: USA cuenta 4xxx (ingreso)", uses_ingreso(lines_fer05))
 check("FER-05: USA CxC (1102)",          uses_cxc(lines_fer05))
-check("FER-05: USA IVA Débito (2102)",   uses_iva_debito(lines_fer05))
+check("FER-05: USA IVA Débito 2102 (CR en ventas)", any(str(l["account_code"]).startswith("2102") and l["credit"] > 0 for l in lines_fer05))
 check("FER-05: NO usa CxP (2101)",       not uses_cxp(lines_fer05))
 
 # ─── FER-06: BUG ROOT CAUSE — sin _es_recibido ni tipo 08 → incorrecto ─────

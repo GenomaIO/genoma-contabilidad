@@ -31,17 +31,22 @@ from services.tax.router import get_prorrata
 logger = logging.getLogger(__name__)
 
 # Cuentas por defecto (fallback si no está en catálogo)
+# ── Enfoque A: IVA cuenta única PASIVA (Ley IVA 9635 Art.22) ─────────────
+# IVA_DEBITO es la ÚNICA cuenta de IVA (2102 / 2102.02).
+# En compras: DR IVA_DEBITO → reduce la deuda con Hacienda (acreditable)
+# En ventas:  CR IVA_DEBITO → aumenta la deuda con Hacienda (débito fiscal)
+# Saldo neto al cierre del período = monto a pagar/recibir vía D-150.
+# IVA_CREDITO eliminado — bajo Enfoque A no hay cuenta ACTIVO de IVA.
 DEFAULT_ACCOUNTS = {
     "CXC":            "1102",
     "CXP":            "2101",
     "BANCO":          "1101",
-    "IVA_CREDITO":    "1104",
-    "IVA_DEBITO":     "2102",
+    "IVA_DEBITO":     "2102",   # PASIVA — única cuenta IVA (DR en compras, CR en ventas)
     "IVA_DIFERIDO":   "2108",   # IVA diferido cond. venta 11 (Art.17 Ley IVA 9635)
     "INGRESO_VENTAS": "4101",
     "INGRESO_SERV":   "4102",
     "INGRESO_EXENTO": "4103",
-    "OTROS_GASTOS":   "5299",  # Otros Gastos Operativos — cuenta real del catálogo (5999 no existe)
+    "OTROS_GASTOS":   "5299",  # Otros Gastos Operativos — cuenta real del catálogo
 }
 
 
@@ -52,12 +57,10 @@ def _normalizar_codigo(code: str) -> str:
 
 # Mapa semántico: standard_code → (account_type_in_db, keywords para ILIKE)
 # Usado como fallback cuando exact+prefix match fallan (catálogos punteados).
-# Garantiza que "1104" encuentre "1.1.4.01 IVA Acreditable" aunque los prefijos
-# normalizados no coincidan por diferencia de esquema numérico.
+# Enfoque A: 1104 eliminado. IVA unificado en 2102 (PASIVA única).
 _SEMANTIC_MAP: dict = {
-    "1104": ("ACTIVO",  ["iva", "acreditable", "crédito fiscal", "credito fiscal"]),
     "2101": ("PASIVO",  ["proveedor", "cuentas por pagar", "acreedores comerciales"]),
-    "2102": ("PASIVO",  ["iva", "débito", "iva debito", "ventas"]),
+    "2102": ("PASIVO",  ["iva", "débito", "iva debito", "iva por liquidar", "iva fiscal"]),
     "1102": ("ACTIVO",  ["cliente", "cuentas por cobrar", "deudores comerciales"]),
     "1101": ("ACTIVO",  ["caja", "banco", "efectivo", "disponible"]),
     "4101": ("INGRESO", ["ventas", "ingresos por ventas", "venta de bienes"]),
@@ -264,20 +267,22 @@ def _build_entry_lines_from_doc(doc: dict, tenant_id: str, entry_id: str, cabys_
             ))
             total_neto_acumulado += monto_n
 
-            # ── DR IVA Acreditable y no acreditable (Prorrata Art. 31 Ley 9635) ──
+            # ── Enfoque A: IVA cuenta única PASIVA (Art. 22 + 31 Ley IVA 9635) ──
+            # DR 2102 = reduce el saldo que le debemos a Hacienda (crédito fiscal)
+            # La parte no acreditable (prorrata) va al gasto como costo adicional.
             if monto_iva > 0 and iva_info["acreditable"]:
                 iva_acreditable    = round(monto_iva * prorrata, 5)
                 iva_no_acreditable = round(monto_iva - iva_acreditable, 5)
 
-                # DR 1104 IVA Crédito Fiscal (parte acreditable)
+                # DR 2102 IVA (PASIVO) — reduce la deuda con Hacienda
                 if iva_acreditable > 0:
                     lines.append(_build_line(
                         entry_id, tenant_id,
-                        DEFAULT_ACCOUNTS["IVA_CREDITO"],
-                        f"IVA Acreditable {prorrata*100:.0f}% \u00b7 {desc_item}",
+                        DEFAULT_ACCOUNTS["IVA_DEBITO"],
+                        f"IVA Crédito Fiscal {prorrata*100:.0f}% · {desc_item}",
                         debit=iva_acreditable, credit=0,
                         deductible="DEDUCTIBLE",
-                        legal_basis="Art. 29 Ley IVA 9635",
+                        legal_basis="Art. 22 Ley IVA 9635 — crédito fiscal",
                         cabys_code=cabys,
                         iva_tipo=iva_info["tipo"],
                         iva_tarifa=iva_info["tarifa"],
@@ -290,10 +295,10 @@ def _build_entry_lines_from_doc(doc: dict, tenant_id: str, entry_id: str, cabys_
                     lines.append(_build_line(
                         entry_id, tenant_id,
                         cuenta_gasto,   # ← misma cuenta 5xxx del gasto
-                        f"IVA no acreditable {(1-prorrata)*100:.0f}% \u00b7 {desc_item}",
+                        f"IVA no acreditable {(1-prorrata)*100:.0f}% · {desc_item}",
                         debit=iva_no_acreditable, credit=0,
                         deductible="PARTIAL",
-                        legal_basis="Art. 31 Ley IVA 9635 \u2014 prorrata",
+                        legal_basis="Art. 31 Ley IVA 9635 — prorrata",
                         cabys_code=cabys,
                         iva_tipo=iva_info["tipo"],
                         iva_tarifa=iva_info["tarifa"],
@@ -518,18 +523,21 @@ def _fallback_v1_lines(doc: dict, tenant_id: str, entry_id: str, doc_type: str) 
                 clasificacion_fuente="V1_FALLBACK"
             ))
         if total_iva > 0:
+            # Enfoque A: IVA cuenta única PASIVA
             iva_acreditable    = round(total_iva * prorrata, 5)
             iva_no_acreditable = round(total_iva - iva_acreditable, 5)
 
+            # DR 2102 (PASIVO) — reduce la deuda con Hacienda (crédito fiscal)
             if iva_acreditable > 0:
                 lines.append(_build_line(entry_id, tenant_id,
-                    DEFAULT_ACCOUNTS["IVA_CREDITO"],
-                    f"IVA Acreditable {round(prorrata*100,0):.0f}% (v1-fallback) · {emisor}",
+                    DEFAULT_ACCOUNTS["IVA_DEBITO"],
+                    f"IVA Crédito Fiscal {round(prorrata*100,0):.0f}% (v1-fallback) · {emisor}",
                     debit=iva_acreditable, credit=0,
                     deductible="DEDUCTIBLE",
-                    legal_basis="Art. 29 Ley IVA 9635",
+                    legal_basis="Art. 22 Ley IVA 9635 — crédito fiscal",
                     clasificacion_fuente="V1_FALLBACK"
                 ))
+            # DR cuenta gasto — IVA no acreditable = mayor costo
             if iva_no_acreditable > 0:
                 lines.append(_build_line(entry_id, tenant_id,
                     _cuenta_gasto_v1,

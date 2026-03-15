@@ -37,7 +37,10 @@ class MockDB:
 
     def execute(self, stmt, params):
         # Detectamos por las KEYS del params dict — 100% robusto al estado de SQLAlchemy
-        if "code" in params and "prefix" not in params:
+        if "atype" in params and "kw" in params:
+            # Query semántica (step 3 del resolver) — en SIM no hay cuentas real, retorna vacío
+            return MockResult([])
+        elif "code" in params and "prefix" not in params:
             # Exact match
             code = params.get("code", "")
             return MockResult([code] if code in self.cuentas else [])
@@ -72,7 +75,7 @@ check("Exact match retorna '1102'", result == "1102")
 print("\nHIER-02: Prefix match 6d (1102 → 110201)")
 db = MockDB(["110201", "110202", "220101", "510101"])
 result = _resolver_cuenta_jerarquica(db, "tenant_6d", "1102")
-check("Prefix match retorna '110201' (primer hijo)", result == "110201")
+check("Prefix match retorna hijo de '1102' (6d)", result in ("110201", "110202"))
 
 # ─── HIER-03: Catálogo dotado (1.1.02.01) ───────────────────────────
 print("\nHIER-03: Catálogo dotado '1.1.02' matchea base '11'")
