@@ -184,7 +184,17 @@ def _build_entry_lines_from_doc(doc: dict, tenant_id: str, entry_id: str, cabys_
                 "confidence": 0.3, "fuente": "FALLBACK", "asset_flag": False
             }
 
-            cuenta_gasto = cab_result["account_code"]
+            # Resolver la cuenta CABYS jerárquicamente en el catálogo NIIF del tenant
+            # cabys_rules IS la db-session aquí (inyectada por map_document_lines_to_entry).
+            # _resolve_account hace exact → prefix → fallback contra la tabla accounts
+            # garantizando que el código resultante EXISTA en el catálogo del tenant.
+            # Si cabys_rules es un dict vacío (tests SIM sin DB) devuelve el código base.
+            cuenta_gasto_raw = cab_result["account_code"]
+            cuenta_gasto = (
+                _resolve_account(cabys_rules, tenant_id, cuenta_gasto_raw)
+                if callable(getattr(cabys_rules, "execute", None))
+                else cuenta_gasto_raw
+            )
             asset_flag   = cab_result.get("asset_flag", False)
             confidence   = cab_result.get("confidence", 0.3)
             fuente       = cab_result.get("fuente", "FALLBACK")
@@ -303,8 +313,9 @@ def _build_entry_lines_from_doc(doc: dict, tenant_id: str, entry_id: str, cabys_
             account_role=role_balance,
         ))
 
-        # Ajuste de redondeo si DR ≠ CR (< ₡1)
-        lines = _ajuste_redondeo(lines, entry_id, tenant_id)
+        # Ajuste de redondeo si DR ≠ CR (< ₡1) — se pasa db para resolver cuenta
+        lines = _ajuste_redondeo(lines, entry_id, tenant_id, db=cabys_rules
+                                 if callable(getattr(cabys_rules, "execute", None)) else None)
 
     # ── FE / TE / ND / NC → Documentos de venta ─────────────────────
     elif doc_type in ("01", "04", "02", "03"):
@@ -386,17 +397,23 @@ def _build_entry_lines_from_doc(doc: dict, tenant_id: str, entry_id: str, cabys_
     return lines
 
 
-def _ajuste_redondeo(lines: list, entry_id: str, tenant_id: str) -> list:
+def _ajuste_redondeo(lines: list, entry_id: str, tenant_id: str, db=None) -> list:
     """Agrega línea de ajuste si DR ≠ CR por diferencia de redondeo < ₡1."""
     dr = round(sum(l["debit"]  for l in lines), 5)
     cr = round(sum(l["credit"] for l in lines), 5)
     diff = round(abs(dr - cr), 5)
     if 0 < diff < 1:
+        # Resolver "5999" contra el catálogo real del tenant si hay DB disponible
+        cuenta_ajuste = (
+            _resolve_account(db, tenant_id, DEFAULT_ACCOUNTS["OTROS_GASTOS"])
+            if db and callable(getattr(db, "execute", None))
+            else DEFAULT_ACCOUNTS["OTROS_GASTOS"]
+        )
         if dr > cr:
-            lines.append(_build_line(entry_id, tenant_id, "5999",
+            lines.append(_build_line(entry_id, tenant_id, cuenta_ajuste,
                 f"Ajuste redondeo ₡{diff}", 0, diff, "EXEMPT"))
         else:
-            lines.append(_build_line(entry_id, tenant_id, "5999",
+            lines.append(_build_line(entry_id, tenant_id, cuenta_ajuste,
                 f"Ajuste redondeo ₡{diff}", diff, 0, "EXEMPT"))
     return lines
 
@@ -430,13 +447,24 @@ def _fallback_v1_lines(doc: dict, tenant_id: str, entry_id: str, doc_type: str) 
         prorrata = doc.get("prorrata_iva", 1.0)
     prorrata = max(0.0, min(1.0, float(prorrata)))
 
+    # Resolver cuenta de gasto/otros-gastos jerárquicamente en el catálogo NIIF
+    # doc["_db"] es inyectado por map_document_lines_to_entry antes de invocar
+    # _build_entry_lines_from_doc → _fallback_v1_lines.
+    # Si no hay DB (SIM tests sin DB), se usa el código base directamente.
+    _db_v1 = doc.get("_db") if isinstance(doc, dict) else None
+    _cuenta_gasto_v1 = (
+        _resolve_account(_db_v1, tenant_id, DEFAULT_ACCOUNTS["OTROS_GASTOS"])
+        if _db_v1 and callable(getattr(_db_v1, "execute", None))
+        else DEFAULT_ACCOUNTS["OTROS_GASTOS"]
+    )
+
     lines = []
     if doc_type in ("08", "09", "RECIBIDO"):
         # Neto = TotalComprobante - IVA = lo que va al gasto (sin impuesto)
         neto = round(total_venta - total_iva, 5)
         if neto > 0:
             lines.append(_build_line(entry_id, tenant_id,
-                DEFAULT_ACCOUNTS["OTROS_GASTOS"],
+                _cuenta_gasto_v1,
                 f"Compra (v1-fallback) · {emisor}",
                 debit=neto, credit=0,
                 deductible="DEDUCTIBLE",
@@ -458,7 +486,7 @@ def _fallback_v1_lines(doc: dict, tenant_id: str, entry_id: str, doc_type: str) 
                 ))
             if iva_no_acreditable > 0:
                 lines.append(_build_line(entry_id, tenant_id,
-                    DEFAULT_ACCOUNTS["OTROS_GASTOS"],
+                    _cuenta_gasto_v1,
                     f"IVA no acreditable {round((1-prorrata)*100,0):.0f}% (v1-fallback) · {emisor}",
                     debit=iva_no_acreditable, credit=0,
                     deductible="PARTIAL",
