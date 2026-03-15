@@ -407,7 +407,9 @@ def _fallback_v1_lines(doc: dict, tenant_id: str, entry_id: str, doc_type: str) 
     Compatible con payloads del webhook_receiver original.
 
     Correcciones:
-    - CR usa total_comprobante (o total_venta + total_iva) para garantizar balance DR=CR.
+    - total_venta = TotalComprobante (IVA incluido, lo que se le paga al proveedor).
+      neto = total_venta - total_iva  → es el subtotal real sin IVA.
+    - CR = total_venta (= TotalComprobante, monto que debes al proveedor).
     - Aplica prorrata IVA (Art. 31 Ley 9635) en path RECIBIDO:
         DR 1104  = total_iva * prorrata       (acreditable)
         DR 5xxx  = total_iva * (1-prorrata)   (no acreditable → mayor costo)
@@ -417,9 +419,9 @@ def _fallback_v1_lines(doc: dict, tenant_id: str, entry_id: str, doc_type: str) 
     emisor      = doc.get("emisor_nombre", "Proveedor")[:60]
     condicion   = doc.get("condicion_venta", doc.get("condicion", "02"))
 
-    # CR correcto: total_comprobante > total_doc (neto) → evita desbalance
-    _tc = doc.get("total_comprobante") or doc.get("total_comprobante_crc")
-    total_cr = float(_tc) if _tc and float(_tc) > 0 else round(total_venta + total_iva, 5)
+    # CR = TotalComprobante = lo que le debes al proveedor (IVA incluido)
+    # total_venta en el payload del Facturador = TotalComprobante del XML Hacienda
+    total_cr = total_venta
 
     # Prorrata IVA (Art. 31 Ley 9635) — misma lógica que v2
     try:
@@ -430,11 +432,13 @@ def _fallback_v1_lines(doc: dict, tenant_id: str, entry_id: str, doc_type: str) 
 
     lines = []
     if doc_type in ("08", "09", "RECIBIDO"):
-        if total_venta > 0:
+        # Neto = TotalComprobante - IVA = lo que va al gasto (sin impuesto)
+        neto = round(total_venta - total_iva, 5)
+        if neto > 0:
             lines.append(_build_line(entry_id, tenant_id,
                 DEFAULT_ACCOUNTS["OTROS_GASTOS"],
                 f"Compra (v1-fallback) · {emisor}",
-                debit=total_venta, credit=0,
+                debit=neto, credit=0,
                 deductible="DEDUCTIBLE",
                 legal_basis="Art. 8 Ley Renta 7092",
                 clasificacion_fuente="V1_FALLBACK"
@@ -488,11 +492,13 @@ def _fallback_v1_lines(doc: dict, tenant_id: str, entry_id: str, doc_type: str) 
             debit=total_cr, credit=0, deductible="EXEMPT",
             clasificacion_fuente="V1_FALLBACK"
         ))
-        if total_venta > 0:
+        # CR ingreso = neto (sin IVA) → DR total_venta = CR neto + IVA ✅
+        neto_venta = round(total_venta - total_iva, 5)
+        if neto_venta > 0:
             lines.append(_build_line(entry_id, tenant_id,
                 DEFAULT_ACCOUNTS["INGRESO_VENTAS"],
                 "Ingreso venta (v1-fallback)",
-                debit=0, credit=total_venta, deductible="DEDUCTIBLE",
+                debit=0, credit=neto_venta, deductible="DEDUCTIBLE",
                 clasificacion_fuente="V1_FALLBACK"
             ))
 
