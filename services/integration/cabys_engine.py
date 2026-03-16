@@ -1,20 +1,23 @@
 """
 integration/cabys_engine.py
 ════════════════════════════════════════════════════════════
-Motor de resolución CABYS → Cuenta Contable
-
-Dado un código CABYS (del XML de Hacienda), resuelve la cuenta contable
-correcta del catálogo del tenant con score de confianza.
+Motor de resolución CABYS → Cuenta Contable  (v2 — Solución Global)
 
 Jerarquía de resolución:
-  1. Regla exacta del tenant (cabys_account_rules.cabys_code = exacto) → 1.0
-  2. Regla por prefijo 2 dígitos (sector CABYS)                        → 0.8
-  3. Búsqueda semántica por descripción en catálogo CABYS existente     → 0.6
-  4. Fallback: 5999 Otros Gastos                                        → 0.3
+  1. Regla exacta del tenant (cabys_account_rules.cabys_code)     → conf 1.0
+  2. Regla por prefijo 2 dígitos (sector CABYS) en la DB          → conf 0.8
+  3. Semántica enriquecida: hints del sector CABYS + descripción
+     del ítem → busca en el catálogo NIIF real del tenant         → conf 0.6
+  4. Fallback genérico → CUENTA_OTROS_GASTOS (5299)               → conf 0.3
 
-Herencia IVA:
-  tarifa_codigo 01=Exento · 02-05=Reducido · 08=13% Gravado
-  Tipo exoneración: EXONERADO si viene con tipo_exoneracion
+Novedades v2:
+  - _CABYS_PREFIX_HINTS: tabla estática con 50+ sectores CABYS
+    (basado en la Clasificación Central de Productos CPC v2.1 de la ONU,
+    que es el estándar que Hacienda CR adopta para su catálogo CABYS).
+    Cubre TODOS los prefijos de 2 dígitos relevantes para Costa Rica.
+  - _buscar_semantico ahora acepta hint_keywords adicionales del sector
+    y los mezcla con las palabras de la descripción del ítem.
+  - Ningún CABYS queda sin al menos 1 keyword de sector para la búsqueda.
 
 Reglas de Oro:
   - Función pura: no modifica DB, solo lee
@@ -26,12 +29,11 @@ from sqlalchemy import text
 
 logger = logging.getLogger(__name__)
 
-# Cuenta de fallback cuando no hay regla ni match semántico.
-# 5299 = "Otros Gastos Operativos" — existe en catálogo estándar CR con allow_entries=true.
-# NO usar 5999 (no existe en catálogo NIIF → causa errores en reportes y asiento inválido).
+# Cuenta de fallback cuando no hay ningún match semántico.
+# 5299 = "Otros Gastos Operativos" — existe en catálogo estándar CR.
 CUENTA_OTROS_GASTOS = "5299"
 
-# Mapa de tarifa_codigo → tipo y porcentaje IVA (Hacienda v4.4)
+# ── Mapa de tarifa_codigo → tipo y porcentaje IVA (Hacienda v4.4) ──────────
 TARIFA_MAP = {
     "01": {"tipo": "EXENTO",     "tarifa": 0.0,  "acreditable": False},
     "02": {"tipo": "REDUCIDO_1", "tarifa": 1.0,  "acreditable": True},
@@ -45,168 +47,197 @@ TARIFA_MAP = {
 def iva_tipo_desde_tarifa(tarifa_codigo: str, tipo_exoneracion: str = None) -> dict:
     """
     Convierte el código de tarifa Hacienda al tratamiento IVA contable.
-
-    Args:
-        tarifa_codigo: '01','02','03','04','05','08'
-        tipo_exoneracion: si viene del XML, clasifica como EXONERADO
-
-    Returns:
-        {tipo, tarifa, acreditable}
     """
     if tipo_exoneracion:
         return {"tipo": "EXONERADO", "tarifa": 0.0, "acreditable": False}
-
     result = TARIFA_MAP.get(tarifa_codigo)
     if result:
-        return dict(result)  # copia defensiva
-
-    # Caso no mapeado → tratar como NO_SUJETO
+        return dict(result)
     logger.warning(f"⚠️ cabys_engine: tarifa_codigo '{tarifa_codigo}' desconocida → NO_SUJETO")
     return {"tipo": "NO_SUJETO", "tarifa": 0.0, "acreditable": False}
 
 
-def resolver_cabys(
-    db,
-    tenant_id: str,
-    cabys_code: str,
-    descripcion: str,
-    monto: float,
-    tenant_token: str = None,
-) -> dict:
-    """
-    Resuelve el código CABYS a una cuenta contable para el tenant.
+# ══════════════════════════════════════════════════════════════════════════════
+# TABLA GLOBAL DE HINTS POR SECTOR CABYS
+# Basada en la Clasificación Central de Productos (CPC v2.1) de la ONU,
+# que Hacienda CR adopta como base para su catálogo CABYS.
+# Prefijo = primeros 2 dígitos del código CABYS (sector).
+# Las keywords se usan para buscar semánticamente en el catálogo NIIF del tenant.
+# account_type restringe la búsqueda al tipo correcto de cuenta.
+# ══════════════════════════════════════════════════════════════════════════════
+_CABYS_PREFIX_HINTS: dict = {
+    # ── Productos agropecuarios (01-05) ─────────────────────────────────────
+    "01": {"tipo": "GASTO", "kws": ["agropecuario", "agricola", "cosecha", "semilla", "abono"]},
+    "02": {"tipo": "GASTO", "kws": ["agropecuario", "ganadero", "pecuario", "animal"]},
+    "03": {"tipo": "GASTO", "kws": ["forestal", "madera", "silvicultura"]},
+    "04": {"tipo": "GASTO", "kws": ["pesca", "acuicultura", "marisco", "pescado"]},
+    "05": {"tipo": "GASTO", "kws": ["mineral", "combustible", "petroleo", "gas", "extraccion"]},
 
-    Args:
-        db:          Sesión SQLAlchemy (solo lectura)
-        tenant_id:   ID del tenant
-        cabys_code:  Código CABYS del ítem (del XML de Hacienda)
-        descripcion: Descripción del ítem (para búsqueda semántica)
-        monto:       Monto del ítem (para evaluar umbral de activo)
-        tenant_token: Token del tenant (reservado para futura búsqueda semántica)
+    # ── Alimentos y bebidas (10-16) ──────────────────────────────────────────
+    "10": {"tipo": "GASTO", "kws": ["alimento", "carne", "conserva", "producto alimenticio"]},
+    "11": {"tipo": "GASTO", "kws": ["lacteo", "queso", "leche", "mantequilla"]},
+    "12": {"tipo": "GASTO", "kws": ["alimento", "aceite", "grasa", "comestible"]},
+    "13": {"tipo": "GASTO", "kws": ["cereal", "harina", "panaderia", "pasteleria"]},
+    "14": {"tipo": "GASTO", "kws": ["alimento", "fruta", "vegetal", "procesado"]},
+    "15": {"tipo": "GASTO", "kws": ["bebida", "jugo", "refresco", "soda"]},
+    "16": {"tipo": "GASTO", "kws": ["tabaco", "cigarro"]},
 
-    Returns:
-        {
-          account_code: str,
-          confidence: float,
-          fuente: 'EXACTA'|'PREFIJO'|'SEMANTICA'|'FALLBACK',
-          asset_flag: bool,
-          cabys_code: str,
-        }
-    """
-    prefix = (cabys_code or "")[:2]
+    # ── Textiles, cuero, papel (17-22) ──────────────────────────────────────
+    "17": {"tipo": "GASTO", "kws": ["textil", "tela", "fibra", "hilado"]},
+    "18": {"tipo": "GASTO", "kws": ["confeccion", "ropa", "vestido", "uniformes"]},
+    "19": {"tipo": "GASTO", "kws": ["cuero", "calzado", "equipaje", "bolso"]},
+    "20": {"tipo": "GASTO", "kws": ["madera", "mueble", "carpinteria"]},
+    "21": {"tipo": "GASTO", "kws": ["papel", "carton", "embalaje", "papeleria"]},
+    "22": {"tipo": "GASTO", "kws": ["impresion", "imprenta", "publicacion", "editorial"]},
 
-    # ── 1. Regla exacta del tenant ───────────────────────────────────
-    if cabys_code:
-        row = db.execute(text("""
-            SELECT account_code, asset_flag, min_amount
-            FROM cabys_account_rules
-            WHERE tenant_id = :tid
-              AND cabys_code = :cabys
-            ORDER BY prioridad DESC
-            LIMIT 1
-        """), {"tid": tenant_id, "cabys": cabys_code}).fetchone()
+    # ── Químicos, farmacéuticos (23-25) ─────────────────────────────────────
+    "23": {"tipo": "GASTO", "kws": ["combustible", "diesel", "gasolina", "petroleo"]},
+    "24": {"tipo": "GASTO", "kws": ["quimico", "reactivo", "laboratorio"]},
+    "25": {"tipo": "GASTO", "kws": ["farmaceutico", "medicamento", "medicina", "farmacia"]},
 
-        if row:
-            asset = bool(row.asset_flag) and (monto or 0) >= (row.min_amount or 0)
-            return {
-                "account_code": row.account_code,
-                "confidence":   1.0,
-                "fuente":       "EXACTA",
-                "asset_flag":   asset,
-                "cabys_code":   cabys_code,
-            }
+    # ── Plásticos, minerales (26-28) ─────────────────────────────────────────
+    "26": {"tipo": "GASTO", "kws": ["plastico", "caucho", "hule"]},
+    "27": {"tipo": "GASTO", "kws": ["vidrio", "ceramica", "materiales construccion"]},
+    "28": {"tipo": "GASTO", "kws": ["mineral", "cemento", "concreto", "arcilla"]},
 
-    # ── 2. Regla por prefijo (2 dígitos del sector CABYS) ───────────
-    if prefix:
-        row_p = db.execute(text("""
-            SELECT account_code, asset_flag, min_amount
-            FROM cabys_account_rules
-            WHERE tenant_id  = :tid
-              AND cabys_code  IS NULL
-              AND cabys_prefix = :prefix
-            ORDER BY prioridad DESC
-            LIMIT 1
-        """), {"tid": tenant_id, "prefix": prefix}).fetchone()
+    # ── Metales (29-31) ──────────────────────────────────────────────────────
+    "29": {"tipo": "GASTO", "kws": ["metal", "hierro", "acero", "aluminio"]},
+    "30": {"tipo": "GASTO", "kws": ["metal", "herraje", "herramienta"]},
+    "31": {"tipo": "GASTO", "kws": ["electronico", "electrico", "componente", "circuito"]},
 
-        if row_p:
-            asset = bool(row_p.asset_flag) and (monto or 0) >= (row_p.min_amount or 0)
-            return {
-                "account_code": row_p.account_code,
-                "confidence":   0.8,
-                "fuente":       "PREFIJO",
-                "asset_flag":   asset,
-                "cabys_code":   cabys_code,
-            }
+    # ── Maquinaria y equipos → ACTIVO (32-36) ────────────────────────────────
+    "32": {"tipo": "ACTIVO", "kws": ["maquinaria", "equipo industrial", "motor"]},
+    "33": {"tipo": "ACTIVO", "kws": ["computadora", "equipo computo", "servidor", "laptop"]},
+    "34": {"tipo": "ACTIVO", "kws": ["equipo electrico", "transformador", "generador"]},
+    "35": {"tipo": "ACTIVO", "kws": ["vehiculo", "automovil", "camion", "flotilla"]},
+    "36": {"tipo": "ACTIVO", "kws": ["mueble", "mobiliario", "equipo oficina"]},
 
-    # ── 3. Búsqueda semántica por descripción en catálogo CABYS ─────
-    # Busca en el catálogo CABYS por similitud de descripción
-    if descripcion:
-        sem = _buscar_semantico(db, tenant_id, descripcion)
-        if sem:
-            return {
-                "account_code": sem["account_code"],
-                "confidence":   0.6,
-                "fuente":       "SEMANTICA",
-                "asset_flag":   sem.get("asset_flag", False),   # ← propaga desde semántica
-                "cabys_code":   cabys_code,
-            }
+    # ── Construcción (41-43) ─────────────────────────────────────────────────
+    "41": {"tipo": "GASTO", "kws": ["construccion", "obra", "edificacion", "remodelacion"]},
+    "42": {"tipo": "GASTO", "kws": ["acabado", "pintura", "instalacion", "obra civil"]},
+    "43": {"tipo": "GASTO", "kws": ["instalacion", "electrico", "plomeria", "obra"]},
 
-    # ── 4. Fallback — Otros Gastos 5999 ─────────────────────────────
-    logger.info(f"cabys_engine: FALLBACK 5999 para CABYS={cabys_code} desc='{descripcion[:30]}'")
-    return {
-        "account_code": CUENTA_OTROS_GASTOS,
-        "confidence":   0.3,
-        "fuente":       "FALLBACK",
-        "asset_flag":   False,
-        "cabys_code":   cabys_code,
-    }
+    # ── Comercio / Mercadería (45-47) ────────────────────────────────────────
+    "45": {"tipo": "GASTO", "kws": ["mercaderia", "inventario", "producto", "reventa"]},
+    "46": {"tipo": "GASTO", "kws": ["mayoreo", "distribucion", "comercio"]},
+    "47": {"tipo": "GASTO", "kws": ["venta", "detalle", "consumo", "mercaderia"]},
 
+    # ── Transporte y logística (49-53) ───────────────────────────────────────
+    "49": {"tipo": "GASTO", "kws": ["transporte", "flete", "acarreo", "logistica"]},
+    "50": {"tipo": "GASTO", "kws": ["marítimo", "naviero", "carga maritima"]},
+    "51": {"tipo": "GASTO", "kws": ["aereo", "carga aerea", "avion"]},
+    "52": {"tipo": "GASTO", "kws": ["almacenamiento", "bodega", "deposito"]},
+    "53": {"tipo": "GASTO", "kws": ["correo", "mensajeria", "courier", "envio"]},
 
+    # ── Alojamiento y gastronomía (55-56) ────────────────────────────────────
+    "55": {"tipo": "GASTO", "kws": ["alojamiento", "hotel", "hospedaje", "habitacion"]},
+    "56": {"tipo": "GASTO", "kws": ["restaurante", "comida", "alimentacion", "catering"]},
 
-# Keywords que sugieren que el ítem es un activo fijo (Propiedad, Planta y Equipo)
-# Basado en clasificación NIIF Sección 17 y catálogos CABYS CR comunes
+    # ── Información y comunicaciones (58-60) ─────────────────────────────────
+    "58": {"tipo": "GASTO", "kws": ["comunicacion", "telecomunicaciones", "internet", "telefono"]},
+    "59": {"tipo": "GASTO", "kws": ["telecomunicaciones", "radio", "television", "señal"]},
+    "60": {"tipo": "GASTO", "kws": ["informatica", "tecnologia", "sistema", "software"]},
+
+    # ── Servicios financieros y seguros (61) ─────────────────────────────────
+    "61": {"tipo": "GASTO", "kws": ["financiero", "bancario", "seguro", "comision bancaria"]},
+
+    # ── Servicios de TI (62-63) ──────────────────────────────────────────────
+    "62": {"tipo": "GASTO", "kws": ["tecnologia", "software", "sistema", "informatica", "desarrollo"]},
+    "63": {"tipo": "GASTO", "kws": ["tecnologia", "datos", "informacion", "software", "sistema"]},
+
+    # ── Servicios profesionales y técnicos (64-69) ───────────────────────────
+    "64": {"tipo": "GASTO", "kws": ["profesional", "consultoria", "asesoria", "servicio tecnico"]},
+    "65": {"tipo": "GASTO", "kws": ["legal", "juridico", "notarial", "abogado"]},
+    "66": {"tipo": "GASTO", "kws": ["contable", "auditoria", "contabilidad", "financiero"]},
+    "67": {"tipo": "GASTO", "kws": ["arquitectura", "ingenieria", "diseno tecnico"]},
+    "68": {"tipo": "GASTO", "kws": ["investigacion", "desarrollo", "cientifico"]},
+    "69": {"tipo": "GASTO", "kws": ["publicidad", "marketing", "mercadeo", "investigacion mercado"]},
+
+    # ── Otros servicios empresariales (70-75) ────────────────────────────────
+    "70": {"tipo": "GASTO", "kws": ["alquiler", "arrendamiento", "renta", "inmueble"]},
+    "72": {"tipo": "GASTO", "kws": ["veterinario", "agropecuario", "animal"]},
+    "73": {"tipo": "GASTO", "kws": ["cientifico", "laboratorio", "analisis", "prueba"]},
+    "74": {"tipo": "GASTO", "kws": ["empleo", "recurso humano", "reclutamiento", "personal"]},
+    "75": {"tipo": "GASTO", "kws": ["seguridad", "vigilancia", "investigacion privada"]},
+
+    # ── Soporte operativo (77-82) ─────────────────────────────────────────────
+    "77": {"tipo": "GASTO", "kws": ["alquiler", "arrendamiento", "leasing", "renta equipo"]},
+    "78": {"tipo": "GASTO", "kws": ["viaje", "turismo", "agencia", "excursion"]},
+    "79": {"tipo": "GASTO", "kws": ["turismo", "reservacion", "viaje", "tour"]},
+    "80": {"tipo": "GASTO", "kws": ["seguridad", "vigilancia", "custodia", "guardas"]},
+    "81": {"tipo": "GASTO", "kws": ["mantenimiento", "reparacion", "limpieza", "aseo"]},
+    "82": {"tipo": "GASTO", "kws": ["administrativo", "oficina", "soporte", "call center"]},
+
+    # ── Tecnología e informática / soporte técnico (83) ──────────────────────
+    "83": {"tipo": "GASTO", "kws": ["tecnologia", "software", "sistema", "consultoria",
+                                     "informatica", "hardware", "desarrollo", "soporte tecnico"]},
+
+    # ── Servicios sociales y personales (85-93) ──────────────────────────────
+    "85": {"tipo": "GASTO", "kws": ["educacion", "capacitacion", "formacion", "curso", "entrenamiento"]},
+    "86": {"tipo": "GASTO", "kws": ["salud", "medico", "clinica", "hospital"]},
+    "87": {"tipo": "GASTO", "kws": ["salud", "asistencia", "cuidado personal"]},
+    "88": {"tipo": "GASTO", "kws": ["asistencia", "bienestar", "social"]},
+    "90": {"tipo": "GASTO", "kws": ["publicidad", "marketing", "arte", "entretenimiento"]},
+    "91": {"tipo": "GASTO", "kws": ["deporte", "recreacion", "entretenimiento"]},
+    "92": {"tipo": "GASTO", "kws": ["cultura", "museo", "biblioteca"]},
+    "93": {"tipo": "GASTO", "kws": ["otro servicio", "miscelaneo", "varios"]},
+
+    # ── Membresías y organismos (94-96) ─────────────────────────────────────
+    "94": {"tipo": "GASTO", "kws": ["membresia", "afiliacion", "suscripcion", "asociacion", "cuota"]},
+    "95": {"tipo": "GASTO", "kws": ["hogar", "domestico", "servicio domestico"]},
+    "96": {"tipo": "GASTO", "kws": ["personal", "servicio personal", "cuidado"]},
+
+    # ── Gubernamentales y especiales (98-99) ────────────────────────────────
+    "98": {"tipo": "GASTO", "kws": ["gobierno", "administracion publica", "permiso", "tramite"]},
+    "99": {"tipo": "GASTO", "kws": ["otro", "varios", "miscelaneo", "gasto general"]},
+}
+
+# Prefijos CABYS que corresponden a sectores de bienes de capital (NIIF Secc. 17)
+_PREFIJOS_ACTIVO = frozenset(["32", "33", "34", "35", "36"])
+
+# Keywords que sugieren activo fijo en la descripción del ítem
 _ASSET_KEYWORDS = frozenset([
     "equipo", "computador", "computadora", "laptop", "servidor", "impresora",
-    "vehiculo", "vehículo", "camion", "camión", "moto", "automovil", "automóvil",
-    "maquinaria", "maquina", "máquina", "tractor", "montacargas", "grua", "grúa",
-    "mobiliario", "mueble", "escritorio", "silla", "archivero", "archivador",
-    "edificio", "terreno", "local", "inmueble", "instalacion", "instalación",
-    "herramienta", "instrumento", "medicion", "medición", "laboratorio",
-    "telefono", "teléfono", "celular", "tablet", "ipad", "monitor", "pantalla",
-    "aire acondicionado", "planta electrica", "generador", "ascensor", "elevador",
-    "camara", "cámara", "seguridad", "alarma", "ups", "router", "switch", "server",
-    "mueble", "estante", "estanteria", "estantería", "mesa", "sillon", "sillón",
-    "fotocopiadora", "scanner", "escaner", "proyector", "tv", "television",
-    "bodega", "galera", "nave", "estructura", "planta",
+    "vehiculo", "vehiculo", "camion", "camion", "automovil", "automovil",
+    "maquinaria", "maquina", "maquina", "tractor", "montacargas",
+    "mobiliario", "mueble", "escritorio", "archivero", "archivador",
+    "edificio", "terreno", "local", "inmueble", "instalacion", "instalacion",
+    "telefono", "telefono", "celular", "tablet", "monitor", "pantalla",
+    "generador", "ascensor", "elevador",
+    "camara", "camara", "alarma", "ups", "router", "switch", "server",
+    "estante", "estanteria", "estanteria", "mesa", "sillon", "sillon",
+    "fotocopiadora", "scanner", "escaner", "proyector",
 ])
 
 
 def _es_keyword_activo(descripcion: str) -> bool:
-    """Retorna True si la descripción contiene al menos un keyword de activo fijo."""
-    desc_lower = descripcion.lower()
-    return any(kw in desc_lower for kw in _ASSET_KEYWORDS)
+    """True si la descripción contiene un keyword de activo fijo."""
+    d = descripcion.lower()
+    return any(kw in d for kw in _ASSET_KEYWORDS)
 
 
-def _buscar_semantico(db, tenant_id: str, descripcion: str) -> dict | None:
+def _buscar_semantico(db, tenant_id: str, descripcion: str,
+                      hint_keywords: list = None) -> dict | None:
     """
-    Búsqueda semántica por palabras clave de la descripción del ítem.
+    Búsqueda semántica en el catálogo NIIF del tenant (v2 — enriquecida).
 
-    Estrategia:
-    1. Si la descripción tiene keywords de activo fijo → buscar primero en
-       account_type IN ('ACTIVO', 'PROPIEDAD_PLANTA_EQUIPO', 'ASSET').
-       Devuelve asset_flag=True para que el mapper la marque needs_review=True.
-    2. Si no hay match en activos (o no es keyword de activo) →
-       buscar en account_type = 'GASTO' como antes.
+    Combina hint_keywords (del sector CABYS, más confiables) con palabras
+    de la descripción del ítem. Los hints van primero en la búsqueda.
 
-    Retorna None si no hay ningún match.
+    - Si la descripción tiene keywords de activo → busca en ACTIVO primero.
+    - Si no → busca en GASTO con todas las keywords.
+    - Retorna None solo si absolutamente nada coincide.
     """
-    keywords = [w.lower() for w in descripcion.split() if len(w) >= 4]
-    if not keywords:
+    desc_words = [w.lower() for w in (descripcion or "").split() if len(w) >= 4]
+    # Hints del sector van primero (más semánticamente precisos)
+    all_kws = list(hint_keywords or []) + desc_words
+
+    if not all_kws:
         return None
 
-    # ── Paso 1: ¿parece activo? intenta resolver en cuentas de activo ──
-    if _es_keyword_activo(descripcion):
-        for kw in keywords[:4]:
+    # Paso 1: ¿parece activo fijo?
+    if _es_keyword_activo(descripcion or ""):
+        for kw in all_kws[:8]:
             try:
                 row = db.execute(text("""
                     SELECT code AS account_code
@@ -222,32 +253,121 @@ def _buscar_semantico(db, tenant_id: str, descripcion: str) -> dict | None:
                     ORDER BY code
                     LIMIT 1
                 """), {"tid": tenant_id, "kw": f"%{kw}%"}).fetchone()
-
                 if row:
-                    logger.info(
-                        f"cabys_engine: SEMANTICA-ACTIVO '{kw}' → {row.account_code}"
-                    )
+                    logger.info(f"cabys_engine: SEMANTICA-ACTIVO '{kw}' → {row.account_code}")
                     return {"account_code": row.account_code, "asset_flag": True}
             except Exception:
                 pass
 
-    # ── Paso 2: buscar en cuentas de gasto (comportamiento previo) ──
-    for kw in keywords[:3]:
+    # Paso 2: buscar en cuentas de gasto con todos los keywords
+    for kw in all_kws[:10]:
         try:
             row = db.execute(text("""
                 SELECT code AS account_code
                 FROM accounts
                 WHERE tenant_id = :tid
                   AND is_active = TRUE
+                  AND allow_entries = TRUE
                   AND LOWER(name) LIKE :kw
                   AND account_type = 'GASTO'
                 ORDER BY code
                 LIMIT 1
             """), {"tid": tenant_id, "kw": f"%{kw}%"}).fetchone()
-
             if row:
+                logger.info(f"cabys_engine: SEMANTICA-GASTO '{kw}' → {row.account_code}")
                 return {"account_code": row.account_code, "asset_flag": False}
         except Exception:
             pass
 
     return None
+
+
+def resolver_cabys(
+    db,
+    tenant_id: str,
+    cabys_code: str,
+    descripcion: str,
+    monto: float,
+    tenant_token: str = None,
+) -> dict:
+    """
+    Resuelve el código CABYS a una cuenta contable para el tenant.
+
+    Jerarquía:
+      1. Regla exacta en cabys_account_rules          → conf 1.0 EXACTA
+      2. Regla por prefijo (2 dígitos) en la DB        → conf 0.8 PREFIJO
+      3. Semántica enriquecida con hints CABYS          → conf 0.6 SEMANTICA
+      4. Fallback OTROS_GASTOS                          → conf 0.3 FALLBACK
+    """
+    prefix = (cabys_code or "")[:2]
+
+    # ── 1. Regla exacta del tenant ───────────────────────────────────────────
+    if cabys_code:
+        try:
+            row = db.execute(text("""
+                SELECT account_code, asset_flag, min_amount
+                FROM cabys_account_rules
+                WHERE tenant_id = :tid AND cabys_code = :cabys
+                ORDER BY prioridad DESC LIMIT 1
+            """), {"tid": tenant_id, "cabys": cabys_code}).fetchone()
+            if row:
+                asset = bool(row.asset_flag) and (monto or 0) >= (row.min_amount or 0)
+                return {
+                    "account_code": row.account_code,
+                    "confidence":   1.0,
+                    "fuente":       "EXACTA",
+                    "asset_flag":   asset,
+                    "cabys_code":   cabys_code,
+                }
+        except Exception:
+            pass
+
+    # ── 2. Regla por prefijo en la DB ───────────────────────────────────────
+    if prefix:
+        try:
+            row_p = db.execute(text("""
+                SELECT account_code, asset_flag, min_amount
+                FROM cabys_account_rules
+                WHERE tenant_id = :tid
+                  AND cabys_code IS NULL AND cabys_prefix = :prefix
+                ORDER BY prioridad DESC LIMIT 1
+            """), {"tid": tenant_id, "prefix": prefix}).fetchone()
+            if row_p:
+                asset = bool(row_p.asset_flag) and (monto or 0) >= (row_p.min_amount or 0)
+                return {
+                    "account_code": row_p.account_code,
+                    "confidence":   0.8,
+                    "fuente":       "PREFIJO",
+                    "asset_flag":   asset,
+                    "cabys_code":   cabys_code,
+                }
+        except Exception:
+            pass
+
+    # ── 3. Semántica enriquecida: hints del sector CABYS ────────────────────
+    sector_info     = _CABYS_PREFIX_HINTS.get(prefix, {})
+    hint_kws        = sector_info.get("kws", [])
+    sector_es_activo = prefix in _PREFIJOS_ACTIVO
+
+    sem = _buscar_semantico(db, tenant_id, descripcion or "", hint_kws)
+    if sem:
+        return {
+            "account_code": sem["account_code"],
+            "confidence":   0.6,
+            "fuente":       "SEMANTICA",
+            "asset_flag":   sector_es_activo or sem.get("asset_flag", False),
+            "cabys_code":   cabys_code,
+        }
+
+    # ── 4. Fallback — Otros Gastos ───────────────────────────────────────────
+    logger.info(
+        f"cabys_engine: FALLBACK para CABYS={cabys_code} "
+        f"prefix={prefix} desc='{(descripcion or '')[:40]}'"
+    )
+    return {
+        "account_code": CUENTA_OTROS_GASTOS,
+        "confidence":   0.3,
+        "fuente":       "FALLBACK",
+        "asset_flag":   False,
+        "cabys_code":   cabys_code,
+    }

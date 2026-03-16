@@ -46,7 +46,16 @@ _NAMESPACES = [
 def fetch_hacienda_xml(clave: str) -> Optional[str]:
     """
     Consulta la API pública de Hacienda y retorna el XML del comprobante.
-    Retorna None si falla (timeout, 404, error de red).
+
+    La API de Hacienda (api.hacienda.go.cr/fe/ae?clave=...) retorna JSON:
+      {
+        "ind-estado": "aceptado",
+        "comprobante": "<base64 del XML firmado>",   ← SIEMPRE base64
+        "respuesta-xml": "<base64 de la respuesta>",
+      }
+
+    Debemos decodificar base64 antes de pasar al parser XML.
+    Retorna None si falla (timeout, 404, error de red, base64 inválido).
     """
     if not clave or len(clave) < 49:
         return None
@@ -55,25 +64,50 @@ def fetch_hacienda_xml(clave: str) -> Optional[str]:
             HACIENDA_API_URL,
             params={"clave": clave},
             timeout=FETCH_TIMEOUT,
-            headers={"Accept": "application/xml, text/xml, */*"},
+            headers={"Accept": "application/json, application/xml, text/xml, */*"},
         )
-        if resp.status_code == 200:
-            # La API puede retornar JSON con campo 'xml' o el XML directamente
-            ct = resp.headers.get("content-type", "")
-            if "json" in ct:
-                data = resp.json()
-                return data.get("xml") or data.get("comprobante") or None
-            return resp.text
-        logger.warning(
-            f"⚠️ xml_extractor: Hacienda API {resp.status_code} para clave {clave[:20]}..."
-        )
-        return None
+        if resp.status_code != 200:
+            logger.warning(
+                f"⚠️ xml_extractor: Hacienda API {resp.status_code} para clave {clave[:20]}..."
+            )
+            return None
+
+        ct = resp.headers.get("content-type", "")
+
+        # ── Caso A: JSON (respuesta normal de la API de Hacienda) ─────────
+        if "json" in ct:
+            data = resp.json()
+
+            # Campo "comprobante" = XML del emisor (lo que necesitamos), en base64
+            b64_xml = data.get("comprobante") or data.get("xml") or None
+            if b64_xml:
+                # Siempre intentamos decodificar base64 primero
+                try:
+                    import base64
+                    xml_bytes = base64.b64decode(b64_xml)
+                    xml_str   = xml_bytes.decode("utf-8", errors="replace")
+                    # Verificación rápida: debe empezar con '<?xml' o '<'
+                    if xml_str.lstrip().startswith("<"):
+                        return xml_str
+                except Exception:
+                    pass
+                # Si el decode falla, puede ser que ya venga como XML plano
+                if b64_xml.lstrip().startswith("<"):
+                    return b64_xml
+
+            logger.warning(f"⚠️ xml_extractor: JSON sin 'comprobante' para {clave[:20]}...")
+            return None
+
+        # ── Caso B: XML directo en el body ────────────────────────────────
+        return resp.text
+
     except requests.Timeout:
         logger.warning(f"⚠️ xml_extractor: timeout para clave {clave[:20]}...")
         return None
     except Exception as ex:
         logger.warning(f"⚠️ xml_extractor: error fetch — {ex}")
         return None
+
 
 
 def _extract_ns(root) -> str:
