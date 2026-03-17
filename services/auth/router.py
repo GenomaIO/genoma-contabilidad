@@ -434,6 +434,12 @@ class SwitchTenantRequest(BaseModel):
     tenant_id: str            # UUID del tenant seleccionado
     nombre:    Optional[str] = None   # Nombre visual (necesario para partner_linked)
 
+    @field_validator("tenant_id", mode="before")
+    @classmethod
+    def coerce_tenant_id(cls, v) -> str:
+        """El Facturador puede enviar IDs numéricos (1002). Convertir a string."""
+        return str(v)
+
 
 @router.post("/switch-tenant")
 def switch_tenant(
