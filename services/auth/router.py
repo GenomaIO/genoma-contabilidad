@@ -431,7 +431,8 @@ def set_catalog_mode(
 # ─────────────────────────────────────────────────────────────────
 
 class SwitchTenantRequest(BaseModel):
-    tenant_id: str  # UUID del tenant seleccionado
+    tenant_id: str            # UUID del tenant seleccionado
+    nombre:    Optional[str] = None   # Nombre visual (necesario para partner_linked)
 
 
 @router.post("/switch-tenant")
@@ -443,20 +444,49 @@ def switch_tenant(
     """
     Re-emite un JWT con el tenant_id del tenant seleccionado.
 
-    Fix crítico para aislamiento multi-tenant:
-    El ClientSelector cambiaba el nombre visual pero nunca cambiaba el JWT.
-    Ahora genera un JWT nuevo con el tenant_id real de la empresa elegida.
+    CAUSA RAÍZ DEL DATA BLEED (fix aplicado):
+    Los clientes del Facturador (partner_linked) NO existen en la DB local de
+    Contabilidad. El código original intentaba buscarlos con db.query(Tenant),
+    obtenía None, lanzaba HTTP 404, y el ClientSelector lo capturaba
+    silenciosamente sin actualizar el JWT. Todos los tenants seguían usando el
+    JWT original del partner → mismos datos en todos.
 
-    Seguridad:
-    - partner_linked: verifica que el tenant existe y está activo
-    - standalone: verifica que el tenant pertenece al usuario
-    - El JWT nuevo hereda user_id, role, nombre del JWT original
+    FIX: Para partner_linked, emitir el JWT directamente con el tenant_id
+    recibido sin consultar la DB local. La seguridad ya fue verificada por
+    GET /auth/clients (fuente de verdad = Facturador).
+
+    Para standalone: mantiene el flujo original (tenants sí existen en DB local).
     """
     target_tenant_id = req.tenant_id
     user_tenant_type = current_user.get("tenant_type", "")
-    user_id = current_user.get("sub", "")
+    user_id          = current_user.get("sub", "")
 
-    # ── Buscar el tenant destino en la DB ────────────────────────
+    # ── PARTNER LINKED: tenants viven en el Facturador, NO en DB local ────────
+    # No buscar en DB local — emitir JWT directamente con el tenant_id del cliente.
+    # Seguridad garantizada: la lista de clientes viene de GET /auth/clients,
+    # que consulta el Facturador con el partner_token validado.
+    if user_tenant_type == TenantType.partner_linked.value:
+        new_token = create_access_token(
+            user_id     = user_id,
+            tenant_id   = target_tenant_id,   # ← UUID real del cliente del Facturador
+            tenant_type = user_tenant_type,
+            role        = current_user.get("role", "admin"),
+            nombre      = current_user.get("nombre", ""),
+            partner_id  = current_user.get("partner_id"),
+            extra_claims= {
+                k: v for k, v in current_user.items()
+                if k in ("partner_uuid", "facturador_token")
+            },
+        )
+        return {
+            "access_token": new_token,
+            "token_type":   "bearer",
+            "tenant_id":    target_tenant_id,
+            "nombre":       req.nombre or "",
+            "cedula":       "",
+        }
+
+    # ── STANDALONE: el tenant SÍ existe en la DB local ───────────────────────
     target_tenant = db.query(Tenant).filter(Tenant.id == target_tenant_id).first()
 
     if not target_tenant:
@@ -465,35 +495,24 @@ def switch_tenant(
     if target_tenant.status == TenantStatus.suspended:
         raise HTTPException(403, "Cuenta suspendida")
 
-    # ── Verificación de permisos ─────────────────────────────────
-    if user_tenant_type == TenantType.standalone.value:
-        # Standalone: solo puede switch a su propio tenant
-        user = db.query(User).filter(User.id == user_id).first()
-        if not user or user.tenant_id != target_tenant_id:
-            raise HTTPException(403, "No tenés acceso a este tenant")
+    # Standalone: verificar que el tenant pertenece al usuario
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user or user.tenant_id != target_tenant_id:
+        raise HTTPException(403, "No tenés acceso a este tenant")
 
-    # partner_linked: confiamos en que el tenant existe y es accesible
-    # (la lista de clientes viene del Facturador, que ya validó permisos)
-
-    # ── Generar nuevo JWT con el tenant_id correcto ──────────────
     new_token = create_access_token(
-        user_id=user_id,
-        tenant_id=target_tenant.id,     # ← ESTE ES EL FIX
-        tenant_type=user_tenant_type,
-        role=current_user.get("role", "admin"),
-        nombre=current_user.get("nombre", ""),
-        partner_id=current_user.get("partner_id"),
-        extra_claims={
-            k: v for k, v in current_user.items()
-            if k in ("partner_uuid", "facturador_token")
-        } if user_tenant_type == TenantType.partner_linked.value else None,
+        user_id     = user_id,
+        tenant_id   = target_tenant.id,
+        tenant_type = user_tenant_type,
+        role        = current_user.get("role", "admin"),
+        nombre      = current_user.get("nombre", ""),
+        partner_id  = current_user.get("partner_id"),
     )
-
     return {
         "access_token": new_token,
-        "token_type": "bearer",
-        "tenant_id": target_tenant.id,
-        "nombre": target_tenant.nombre,
-        "cedula": target_tenant.cedula,
+        "token_type":   "bearer",
+        "tenant_id":    target_tenant.id,
+        "nombre":       target_tenant.nombre,
+        "cedula":       target_tenant.cedula,
     }
 

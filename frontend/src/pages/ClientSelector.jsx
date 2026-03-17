@@ -53,7 +53,9 @@ export default function ClientSelector() {
                     'Content-Type': 'application/json',
                     Authorization: `Bearer ${token}`,
                 },
-                body: JSON.stringify({ tenant_id: client.tenant_id }),
+                // Incluir nombre para que el backend lo devuelva en partner_linked
+                // (no tiene acceso a la DB local para resolverlo)
+                body: JSON.stringify({ tenant_id: client.tenant_id, nombre: client.nombre }),
             })
 
             if (switchRes.ok) {
