@@ -740,7 +740,7 @@ def purge_cross_tenant_bleed(
                 f"FROM journal_entries je "
                 f"WHERE je.tenant_id = :tid "
                 f"  AND je.status = 'DRAFT' "
-                f"  AND je.source IN ({src_ph})"
+                f"  AND CAST(je.source AS TEXT) IN ({src_ph})"
             ),
             {"tid": tenant_id, **src_p}
         ).fetchall()

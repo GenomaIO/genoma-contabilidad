@@ -212,10 +212,26 @@ else:
             tid    = str(client.get("tenant_id", ""))
             nombre = client.get("nombre", "Sin nombre")
             # emisor_id = cédula real del cliente en el Facturador
-            # (partner_linked: tenants no existen en DB local → override necesario)
+            # ── Resolver cédula del cliente ─────────────────────────────────────
+            # 1) emisor_id del Facturador (fuente de verdad, suele ser null en esta API)
+            # 2) Regex sobre el nombre (ej: "3-101-953441 SOCIEDAD ANONIMA" → 3101953441)
+            # 3) Mapeo conocido hardcodeado (fallback final para GC-RNHJ)
+            CEDULAS_CONOCIDAS = {
+                "1001": "202830516",   # Álvaro González Alfaro
+                "1002": "603170547",   # Angélica Li Wong
+                "1003": "3101953441",  # 3-101-953441 Sociedad Anónima
+            }
             cedula = str(client.get("emisor_id") or client.get("cedula") or "")
+            if not cedula:
+                # Intentar extraer del nombre (ej: "3-101-953441 SOCIEDAD ANONIMA")
+                import re as _re
+                m = _re.search(r'(\d[\d-]{7,11}\d)', nombre)
+                if m:
+                    cedula = m.group(1).replace("-", "")
+            if not cedula:
+                cedula = CEDULAS_CONOCIDAS.get(tid, "")
 
-            print(f"\n     🔍 Analizando: {nombre}" + (f" (cédula: {cedula})" if cedula else ""))
+            print(f"\n     🔍 Analizando: {nombre}" + (f" (cédula: {cedula})" if cedula else " ⚠️ sin cédula"))
             result = _purge_tenant(tid, nombre, GC_TOKEN, confirm=False, cedula=cedula)
 
             if result is None:
