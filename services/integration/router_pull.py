@@ -582,3 +582,312 @@ def purge_bad_drafts(
             f"(Gasto + CxP + IVA Credito). El ICE Telecomunicaciones tambien estara disponible."
         ),
     }
+
+# ─────────────────────────────────────────────────────────────────
+# POST /integration/purge-cross-tenant-bleed
+# ─────────────────────────────────────────────────────────────────
+# INGENIERÍA INVERSA: Detecta y elimina datos de otro tenant que
+# "sangraron" dentro del tenant activo por el bug pre-switch-tenant.
+#
+# CAUSA RAÍZ (documentada):
+#   Antes de POST /auth/switch-tenant, el JWT nunca se actualizaba
+#   al seleccionar un cliente. Todos los import-batch usaban el
+#   tenant_id del partner (GC-RNHJ) o del primer cliente abierto.
+#   Resultado: asientos de Álvaro quedaron bajo Angélica/SA/GC-RNHJ.
+#
+# DETECCIÓN POR CÉDULA (ingeniería inversa):
+#   La clave Hacienda (source_ref, 50 dígitos) embebe la cédula del
+#   EMISOR en posiciones 3-12 (10 dígitos). Comparando esa cédula
+#   contra la cédula del tenant actual detectamos la contaminación.
+#
+#   Para docs RECIBIDOS (compras), la cédula del receptor está en
+#   source_doc_lines JSONB como "receptor_cedula" y se compara también.
+#
+# MURO POST-PURGE:
+#   El guard _filtrar_docs_por_cedula en pull-enviados y pull-recibidos
+#   ya impide que futuros import-batch acepten docs de otro tenant.
+#   Este endpoint limpia el pasado; ese guard protege el futuro.
+#
+# SEGURIDAD:
+#   - Requiere ENABLE_PURGE_UTILITY=1 en el entorno
+#   - confirm=False → dry-run (solo lectura, 100% seguro)
+#   - confirm=True  → borrado real irreversible
+#   - Solo borra DRAFT — nunca POSTED
+#   - tenant_id siempre del JWT, nunca del body
+# ─────────────────────────────────────────────────────────────────
+
+import json as _json
+
+
+def _extract_cedula_from_clave(clave: str) -> str:
+    """
+    Extrae la cédula del EMISOR embebida en la clave Hacienda.
+    Formato Hacienda v4.4 (50 dígitos numéricos):
+      [0-2]   : código país (506)
+      [3-12]  : cédula emisor (10 dígitos, sin guiones)
+      [13-20] : fecha YYYYMMDD
+      [21+]   : resto de la clave
+    Retorna string vacío si la clave no cumple el formato.
+    VALIDACIÓN: debe ser 100% numérica y >= 50 caracteres.
+    Strings arbitrarios (source_refs alfanuméricos) retornan vacío,
+    dejando la detección a la Estrategia B (JSONB receptor_cedula).
+    """
+    if not clave or len(clave) < 50 or not clave.isdigit():
+        return ""
+    return clave[3:13].lstrip("0")  # strip leading zeros para comparación
+
+
+def _cedulas_coinciden(cedula_a: str, cedula_b: str) -> bool:
+    """Compara cédulas normalizando ceros y guiones."""
+    def _norm(c: str) -> str:
+        return (c or "").replace("-", "").replace(" ", "").lstrip("0")
+    return _norm(cedula_a) == _norm(cedula_b)
+
+
+class PurgeCrossTenantRequest(BaseModel):
+    confirm:      bool      = False   # False = dry-run (seguro), True = borrado real
+    source_types: list[str] = ["HACIENDA_PULL", "hacienda_pull", "AUTO"]
+    entry_ids:    list[str] = []      # vacío = detección automática
+
+
+@router.post("/purge-cross-tenant-bleed")
+def purge_cross_tenant_bleed(
+    payload:      PurgeCrossTenantRequest,
+    db:           Session = Depends(get_session),
+    current_user: dict    = Depends(get_current_user),
+):
+    """
+    Detecta y purga asientos que "sangraron" al tenant activo desde
+    otro cliente, por el bug pre-switch-tenant.
+
+    Paso 1 — Detección:
+      Para cada DRAFT importado del Facturador, extrae la cédula del
+      emisor de la clave Hacienda (source_ref[3:13]) y la compara con
+      la cédula del tenant. Para docs recibidos también revisa
+      source_doc_lines JSONB → receptor_cedula.
+      Si NO coincide → el asiento es contaminación de otro cliente.
+
+    Paso 2 — Dry-run (confirm=False, DEFAULT):
+      Retorna la lista de contaminados SIN borrar nada.
+
+    Paso 3 — Borrado real (confirm=True):
+      Borra journal_lines + journal_entries contaminados (solo DRAFT).
+      Libera sus source_refs para que el tenant correcto los importe.
+
+    Muro post-purge:
+      El guard _filtrar_docs_por_cedula ya impide nuevas importaciones
+      cruzadas. Este endpoint limpia el PASADO; ese guard protege el FUTURO.
+
+    Requiere ENABLE_PURGE_UTILITY=1 en el entorno del servidor.
+    """
+    import os as _os
+    if _os.getenv("ENABLE_PURGE_UTILITY", "") != "1":
+        raise HTTPException(
+            503,
+            "Utilidad de purge deshabilitada. "
+            "El administrador debe habilitar ENABLE_PURGE_UTILITY=1 en el entorno. "
+            "Esta herramienta es de uso excepcional — solo durante la migración puntual."
+        )
+
+    if current_user.get("role") not in ("admin", "contador"):
+        raise HTTPException(403, "Solo admin o contador puede ejecutar purge-cross-tenant-bleed")
+
+    tenant_id = current_user["tenant_id"]
+
+    # 1. Cédula del tenant activo (fuente de verdad)
+    tenant_cedula = _get_tenant_cedula(db, tenant_id)
+    if not tenant_cedula:
+        raise HTTPException(
+            400,
+            f"No se encontró la cédula fiscal del tenant {tenant_id[:8]}... "
+            "El tenant debe tener su cédula configurada para ejecutar el purge."
+        )
+
+    logger.info(
+        f"purge-bleed: iniciando para tenant={tenant_id[:8]} "
+        f"cedula={tenant_cedula} confirm={payload.confirm}"
+    )
+
+    # 2. Identificar candidatos a revisar
+    if payload.entry_ids:
+        # Modo explícito: IDs dados por el operador
+        ids_list = list(set(payload.entry_ids))
+        placeholders = ",".join([f":id{i}" for i in range(len(ids_list))])
+        id_params = {f"id{i}": v for i, v in enumerate(ids_list)}
+        candidate_rows = db.execute(
+            text(
+                f"SELECT je.id, je.status, je.source_ref, je.description, je.source_doc_lines "
+                f"FROM journal_entries je "
+                f"WHERE je.tenant_id = :tid "
+                f"  AND je.status IN ('DRAFT', 'draft') "
+                f"  AND je.id IN ({placeholders})"
+            ),
+            {"tid": tenant_id, **id_params}
+        ).fetchall()
+    else:
+        # Modo automático: todos los DRAFTs importados del Facturador
+        sources = list(set(payload.source_types))
+        src_ph  = ",".join([f":s{i}" for i in range(len(sources))])
+        src_p   = {f"s{i}": v for i, v in enumerate(sources)}
+        candidate_rows = db.execute(
+            text(
+                f"SELECT je.id, je.status, je.source_ref, je.description, je.source_doc_lines "
+                f"FROM journal_entries je "
+                f"WHERE je.tenant_id = :tid "
+                f"  AND je.status IN ('DRAFT', 'draft') "
+                f"  AND je.source IN ({src_ph})"
+            ),
+            {"tid": tenant_id, **src_p}
+        ).fetchall()
+
+    if not candidate_rows:
+        return {
+            "ok":                    True,
+            "tenant_id":             tenant_id,
+            "cedula_tenant":         tenant_cedula,
+            "confirmado":            payload.confirm,
+            "contaminados":          [],
+            "borrados":              0,
+            "source_refs_liberados": [],
+            "mensaje":               "✅ No se encontraron DRAFTs importados — tenant limpio.",
+        }
+
+    # 3. Detectar contaminación por cédula
+    contaminados = []
+
+    for row in candidate_rows:
+        entry_id, status, source_ref, description, source_doc_lines_raw = row
+
+        cedula_detectada = None
+        motivo_deteccion = None
+
+        # ── Estrategia A: cédula del EMISOR en la clave Hacienda (source_ref) ──
+        if source_ref:
+            cedula_en_clave = _extract_cedula_from_clave(source_ref)
+            if cedula_en_clave and not _cedulas_coinciden(cedula_en_clave, tenant_cedula):
+                cedula_detectada = cedula_en_clave
+                motivo_deteccion = "emisor_en_clave_hacienda"
+
+        # ── Estrategia B: receptor_cedula en source_doc_lines JSONB (recibidos) ──
+        if not cedula_detectada and source_doc_lines_raw:
+            try:
+                sdl = (
+                    _json.loads(source_doc_lines_raw)
+                    if isinstance(source_doc_lines_raw, str)
+                    else source_doc_lines_raw
+                )
+                items = sdl if isinstance(sdl, list) else [sdl]
+                for item in items:
+                    receptor = item.get("receptor_cedula", "")
+                    if receptor and not _cedulas_coinciden(receptor, tenant_cedula):
+                        cedula_detectada = receptor
+                        motivo_deteccion = "receptor_cedula_en_source_doc_lines"
+                        break
+            except Exception as ex:
+                logger.warning(f"⚠️ purge-bleed: error parseando source_doc_lines {entry_id[:8]}: {ex}")
+
+        if cedula_detectada:
+            contaminados.append({
+                "entry_id":         entry_id,
+                "description":      (description or "")[:80],
+                "source_ref":       source_ref,
+                "cedula_detectada": cedula_detectada,
+                "cedula_tenant":    tenant_cedula,
+                "motivo":           motivo_deteccion,
+            })
+            logger.warning(
+                f"🩸 purge-bleed: contaminación — entry={entry_id[:8]} "
+                f"cedula_doc={cedula_detectada} != cedula_tenant={tenant_cedula} "
+                f"motivo={motivo_deteccion}"
+            )
+
+    # 4. DRY-RUN — solo diagnóstico, sin borrar
+    if not payload.confirm:
+        return {
+            "ok":                  True,
+            "tenant_id":           tenant_id,
+            "cedula_tenant":       tenant_cedula,
+            "confirmado":          False,
+            "modo":                "DRY_RUN",
+            "total_revisados":     len(candidate_rows),
+            "total_contaminados":  len(contaminados),
+            "contaminados":        contaminados,
+            "borrados":            0,
+            "source_refs_liberados": [],
+            "mensaje": (
+                f"🔍 DRY-RUN: {len(contaminados)} asiento(s) contaminado(s) de {len(candidate_rows)} revisados. "
+                f"Llamá con confirm=true para borrar."
+                if contaminados
+                else f"✅ DRY-RUN: {len(candidate_rows)} asiento(s) revisados — tenant limpio."
+            ),
+        }
+
+    # 5. BORRADO REAL (confirm=True)
+    if not contaminados:
+        return {
+            "ok":                    True,
+            "tenant_id":             tenant_id,
+            "cedula_tenant":         tenant_cedula,
+            "confirmado":            True,
+            "modo":                  "PURGE_REAL",
+            "contaminados":          [],
+            "borrados":              0,
+            "source_refs_liberados": [],
+            "mensaje":               "✅ Tenant limpio — no había asientos contaminados.",
+        }
+
+    # Sanity check: solo borrar DRAFTs
+    ids_a_borrar  = [c["entry_id"] for c in contaminados]
+    ph2           = ",".join([f":bid{i}" for i in range(len(ids_a_borrar))])
+    bp2           = {f"bid{i}": v for i, v in enumerate(ids_a_borrar)}
+    verificadas   = db.execute(
+        text(f"SELECT id, status FROM journal_entries WHERE tenant_id = :tid AND id IN ({ph2})"),
+        {"tid": tenant_id, **bp2}
+    ).fetchall()
+
+    no_draft = [e[0] for e in verificadas if e[1] not in ("DRAFT", "draft")]
+    if no_draft:
+        raise HTTPException(
+            400,
+            f"Los asientos {no_draft} NO son DRAFT — no se pueden borrar aquí. "
+            "Para POSTED usá PATCH /ledger/entries/{id}/void."
+        )
+
+    source_refs_liberados = []
+    borrados = 0
+
+    for contam in contaminados:
+        eid        = contam["entry_id"]
+        source_ref = contam.get("source_ref")
+
+        db.execute(text("DELETE FROM journal_lines WHERE entry_id = :eid"), {"eid": eid})
+        db.execute(
+            text("DELETE FROM journal_entries WHERE id = :eid AND tenant_id = :tid"),
+            {"eid": eid, "tid": tenant_id}
+        )
+        if source_ref:
+            source_refs_liberados.append(source_ref)
+
+        logger.info(
+            f"purge-bleed: BORRADO entry={eid[:8]} "
+            f"cedula_doc={contam['cedula_detectada']} source_ref={source_ref}"
+        )
+        borrados += 1
+
+    db.commit()
+
+    return {
+        "ok":                    True,
+        "tenant_id":             tenant_id,
+        "cedula_tenant":         tenant_cedula,
+        "confirmado":            True,
+        "modo":                  "PURGE_REAL",
+        "contaminados":          contaminados,
+        "borrados":              borrados,
+        "source_refs_liberados": source_refs_liberados,
+        "mensaje": (
+            f"✅ Purge completado: {borrados} asiento(s) eliminado(s) de otro tenant. "
+            f"El tenant {tenant_id[:8]}... ahora solo tiene sus propios datos. "
+            f"🧱 El muro anti-bleed (filtro de cédula en import-batch) impide que esto vuelva a ocurrir."
+        ),
+    }
