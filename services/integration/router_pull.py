@@ -86,6 +86,45 @@ def _validate_tenant_docs(docs: list, tenant_id: str) -> list:
     return [d for d in docs if d.get("tenant_id", tenant_id) == tenant_id]
 
 
+def _get_tenant_cedula(db, tenant_id: str) -> str | None:
+    """
+    Obtiene la cédula fiscal del tenant contable.
+    Usada para filtrar docs por receptor_cedula (recibidos) o emisor_cedula (enviados).
+    Regla de Oro: cada tenant es una casa aparte — solo ve sus docs.
+    """
+    try:
+        row = db.execute(text("""
+            SELECT cedula FROM tenants WHERE id = :tid LIMIT 1
+        """), {"tid": tenant_id}).fetchone()
+        return row[0] if row else None
+    except Exception as ex:
+        logger.warning(f"⚠️ _get_tenant_cedula: error para {tenant_id[:8]}: {ex}")
+        return None
+
+
+def _filtrar_docs_por_cedula(
+    docs: list,
+    tenant_cedula: str,
+    campo: str,
+) -> list:
+    """
+    Filtra documentos cuyo campo (receptor_cedula o emisor_cedula)
+    coincida con la cédula del tenant contable.
+    Guard de aislamiento multi-tenant.
+    """
+    if not tenant_cedula:
+        logger.warning("⚠️ _filtrar_docs: sin cédula del tenant — retornando 0 docs por seguridad")
+        return []
+    antes = len(docs)
+    filtrados = [d for d in docs if d.get(campo) == tenant_cedula]
+    if antes != len(filtrados):
+        logger.info(
+            f"🔒 Aislamiento: {antes} docs del Facturador → {len(filtrados)} pertenecen "
+            f"al tenant (cédula={tenant_cedula}, campo={campo})"
+        )
+    return filtrados
+
+
 def _process_import_batch(
     db,
     docs: list,
@@ -251,6 +290,10 @@ def get_pull_enviados(
 
     docs = result.get("items", [])
 
+    # ── Aislamiento multi-tenant: solo docs donde emisor = tenant ──────
+    tenant_cedula = _get_tenant_cedula(db, jwt_tenant_id)
+    docs = _filtrar_docs_por_cedula(docs, tenant_cedula, "emisor_cedula")
+
     for doc in docs:
         doc["ya_importado"] = _is_already_imported(db, jwt_tenant_id, doc.get("clave", ""))
 
@@ -315,6 +358,10 @@ def get_pull_recibidos(
             f"clave={str(d.get('clave',''))[:20]}..."
         )
 
+    # ── Aislamiento multi-tenant: solo docs donde receptor = tenant ─────
+    tenant_cedula = _get_tenant_cedula(db, jwt_tenant_id)
+    docs = _filtrar_docs_por_cedula(docs, tenant_cedula, "receptor_cedula")
+
     for doc in docs:
         doc["ya_importado"] = _is_already_imported(db, jwt_tenant_id, doc.get("clave", ""))
 
@@ -354,11 +401,16 @@ def post_import_batch(
     tenant_id  = current_user["tenant_id"]
     es_recibido = payload.tipo_batch == "recibidos"
 
-    # Guard cross-tenant
+    # Guard cross-tenant: solo docs que el frontend seleccionó
     docs_filtrados = [
         d for d in payload.docs_data
         if d.get("clave") in payload.doc_ids
     ]
+
+    # ── Aislamiento multi-tenant: verificar cédula antes de importar ──
+    tenant_cedula = _get_tenant_cedula(db, tenant_id)
+    campo_cedula = "receptor_cedula" if es_recibido else "emisor_cedula"
+    docs_filtrados = _filtrar_docs_por_cedula(docs_filtrados, tenant_cedula, campo_cedula)
 
     # ── Normalizar tipo para recibidos ─────────────────────────────
     # El Facturador retorna el tipo_doc ORIGINAL de Hacienda (ej: "01").
