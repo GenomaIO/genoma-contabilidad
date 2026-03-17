@@ -1258,6 +1258,95 @@ def trigger_iva_diferido_check(secret: str, auto_post: bool = False):
         raise _HE(500, str(exc))
 
 
+# ── Job temporal: Reasignación de tenant GC-RNHJ → 1001 ─────────────────────
+# POST /jobs/reassign-tenant?secret=REASSIGN_SECRET&from_tid=GC-RNHJ&to_tid=1001
+# ELIMINAR después de ejecutar en producción. Uso único.
+@app.post("/jobs/reassign-tenant")
+def reassign_tenant_data(
+    secret: str,
+    from_tid: str = "GC-RNHJ",
+    to_tid:   str = "1001",
+):
+    """
+    Reasigna TODOS los registros de from_tid → to_tid en tablas contables.
+    Protegido por secret. Idempotente — si ya corrió, rowcount = 0.
+    """
+    if secret != os.getenv("REASSIGN_SECRET", "genoma-reassign-gcrnhj-2026"):
+        from fastapi import HTTPException as _HE
+        raise _HE(403, "Clave secreta inválida")
+    if not _engine:
+        from fastapi import HTTPException as _HE
+        raise _HE(503, "Base de datos no disponible")
+
+    results = {}
+    try:
+        with _engine.begin() as conn:
+            # 1. accounts (catálogo)
+            r = conn.execute(text(
+                "UPDATE accounts SET tenant_id=:to WHERE tenant_id=:from"
+            ), {"to": to_tid, "from": from_tid})
+            results["accounts"] = r.rowcount
+
+            # 2. journal_entries (cabeceras)
+            r = conn.execute(text(
+                "UPDATE journal_entries SET tenant_id=:to WHERE tenant_id=:from"
+            ), {"to": to_tid, "from": from_tid})
+            results["journal_entries"] = r.rowcount
+
+            # 3. journal_lines (líneas — FK a journal_entries)
+            r = conn.execute(text(
+                "UPDATE journal_lines SET tenant_id=:to WHERE tenant_id=:from"
+            ), {"to": to_tid, "from": from_tid})
+            results["journal_lines"] = r.rowcount
+
+            # 4. period_locks
+            r = conn.execute(text(
+                "UPDATE period_locks SET tenant_id=:to WHERE tenant_id=:from"
+            ), {"to": to_tid, "from": from_tid})
+            results["period_locks"] = r.rowcount
+
+            # 5. import_batch
+            r = conn.execute(text(
+                "UPDATE import_batch SET tenant_id=:to WHERE tenant_id=:from"
+            ), {"to": to_tid, "from": from_tid})
+            results["import_batch"] = r.rowcount
+
+            # 6. cabys_account_rules
+            r = conn.execute(text(
+                "UPDATE cabys_account_rules SET tenant_id=:to WHERE tenant_id=:from"
+            ), {"to": to_tid, "from": from_tid})
+            results["cabys_account_rules"] = r.rowcount
+
+            # 7. niif_mappings (si existe)
+            try:
+                r = conn.execute(text(
+                    "UPDATE niif_mappings SET tenant_id=:to WHERE tenant_id=:from"
+                ), {"to": to_tid, "from": from_tid})
+                results["niif_mappings"] = r.rowcount
+            except Exception:
+                results["niif_mappings"] = "tabla no existe"
+
+        total = sum(v for v in results.values() if isinstance(v, int))
+        logger.info(
+            f"✅ reassign-tenant: {from_tid} → {to_tid} | "
+            f"total={total} filas | {results}"
+        )
+        return {
+            "ok": True,
+            "from_tid": from_tid,
+            "to_tid": to_tid,
+            "total_filas_reasignadas": total,
+            "detalle": results,
+            "message": (
+                f"Datos reasignados de '{from_tid}' → '{to_tid}'. "
+                "Elimina este endpoint del código cuando confirmes."
+            ),
+        }
+    except Exception as exc:
+        from fastapi import HTTPException as _HE
+        raise _HE(500, f"Error en reasignación: {exc}")
+
+
 # ── Servir React SPA (debe ir AL FINAL) ────────────────────────
 FRONTEND_DIST = Path(__file__).parent.parent.parent / "frontend" / "dist"
 
