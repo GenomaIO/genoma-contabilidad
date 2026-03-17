@@ -114,7 +114,7 @@ def decode_jwt(token: str) -> dict:
         return {}
 
 
-def _purge_tenant(tenant_id: str, nombre: str, token: str, confirm: bool) -> dict | None:
+def _purge_tenant(tenant_id: str, nombre: str, token: str, confirm: bool, cedula: str = "") -> dict | None:
     """Ejecuta dry-run o purge real para un tenant dado su JWT de switch."""
     # Primero hacer switch para tener JWT con el tenant_id correcto
     st_sw, body_sw = http_post(
@@ -132,9 +132,17 @@ def _purge_tenant(tenant_id: str, nombre: str, token: str, confirm: bool) -> dic
         return None
 
     # Ejecutar purge (dry-run o real)
+    # cedula_tenant = override para partner_linked (no existen en DB local de tenants)
+    payload = {
+        "confirm": confirm,
+        "source_types": ["HACIENDA_PULL", "hacienda_pull", "AUTO"],
+    }
+    if cedula:
+        payload["cedula_tenant"] = cedula
+
     st_p, body_p = http_post(
         "/integration/purge-cross-tenant-bleed",
-        {"confirm": confirm, "source_types": ["HACIENDA_PULL", "hacienda_pull", "AUTO"]},
+        payload,
         tenant_token
     )
     return {"status": st_p, "body": body_p, "nombre": nombre, "tenant_id": tenant_id}
@@ -203,9 +211,12 @@ else:
         for client in clients:
             tid    = str(client.get("tenant_id", ""))
             nombre = client.get("nombre", "Sin nombre")
+            # emisor_id = cédula real del cliente en el Facturador
+            # (partner_linked: tenants no existen en DB local → override necesario)
+            cedula = str(client.get("emisor_id") or client.get("cedula") or "")
 
-            print(f"\n     🔍 Analizando: {nombre}")
-            result = _purge_tenant(tid, nombre, GC_TOKEN, confirm=False)
+            print(f"\n     🔍 Analizando: {nombre}" + (f" (cédula: {cedula})" if cedula else ""))
+            result = _purge_tenant(tid, nombre, GC_TOKEN, confirm=False, cedula=cedula)
 
             if result is None:
                 print(f"        ❌ No se pudo hacer diagnóstico")
@@ -280,9 +291,10 @@ else:
     for client in clients2:
         tid    = str(client.get("tenant_id", ""))
         nombre = client.get("nombre", "Sin nombre")
+        cedula = str(client.get("emisor_id") or client.get("cedula") or "")
 
-        print(f"\n     🗑️  Purgando: {nombre}")
-        result = _purge_tenant(tid, nombre, GC_TOKEN, confirm=True)
+        print(f"\n     🗑️  Purgando: {nombre}" + (f" (cédula: {cedula})" if cedula else ""))
+        result = _purge_tenant(tid, nombre, GC_TOKEN, confirm=True, cedula=cedula)
 
         if result is None:
             errors.append(f"E4 — {nombre}: no se pudo hacer switch-tenant")

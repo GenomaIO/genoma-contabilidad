@@ -645,9 +645,10 @@ def _cedulas_coinciden(cedula_a: str, cedula_b: str) -> bool:
 
 
 class PurgeCrossTenantRequest(BaseModel):
-    confirm:      bool      = False   # False = dry-run (seguro), True = borrado real
-    source_types: list[str] = ["HACIENDA_PULL", "hacienda_pull", "AUTO"]
-    entry_ids:    list[str] = []      # vacío = detección automática
+    confirm:       bool      = False   # False = dry-run (seguro), True = borrado real
+    source_types:  list[str] = ["HACIENDA_PULL", "hacienda_pull", "AUTO"]
+    entry_ids:     list[str] = []      # vacío = detección automática
+    cedula_tenant: str       = ""      # Override: cédula real del tenant (para partner_linked)
 
 
 @router.post("/purge-cross-tenant-bleed")
@@ -695,12 +696,16 @@ def purge_cross_tenant_bleed(
     tenant_id = current_user["tenant_id"]
 
     # 1. Cédula del tenant activo (fuente de verdad)
-    tenant_cedula = _get_tenant_cedula(db, tenant_id)
+    # Para partner_linked, los clientes no existen en la DB local → se acepta
+    # cedula_tenant como override enviada por el caller (viene del emisor_id del Facturador).
+    tenant_cedula = payload.cedula_tenant.strip() if payload.cedula_tenant else None
+    if not tenant_cedula:
+        tenant_cedula = _get_tenant_cedula(db, tenant_id)
     if not tenant_cedula:
         raise HTTPException(
             400,
             f"No se encontró la cédula fiscal del tenant {tenant_id[:8]}... "
-            "El tenant debe tener su cédula configurada para ejecutar el purge."
+            "Para cuentas partner_linked, pasar cedula_tenant en el payload."
         )
 
     logger.info(
