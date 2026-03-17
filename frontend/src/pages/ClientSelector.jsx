@@ -41,8 +41,48 @@ export default function ClientSelector() {
             })
     }, [])
 
-    // Al seleccionar una empresa — guarda contexto y dispara auto-pull en background
-    function selectClient(client) {
+    // Al seleccionar una empresa — obtiene JWT actualizado y dispara auto-pull
+    async function selectClient(client) {
+        // ── FIX CRÍTICO: Re-emitir JWT con el tenant_id real ────────
+        // Sin esto, el frontend cambia el nombre visual pero el backend
+        // siempre ve el mismo tenant_id del JWT original del partner.
+        try {
+            const switchRes = await fetch(`${apiUrl}/auth/switch-tenant`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${token}`,
+                },
+                body: JSON.stringify({ tenant_id: client.tenant_id }),
+            })
+
+            if (switchRes.ok) {
+                const switchData = await switchRes.json()
+                // Guardar el NUEVO JWT con el tenant_id correcto
+                localStorage.setItem('gc_token', switchData.access_token)
+
+                // Actualizar el user en el state con el nuevo tenant_id
+                const payload = JSON.parse(atob(switchData.access_token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')))
+                dispatch({
+                    type: 'SET_USER',
+                    payload: {
+                        user_id: payload.sub,
+                        nombre: payload.nombre,
+                        tenant_id: payload.tenant_id,
+                        tenant_type: payload.tenant_type,
+                        role: payload.role,
+                        partner_id: payload.partner_id || null,
+                    }
+                })
+            }
+            // Si falla, continuamos con el token original (degradación graceful)
+        } catch {
+            // Fail gracefully — usamos token original
+        }
+
+        // Token actualizado (o el original si falló)
+        const activeToken = localStorage.getItem('gc_token')
+
         dispatch({
             type: 'SET_TENANT',
             payload: {
@@ -56,18 +96,16 @@ export default function ClientSelector() {
         })
 
         // Auto-pull completo: pull → filter nuevos → import-batch (crea asientos borrador)
-        // client.tenant_id FRESCO de la API — sin depender de state.tenant
-        // Fire-and-forget en IIFE async: navigate('/') corre inmediatamente
+        // Usa el token ACTUALIZADO para que el backend use el tenant_id correcto
         if (client.origen === 'facturador' && client.tenant_id) {
             const now = new Date()
             const period = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`
             const ftid = encodeURIComponent(client.tenant_id)
             const base = `${apiUrl}/integration`
-            const hdrs = { Authorization: `Bearer ${token}` }
+            const hdrs = { Authorization: `Bearer ${activeToken}` }
 
                 ; (async () => {
                     try {
-                        // Paso 1: Pull enviados + recibidos en paralelo
                         const [envRes, recRes] = await Promise.all([
                             fetch(`${base}/pull-enviados?period=${period}&import_all=true&facturador_tenant_id=${ftid}`, { headers: hdrs }),
                             fetch(`${base}/pull-recibidos?period=${period}&import_all=true&facturador_tenant_id=${ftid}`, { headers: hdrs }),
@@ -80,9 +118,6 @@ export default function ClientSelector() {
 
                         if (docsEnviados.length === 0 && docsRecibidos.length === 0) return
 
-                        // Paso 2: import-batch SEPARADO por tipo — técnica contable correcta
-                        // tipo_batch='enviados'  → INGRESO: CxC / 4xxx / IVA Débito
-                        // tipo_batch='recibidos' → EGRESO:  5xxx / IVA Crédito / CxP
                         const calls = []
                         if (docsEnviados.length > 0) {
                             calls.push(fetch(`${base}/import-batch`, {
@@ -117,6 +152,7 @@ export default function ClientSelector() {
 
         navigate('/')
     }
+
 
     // Crear nueva empresa (solo standalone)
     async function createCompany(e) {
