@@ -832,6 +832,56 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning(f"⚠️  M_CLEAN_SEEDED_ACCOUNTS omitida: {e}")
 
+        # ── Migración M_PURGE_TENANTS: limpia datos contables cruzados ────
+        # Fix multi-tenant: los datos de Álvaro (202830516) se importaron
+        # bajo los tenants de Angélica (603170547) y la SA (3101953441)
+        # por el bug de falta de filtro por cédula en router_pull.py.
+        # Esta migración borra SOLO journal_lines, journal_entries e import_batch
+        # de esos 2 tenants. NO toca: tenants, accounts, users, fiscal_profiles.
+        # Idempotente: si ya corrió y no hay datos, no hace nada.
+        try:
+            with _engine.begin() as conn:
+                _purge_cedulas = ["603170547", "3101953441"]
+                _purge_tids = []
+                for _ced in _purge_cedulas:
+                    _row = conn.execute(text(
+                        "SELECT id FROM tenants WHERE cedula = :ced LIMIT 1"
+                    ), {"ced": _ced}).fetchone()
+                    if _row:
+                        _purge_tids.append(_row[0])
+
+                if _purge_tids:
+                    # Contar antes de borrar (auditoría)
+                    for _tbl in ["journal_lines", "journal_entries", "import_batch"]:
+                        _ph = ", ".join([f":t{i}" for i in range(len(_purge_tids))])
+                        _pm = {f"t{i}": t for i, t in enumerate(_purge_tids)}
+                        try:
+                            _cnt = conn.execute(text(
+                                f"SELECT COUNT(*) FROM {_tbl} WHERE tenant_id IN ({_ph})"
+                            ), _pm).fetchone()
+                            _n = _cnt[0] if _cnt else 0
+                            if _n > 0:
+                                logger.info(f"  🔴 M_PURGE: {_tbl} → {_n} filas a borrar")
+                        except Exception:
+                            pass
+
+                    # Borrar en orden FK: lines → entries → batch
+                    _ph = ", ".join([f":t{i}" for i in range(len(_purge_tids))])
+                    _pm = {f"t{i}": t for i, t in enumerate(_purge_tids)}
+                    for _tbl in ["journal_lines", "journal_entries", "import_batch"]:
+                        try:
+                            _res = conn.execute(text(
+                                f"DELETE FROM {_tbl} WHERE tenant_id IN ({_ph})"
+                            ), _pm)
+                            _del = _res.rowcount or 0
+                            if _del > 0:
+                                logger.info(f"  ✅ M_PURGE: {_tbl} → {_del} filas borradas")
+                        except Exception as _ex:
+                            logger.warning(f"  ⚠️  M_PURGE: {_tbl} → {_ex}")
+
+            logger.info("✅ Migración M_PURGE_TENANTS: datos cruzados purgados de Angélica y SA")
+        except Exception as e:
+            logger.warning(f"⚠️  Migración M_PURGE_TENANTS omitida: {e}")
 
     # ── Auto-reseed: siembra catálogo estándar SOLO a tenants sin cuentas ──
     # REGLA DE ORO: NO se toca ningún tenant que ya tenga su propio catálogo.

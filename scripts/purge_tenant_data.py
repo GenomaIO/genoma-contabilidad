@@ -78,7 +78,11 @@ def get_db_connection():
         if db_url.startswith("postgres://"):
             db_url = db_url.replace("postgres://", "postgresql://", 1)
 
-        engine = create_engine(db_url, echo=False)
+        engine = create_engine(
+            db_url,
+            echo=False,
+            connect_args={"sslmode": "require"},
+        )
         return engine, text
     except ImportError:
         logger.error("❌ SQLAlchemy no instalado. Ejecutá: pip install sqlalchemy psycopg2-binary")
