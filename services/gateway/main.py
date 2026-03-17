@@ -883,7 +883,56 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning(f"⚠️  Migración M_PURGE_TENANTS omitida: {e}")
 
-    # ── Auto-reseed: siembra catálogo estándar SOLO a tenants sin cuentas ──
+        # ── Migración M_REASSIGN_GCRNHJ: datos de Álvaro salvados del tenant fantasma ──
+        # Bug del JWT: antes del fix switch-tenant, el partner_handoff generaba
+        # JWTs con tenant_id="GC-RNHJ" (el código del contador, no un tenant real).
+        # Todo lo creado manualmente (catálogo, asiento apertura, asientos de febrero)
+        # quedó bajo GC-RNHJ en lugar de bajo 1001 (Álvaro González Alfaro).
+        # Esta migración mueve todos esos datos al tenant correcto.
+        # Idempotente: si ya corrió, los datos ya están en 1001 → rowcount=0.
+        try:
+            with _engine.begin() as conn:
+                _from = "GC-RNHJ"
+                _to   = "1001"
+                _tbls = [
+                    "accounts",
+                    "journal_entries",
+                    "journal_lines",
+                    "period_locks",
+                    "import_batch",
+                    "cabys_account_rules",
+                ]
+                _total = 0
+                for _tbl in _tbls:
+                    try:
+                        _r = conn.execute(text(
+                            f"UPDATE {_tbl} SET tenant_id=:to WHERE tenant_id=:from"
+                        ), {"to": _to, "from": _from})
+                        _n = _r.rowcount or 0
+                        if _n > 0:
+                            logger.info(f"  🔄 M_REASSIGN: {_tbl} → {_n} filas reasignadas")
+                        _total += _n
+                    except Exception as _te:
+                        logger.warning(f"  ⚠️  M_REASSIGN: {_tbl} → {_te}")
+                # niif_mappings (opcional)
+                try:
+                    _r2 = conn.execute(text(
+                        "UPDATE niif_mappings SET tenant_id=:to WHERE tenant_id=:from"
+                    ), {"to": _to, "from": _from})
+                    _total += _r2.rowcount or 0
+                except Exception:
+                    pass
+            if _total > 0:
+                logger.info(
+                    f"✅ Migración M_REASSIGN_GCRNHJ: {_total} filas "
+                    f"reasignadas de '{_from}' → '{_to}' (Álvaro González)"
+                )
+            else:
+                logger.info("✅ Migración M_REASSIGN_GCRNHJ: sin datos pendientes (ya aplicada)")
+        except Exception as e:
+            logger.warning(f"⚠️  Migración M_REASSIGN_GCRNHJ omitida: {e}")
+
+
     # REGLA DE ORO: NO se toca ningún tenant que ya tenga su propio catálogo.
     # Solo aplica a tenants recién registrados (0 cuentas) para darles
     # el catálogo estándar inicial automáticamente.
