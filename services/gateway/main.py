@@ -1396,6 +1396,87 @@ def reassign_tenant_data(
         raise _HE(500, f"Error en reasignación: {exc}")
 
 
+# ── Backup: Descarga XMLs firmados (solo lectura) ──────────────
+# Endpoint aislado para respaldo legal de documentos fiscales.
+# NO modifica DB. NO interactúa con emisión ni recepción.
+# Protegido por secret (mismo patrón que /jobs/*).
+from fastapi import HTTPException
+
+@app.get("/api/backup/list-xml")
+def backup_list_xml(secret: str):
+    """Lista facturas con XML firmado disponible en el volume."""
+    if secret != os.getenv("BACKUP_SECRET", "genoma-backup-2026"):
+        raise HTTPException(403, "Clave inválida")
+    if not _engine:
+        raise HTTPException(503, "DB no disponible")
+    try:
+        with _engine.connect() as conn:
+            rows = conn.execute(text(
+                "SELECT clave_hacienda, tenant_id, estado_hacienda, "
+                "xml_firmado_path, pdf_path, "
+                "to_char(created_at, 'YYYY-MM-DD') as fecha "
+                "FROM facturas "
+                "WHERE xml_firmado_path IS NOT NULL "
+                "AND xml_firmado_path != '' "
+                "ORDER BY created_at DESC"
+            )).fetchall()
+        return {
+            "total": len(rows),
+            "facturas": [
+                {
+                    "clave": r[0], "tenant_id": r[1],
+                    "estado": r[2], "xml_path": r[3],
+                    "pdf_path": r[4], "fecha": r[5],
+                }
+                for r in rows
+            ],
+        }
+    except Exception as exc:
+        raise HTTPException(500, f"Error listando XMLs: {exc}")
+
+
+@app.get("/api/backup/download/{clave}")
+def backup_download_file(clave: str, secret: str, tipo: str = "xml"):
+    """Descarga XML o PDF de una factura por su clave de Hacienda."""
+    if secret != os.getenv("BACKUP_SECRET", "genoma-backup-2026"):
+        raise HTTPException(403, "Clave inválida")
+    if not _engine:
+        raise HTTPException(503, "DB no disponible")
+    if tipo not in ("xml", "pdf"):
+        raise HTTPException(400, "tipo debe ser 'xml' o 'pdf'")
+
+    # Buscar el path en DB
+    col = "xml_firmado_path" if tipo == "xml" else "pdf_path"
+    try:
+        with _engine.connect() as conn:
+            row = conn.execute(text(
+                f"SELECT {col} FROM facturas WHERE clave_hacienda = :clave"
+            ), {"clave": clave}).fetchone()
+    except Exception as exc:
+        raise HTTPException(500, f"Error consultando DB: {exc}")
+
+    if not row or not row[0]:
+        raise HTTPException(404, f"No hay {tipo} para clave {clave}")
+
+    # Construir path absoluto dentro del volume
+    volume = os.getenv("RAILWAY_VOLUME_MOUNT_PATH", "/app/data")
+    rel_path = row[0]
+    # Sanitización: prevenir directory traversal
+    if ".." in rel_path or rel_path.startswith("/"):
+        raise HTTPException(400, "Path inválido")
+    full_path = os.path.join(volume, "documents", rel_path)
+
+    if not os.path.isfile(full_path):
+        raise HTTPException(404, f"Archivo no encontrado en volume: {rel_path}")
+
+    media = "application/xml" if tipo == "xml" else "application/pdf"
+    return FileResponse(
+        full_path,
+        media_type=media,
+        filename=os.path.basename(full_path),
+    )
+
+
 # ── Servir React SPA (debe ir AL FINAL) ────────────────────────
 FRONTEND_DIST = Path(__file__).parent.parent.parent / "frontend" / "dist"
 
